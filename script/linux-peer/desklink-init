@@ -1,0 +1,104 @@
+#!/bin/sh
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+mount -t devtmpfs devtmpfs /dev
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+exec </dev/console >/dev/console 2>&1
+set -eu
+trap 'echo DESKLINK_GUEST_STOPPED; poweroff -f' EXIT
+echo "DeskLink isolated Linux guest"
+mkdir -p /run /tmp/.X11-unix /dev/pts /dev/shm /modules
+chmod 1777 /tmp /tmp/.X11-unix
+mount -t devpts devpts /dev/pts
+mount -t tmpfs -o mode=1777,size=128m tmpfs /dev/shm
+ip link set lo up
+modprobe loop
+modprobe squashfs
+mount -t squashfs -o loop,ro /modloop /modules
+mount -o bind /modules/modules /lib/modules
+modprobe vmw_vsock_virtio_transport
+/sbin/apk --no-network --repositories-file /dev/null --force-non-repository add /packages/*.apk >/tmp/desklink-apk.log 2>&1 || { tail -50 /tmp/desklink-apk.log; exit 1; }
+mkdir -p /root/.vnc
+printf '%s\n' 'Chart42!' | vncpasswd -f >/root/.vnc/fixture
+chmod 600 /root/.vnc/fixture
+Xvnc :1 -localhost yes -SecurityTypes VncAuth -PasswordFile /root/.vnc/fixture -geometry 800x480 -depth 24 -rfbport 5901 -desktop DeskLink-Linux -nolisten tcp >/tmp/desklink-xvnc.log 2>&1 &
+Xvnc :2 -localhost yes -SecurityTypes X509Vnc -X509Cert /test-tls/cert.pem -X509Key /test-tls/key.pem -PasswordFile /root/.vnc/fixture -geometry 320x200 -depth 24 -rfbport 5902 -desktop DeskLink-Linux-TLS -nolisten tcp >/tmp/desklink-xvnc-tls.log 2>&1 &
+export DISPLAY=:1
+for i in $(seq 1 80); do [ -S /tmp/.X11-unix/X1 ] && break; sleep 0.2; done
+if [ ! -S /tmp/.X11-unix/X1 ]; then cat /tmp/desklink-xvnc.log; exit 1; fi
+for i in $(seq 1 80); do [ -S /tmp/.X11-unix/X2 ] && break; sleep 0.2; done
+if [ ! -S /tmp/.X11-unix/X2 ]; then cat /tmp/desklink-xvnc-tls.log; exit 1; fi
+DISPLAY=:2 xsetroot -solid '#1f59a5'
+Xvnc :4 -localhost yes -SecurityTypes VncAuth -PasswordFile /root/.vnc/fixture -geometry 800x480 -depth 24 -rfbport 5904 -desktop DeskLink-Resize -noreset -nolisten tcp >/tmp/desklink-xvnc-resize.log 2>&1 &
+for i in $(seq 1 80); do [ -S /tmp/.X11-unix/X4 ] && break; sleep 0.2; done
+DISPLAY=:4 xsetroot -solid '#1f59a5'
+(
+    previous=''
+    while :; do
+        geometry=$(DISPLAY=:4 xdotool getdisplaygeometry 2>/dev/null || true)
+        if [ -n "$geometry" ] && [ "$geometry" != "$previous" ]; then
+            echo "DESKLINK_X11_GEOMETRY $geometry" >/dev/console
+            previous=$geometry
+        fi
+        sleep 0.1
+    done
+) &
+export LANG=C.UTF-8
+cat > /tmp/desklink-text-receiver <<'EOF'
+#!/bin/sh
+stty -echo
+while IFS= read -r line; do
+    if [ "$line" = 'DeskLink 中文 café Ω 🙂' ]; then
+        echo DESKLINK_X11_UNICODE_TEXT_RECEIVED >/dev/console
+        xsetroot -solid '#c23684'
+        sleep 2
+        xsetroot -solid '#1f59a5'
+    fi
+done
+EOF
+chmod 755 /tmp/desklink-text-receiver
+DISPLAY=:4 xterm -u8 -geometry 28x5+10+10 -title DeskLinkText -e /tmp/desklink-text-receiver >/tmp/desklink-text.log 2>&1 &
+for i in $(seq 1 60); do
+    id=$(DISPLAY=:4 xdotool search --onlyvisible --name '^DeskLinkText$' 2>/dev/null | head -1)
+    if [ -n "$id" ]; then DISPLAY=:4 xdotool windowfocus "$id"; break; fi
+    sleep 0.1
+done
+vncconfig -nowin >/tmp/desklink-clipbridge.log 2>&1 &
+(
+  while :; do
+    value=$(timeout 1 xclip -selection clipboard -target UTF8_STRING -out 2>/dev/null || true)
+    if [ "$value" = "DeskLink X11 收到 Ω" ]; then
+      printf '%s' 'X11 已回传 ✓' | xclip -selection clipboard -target UTF8_STRING -in
+      echo DESKLINK_X11_CLIPBOARD_ROUNDTRIP >/dev/console
+    elif [ "$value" = "DeskLink 自动同步 Ω" ]; then
+      printf '%s' 'X11 自动回传 ✓' | xclip -selection clipboard -target UTF8_STRING -in
+      echo DESKLINK_X11_AUTOMATIC_CLIPBOARD >/dev/console
+    elif [ "$value" = "DeskLink reconnect fixture" ]; then
+      printf '%s' 'DeskLink reconnect acknowledged' | xclip -selection clipboard -target UTF8_STRING -in
+      vncconfig -display :1 -disconnect
+      echo DESKLINK_X11_DISCONNECTED_TEST_VIEWER >/dev/console
+    fi
+    sleep 0.25
+  done
+) &
+(
+  while :; do
+    xsetroot -solid '#1f59a5'
+    xmessage -geometry 400x160+200+150 -title 'DeskLink Linux' -bg '#f1b745' -fg black -buttons 'Continue:0' -default Continue 'DeskLink: Linux TigerVNC input test' &
+    dialog=$!
+    for i in $(seq 1 50); do
+      if id=$(xdotool search --name 'DeskLink Linux' 2>/dev/null | head -1) && [ -n "$id" ]; then xdotool windowfocus "$id"; break; fi
+      sleep 0.1
+    done
+    wait "$dialog"
+    xsetroot -solid '#34ae92'
+    echo DESKLINK_X11_INPUT_RECEIVED >/dev/console
+    sleep 3
+  done
+) &
+socat VSOCK-LISTEN:5901,reuseaddr,fork TCP4:127.0.0.1:5901 &
+socat VSOCK-LISTEN:5902,reuseaddr,fork TCP4:127.0.0.1:5902 &
+socat VSOCK-LISTEN:5904,reuseaddr,fork TCP4:127.0.0.1:5904 &
+if [ -x /usr/bin/wayvnc ]; then /bin/sh /start-wayland & fi
+echo DESKLINK_XVNC_READY
+while :; do sleep 600; done

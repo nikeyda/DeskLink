@@ -1,0 +1,33 @@
+import SwiftUI
+import rootshellVNC
+
+/// The keyboard strip and the Mac menu use the same command mapping as the desktop.
+struct RemoteCommandsMenu: View {
+    let session: VNCSession
+    var willSend: () -> Void = {}
+
+    var body: some View {
+        if session.serverUsesAppleModifierConvention {
+            commands(RemoteCommand.macSpecific)
+            Divider()
+        }
+        commands(RemoteCommand.systemCommands(for: session.serverUsesAppleModifierConvention ? .mac : .other))
+        Divider()
+        commands(RemoteCommand.keys)
+    }
+
+    private func commands(_ entries: [RemoteCommand]) -> some View {
+        ForEach(entries) { command in
+            Button(command.title) {
+                guard session.connectionState.isConnected else { return }
+                willSend()
+                let keyboard = KeyboardInputHandler(
+                    sendKeyEvent: { session.sendKeyEvent(downFlag: $0, key: $1) },
+                    usesAppleModifierConvention: { session.serverUsesAppleModifierConvention }
+                )
+                keyboard.handleRemoteCommand(command)
+            }
+            .accessibilityIdentifier("remoteCommand." + command.rawValue)
+        }
+    }
+}

@@ -1,0 +1,102 @@
+#if !targetEnvironment(macCatalyst)
+import XCTest
+@testable import rootshellVNC
+@testable import DeskLink
+
+@MainActor final class ToolbarTests: XCTestCase {
+    func testHardwareRepeatTimingStopsOnReleaseAndCanBeDisabled() async throws {
+        var wire = [Bool]()
+        let input = HardwareKeyboardController(keyboardHandler: KeyboardInputHandler { down, _ in wire.append(down) })
+        let symbol = KeyboardInputHandler.keysymTab
+        input.keyRepeat = VNCKeyRepeat(enabled: false)
+        XCTAssertTrue(input.press(usage: 0x2b, keysym: symbol))
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertTrue(input.release(usage: 0x2b))
+        XCTAssertEqual(wire, [true, false])
+        wire.removeAll()
+        input.keyRepeat = VNCKeyRepeat(delay: 0.15, interval: 0.05)
+        XCTAssertTrue(input.press(usage: 0x2b, keysym: symbol))
+        let limit = ContinuousClock.now + .seconds(2)
+        while wire.count < 3, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(25)) }
+        XCTAssertGreaterThanOrEqual(wire.count, 3)
+        XCTAssertTrue(input.release(usage: 0x2b))
+        let released = wire
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertFalse(try XCTUnwrap(wire.last))
+        XCTAssertEqual(wire, released)
+        XCTAssertEqual(VNCKeyRepeat(delay: .nan, interval: -1), VNCKeyRepeat())
+    }
+
+    func testIndividualFunctionKeysRetainTheirOrderAndMatchTheFunctionMenu() {
+        let keys = DeskToolbarButton.buttons(in: "f12,left,enter,f1,f7")
+        XCTAssertEqual(keys.map(\.title), ["F12", "向左", "Return", "F1", "F7"])
+        XCTAssertEqual(keys.compactMap(\.keysym), [0xffc9, 0xff51, 0xff0d, 0xffbe, 0xffc4])
+        XCTAssertEqual(keys.filter(\.supportsRepeat), [.left, .enter])
+    }
+
+    func testHoldDelayAndMomentumRoundTripOlderAndNewerSettings() throws {
+        let suite = UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let key = SyncedPreference.holdDuration.rawValue
+        XCTAssertNil(SyncedPreference.snapshot(defaults)[key])
+        SyncedPreference.apply([key: .speed(0.75)], to: defaults)
+        XCTAssertEqual(SyncedPreference.snapshot(defaults)[key], .speed(0.75))
+        SyncedPreference.apply([key: .speed(2)], to: defaults)
+        XCTAssertEqual(defaults.double(forKey: key), 0.75)
+        var computer = Computer(endpoint: try Endpoint(address: "test.invalid"))
+        let old = try LibraryArchive.read(LibraryArchive(computers: [computer]).encoded())
+        XCTAssertNil(try XCTUnwrap(old.computers.first).momentumScrolling)
+        computer.momentumScrolling = false
+        let updated = try LibraryArchive.read(LibraryArchive(computers: [computer]).encoded())
+        XCTAssertEqual(updated.computers.first?.momentumScrolling, false)
+    }
+
+    func testOneShotAndLockedModifiersAreConsumedIndependently() {
+        let toolbar = DeskToolbarState()
+        let start = ContinuousClock.now
+        toolbar.press(.shift, now: start)
+        toolbar.press(.shift, now: start + .milliseconds(200))
+        toolbar.press(.control, now: start + .milliseconds(400))
+        XCTAssertEqual(toolbar.keyboard.supplementalModifiers, [.shift, .control])
+        toolbar.keyboard.onSupplementalModifiersConsumed?()
+        XCTAssertEqual(toolbar.keyboard.supplementalModifiers, .shift)
+        toolbar.press(.shift, now: start + .seconds(2))
+        XCTAssertTrue(toolbar.keyboard.supplementalModifiers.isEmpty)
+        toolbar.press(.command)
+        toolbar.reset()
+        XCTAssertTrue(toolbar.locked.isEmpty)
+        XCTAssertTrue(toolbar.keyboard.supplementalModifiers.isEmpty)
+    }
+
+    func testPencilToolbarActionsRespectStyleAndTipPosition() {
+        let toolbar = DeskToolbarState()
+        let tip = CGPoint(x: 0.23, y: 0.66)
+        toolbar.handle(.toggleExpandedToolbar, at: tip, style: .docked)
+        XCTAssertTrue(toolbar.expanded)
+        toolbar.handle(.toggleExpandedToolbar, at: tip, style: .floating)
+        XCTAssertFalse(toolbar.expanded)
+        toolbar.handle(.toggleToolbar, at: .zero, style: .carousel)
+        XCTAssertFalse(toolbar.visible)
+        toolbar.handle(.toggleToolbar, at: tip, style: .carousel)
+        XCTAssertEqual(toolbar.anchor, tip)
+        XCTAssertTrue(toolbar.visible)
+        XCTAssertEqual(DeskToolbarButton.buttons(in: "tab,spacer,removed,spacer,arrows"), [.tab, .spacer, .spacer, .arrows])
+    }
+
+    func testRemoteInputDimsCarouselUntilActivityEnds() async throws {
+        let toolbar = DeskToolbarState()
+        toolbar.noteRemoteActivity()
+        XCTAssertTrue(toolbar.dimmed)
+        try await Task.sleep(for: .milliseconds(500))
+        toolbar.noteRemoteActivity()
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertTrue(toolbar.dimmed)
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertFalse(toolbar.dimmed)
+        toolbar.noteRemoteActivity()
+        toolbar.reset()
+        XCTAssertFalse(toolbar.dimmed)
+    }
+}
+#endif

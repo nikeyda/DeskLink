@@ -1,0 +1,107 @@
+import SwiftUI
+import WidgetKit
+
+@main
+struct DeskLinkApp: App {
+    @State private var library: ConnectionLibrary
+    @State private var tailnet: TailnetDirectory
+    @State private var sync: LibrarySync
+    @State private var computerSearch = ComputerSearchIndex()
+    @State private var privacy: AppLock
+    #if targetEnvironment(macCatalyst)
+    @State private var monitorWindows = MacMonitorWindows()
+    #endif
+    private let preferences: UserDefaults
+    private let pasteboard: UIPasteboard
+    @Environment(\.scenePhase) private var phase
+
+    init() {
+        #if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        if let flag = arguments.firstIndex(of: "--test-library"),
+           arguments.indices.contains(flag + 1), let id = UUID(uuidString: arguments[flag + 1]) {
+            let file = FileManager.default.temporaryDirectory.appending(path: "DeskLinkTests/\(id.uuidString).json")
+            _library = State(initialValue: ConnectionLibrary(file: file))
+            let defaults = UserDefaults(suiteName: "DeskLinkTests." + id.uuidString)!
+            pasteboard = UIPasteboard(name: UIPasteboard.Name("local.nikey.desklink.tests." + id.uuidString), create: true)
+                ?? .withUniqueName()
+            preferences = defaults
+            _tailnet = State(initialValue: TailnetDirectory(defaults: defaults))
+            _privacy = State(initialValue: AppLock(defaults: defaults))
+            _sync = State(initialValue: LibrarySync(settings: file.deletingPathExtension().appendingPathExtension("sync.json"), defaults: defaults))
+            return
+        }
+        #endif
+        _library = State(initialValue: ConnectionLibrary())
+        pasteboard = .general
+        preferences = .standard
+        _tailnet = State(initialValue: TailnetDirectory())
+        _sync = State(initialValue: LibrarySync())
+        _privacy = State(initialValue: AppLock())
+    }
+
+    var body: some Scene {
+        libraryScene
+        #if targetEnvironment(macCatalyst)
+        WindowGroup("显示器", id: MonitorWindowID.scene, for: MonitorWindowID.self) { $window in
+            MacMonitorWindow(id: window, windows: monitorWindows, privacy: privacy)
+                .defaultAppStorage(preferences)
+        }
+        #endif
+    }
+
+    private var libraryScene: some Scene {
+        WindowGroup(id: "desklink-library", for: UUID.self) { $computerID in
+            LibraryWindow(library: library, preferences: preferences, pasteboard: pasteboard, initialComputer: computerID)
+                .environment(library)
+                .environment(tailnet)
+                .environment(sync)
+                .environment(privacy)
+                #if targetEnvironment(macCatalyst)
+                .environment(monitorWindows)
+                #endif
+                .defaultAppStorage(preferences)
+                .allowsHitTesting(!privacy.locked)
+                .accessibilityHidden(privacy.locked)
+                .overlay { if privacy.locked { PrivacyGate(privacy: privacy) } }
+                .background { PrivacyCover(privacy: privacy).frame(width: 0, height: 0) }
+                .onChange(of: library.archive) {
+                    if sync.folderName != nil { Task { await sync.refresh(library) } }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
+                    if sync.preferencesChanged { Task { await sync.refresh(library) } }
+                }
+                .onChange(of: library.archive.widgetComputers, initial: true) {
+                    #if DEBUG
+                    guard !ProcessInfo.processInfo.arguments.contains("--test-library") else { return }
+                    #endif
+                    guard library.canSync else { return }
+                    let entries = library.archive.widgetComputers
+                    Task { await computerSearch.refresh(entries) }
+                    if WidgetCatalog.publish(entries) {
+                        WidgetCenter.shared.reloadTimelines(ofKind: WidgetCatalog.kind)
+                    }
+                }
+                .task(id: phase) {
+                    guard phase == .active else { return }
+                    #if DEBUG
+                    let indexesComputers = !ProcessInfo.processInfo.arguments.contains("--test-library")
+                    #else
+                    let indexesComputers = true
+                    #endif
+                    if indexesComputers, library.canSync { await computerSearch.refresh(library.archive.widgetComputers) }
+                    while !Task.isCancelled {
+                        if sync.folderName != nil { await sync.refresh(library) }
+                        do { try await Task.sleep(for: .seconds(60)) } catch { return }
+                    }
+                }
+        }
+        .onChange(of: phase) { _, phase in if phase == .background { privacy.lock() } }
+        .commands {
+            SharedClipboardCommands()
+            #if targetEnvironment(macCatalyst)
+            MacMenus()
+            #endif
+        }
+    }
+}

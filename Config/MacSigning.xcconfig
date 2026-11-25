@@ -1,0 +1,6 @@
+// Without a local team, Xcode can still build the desktop viewer for this Mac.
+DESKLINK_MAC_IDENTITY = -
+DESKLINK_MAC_ENTITLEMENTS = Config/Mac.entitlements
+#include? "MacSigning.local.xcconfig"
+DEVELOPMENT_TEAM[sdk=macosx*] = $(DESKLINK_MAC_TEAM)
+CODE_SIGN_IDENTITY[sdk=macosx*] = $(DESKLINK_MAC_IDENTITY)

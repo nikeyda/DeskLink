@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleAllowMixedLocalizations</key><true/>
+    <key>CFBundleLocalizations</key><array><string>zh-Hans</string></array>
+    <key>DeskLinkWidgetGroup</key><string>$(AppIdentifierPrefix)local.nikey.desklink.widget-index</string>
+    <key>CFBundleURLTypes</key>
+    <array><dict><key>CFBundleURLName</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleURLSchemes</key><array><string>desklink</string></array></dict></array>
+    <key>NSBonjourServices</key><array><string>_rfb._tcp</string></array>
+    <key>CFBundleDocumentTypes</key>
+    <array><dict>
+        <key>CFBundleTypeName</key><string>VNC Internet Location</string>
+        <key>CFBundleTypeRole</key><string>Viewer</string>
+        <key>LSHandlerRank</key><string>Alternate</string>
+        <key>LSItemContentTypes</key><array><string>com.apple.vnc-internet-location</string></array>
+    </dict><dict>
+        <key>CFBundleTypeName</key><string>屏幕连线归档</string>
+        <key>CFBundleTypeRole</key><string>Viewer</string>
+        <key>LSHandlerRank</key><string>Owner</string>
+        <key>LSItemContentTypes</key><array><string>local.nikey.desklink.archive</string></array>
+    </dict></array>
+    <key>LSSupportsOpeningDocumentsInPlace</key><true/>
+    <key>UTExportedTypeDeclarations</key>
+    <array><dict>
+        <key>UTTypeIdentifier</key><string>local.nikey.desklink.archive</string>
+        <key>UTTypeDescription</key><string>屏幕连线归档</string>
+        <key>UTTypeConformsTo</key><array><string>public.json</string></array>
+        <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>desklink</string></array></dict>
+    </dict></array>
+    <key>UTImportedTypeDeclarations</key>
+    <array><dict>
+        <key>UTTypeIdentifier</key><string>com.apple.vnc-internet-location</string>
+        <key>UTTypeConformsTo</key><array><string>com.apple.internet-location</string><string>public.data</string></array>
+        <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>vncloc</string></array></dict>
+    </dict></array>
+    <key>NSLocalNetworkUsageDescription</key><string>使用本地网络发现并连接你选择的计算机。</string>
+    <key>NSFaceIDUsageDescription</key><string>身份验证</string>
+    <key>NSMicrophoneUsageDescription</key><string>使用麦克风在本机识别语音，并将你确认的文字输入到远程电脑。</string>
+    <key>NSSpeechRecognitionUsageDescription</key><string>在本机将听写内容转换为文字。</string>
+</dict>
+</plist>
