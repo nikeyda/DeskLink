@@ -2,9 +2,13 @@
 
 [English](../../README.md) · [简体中文](README.zh-CN.md) · **Español** · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-**Controla un ordenador remoto desde tu iPad o Mac.** DeskLink es un cliente VNC de código abierto que te permite acceder a un Mac con la función Compartir pantalla activada o a un ordenador con un servidor VNC compatible. Abre aplicaciones, trabaja con archivos y usa el escritorio remoto como si estuvieras delante del equipo.
+**Usa tu iPhone, iPad o Mac para ver y controlar otro ordenador.** DeskLink es un cliente VNC de código abierto que se conecta a un Mac con Compartir pantalla activado o a un equipo con un servidor VNC compatible. Retoma el trabajo en tu escritorio, comprueba una estación Linux o abre un archivo en otro ordenador.
 
-![Ilustración de una tableta que muestra el escritorio de un ordenador remoto](images/remote-desktop.jpg)
+| Control remoto en el iPhone | Atajos táctiles en el iPad | Biblioteca de conexiones en el Mac |
+| :---: | :---: | :---: |
+| <a href="images/iphone-session.png"><img src="images/iphone-session.png" width="164" alt="Control remoto en el iPhone"></a> | <a href="images/ipad-session.png"><img src="images/ipad-session.png" width="250" alt="Atajos táctiles en el iPad"></a> | <a href="images/mac-connections.jpg"><img src="images/mac-connections.jpg" width="405" alt="Biblioteca de conexiones en el Mac"></a> |
+
+*Capturas de DeskLink con conexiones de ejemplo y un escritorio remoto de demostración. Selecciona una imagen para verla a tamaño completo.*
 
 ## Qué puedes hacer
 
@@ -19,13 +23,9 @@
 2. En la misma red, abre DeskLink y elige un ordenador cercano, o usa la conexión rápida para introducir su nombre de host o dirección IP.
 3. Inicia sesión con las credenciales del equipo remoto. Guarda la conexión si quieres volver a usarla.
 
-<img src="images/ipad-session.png" width="380" alt="DeskLink en un iPad con el menú flotante de atajos abierto sobre un escritorio VNC de demostración">
-
-*Sesión de escritorio remoto en el iPad con el menú flotante de atajos abierto.*
-
 ## Compilar desde el código fuente
 
-La aplicación es compatible con **iPadOS 18 o posterior** y **macOS 15 o posterior** mediante Mac Catalyst. Para compilarla, usa Xcode 26 o posterior.
+La aplicación es compatible con **iOS 18 o posterior**, **iPadOS 18 o posterior** y **macOS 15 o posterior** mediante Mac Catalyst. Para compilarla, usa Xcode 26 o posterior.
 
 ```sh
 git clone https://github.com/nikeyda/DeskLink.git
@@ -33,7 +33,7 @@ cd DeskLink
 open DeskLink.xcodeproj
 ```
 
-Selecciona el esquema **DeskLink** y ejecuta la aplicación en **My Mac (Mac Catalyst)** o en un **simulador de iPad**. Para ejecutarla en un iPad físico, configura la firma en Xcode con tu equipo de desarrollo.
+Selecciona el esquema **DeskLink** y ejecuta la aplicación en **My Mac (Mac Catalyst)** o en un **simulador de iPhone o iPad**. En un iPhone o iPad físico, configura la firma en Xcode con tu equipo de desarrollo.
 
 ## Licencia
 

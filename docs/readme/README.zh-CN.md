@@ -2,9 +2,13 @@
 
 [English](../../README.md) · **简体中文** · [Español](README.es.md) · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-**用 iPad 或 Mac 控制另一台电脑。** DeskLink 是开源的 VNC 客户端，可以连接开启了「屏幕共享」的 Mac，或运行兼容 VNC 服务的电脑。连接后，你可以查看远端桌面、打开应用、操作文件，就像坐在那台电脑前一样。
+**用 iPhone、iPad 或 Mac 查看并控制另一台电脑。** DeskLink 是开源的 VNC 客户端，可以连接开启「屏幕共享」的 Mac，或运行兼容 VNC 服务的电脑。你可以接着处理桌面上的工作、查看 Linux 工作站，或打开另一台电脑里的文件。
 
-![平板与远端电脑显示同一个桌面的连接示意图](images/remote-desktop.jpg)
+| iPhone 上的远程控制 | iPad 上的触控快捷操作 | Mac 上的连接库 |
+| :---: | :---: | :---: |
+| <a href="images/iphone-session.png"><img src="images/iphone-session.png" width="164" alt="iPhone 上的远程控制"></a> | <a href="images/ipad-session.png"><img src="images/ipad-session.png" width="250" alt="iPad 上的触控快捷操作"></a> | <a href="images/mac-connections.jpg"><img src="images/mac-connections.jpg" width="405" alt="Mac 上的连接库"></a> |
+
+*截图来自 DeskLink 实际运行界面，使用演示连接和示例远程桌面。点图可看大图。*
 
 ## 可以用它做什么
 
@@ -19,13 +23,9 @@
 2. 在同一网络上打开 DeskLink，从「附近」选择电脑，或在「快速连接」中输入主机名或 IP 地址。
 3. 使用远端电脑的凭据登录。之后还要连接时，可以把它保存下来。
 
-<img src="images/ipad-session.png" width="380" alt="DeskLink 的 iPad 会话，演示用 VNC 桌面上打开了悬浮快捷菜单">
-
-*iPad 上的远程桌面会话，图中已打开悬浮快捷菜单。*
-
 ## 从源码构建
 
-应用支持 **iPadOS 18+** 和 **macOS 15+**（Mac Catalyst）。构建需要 Xcode 26 或更高版本。
+应用支持 **iOS 18+**、**iPadOS 18+** 和 **macOS 15+**（Mac Catalyst）。构建需要 Xcode 26 或更高版本。
 
 ```sh
 git clone https://github.com/nikeyda/DeskLink.git
@@ -33,7 +33,7 @@ cd DeskLink
 open DeskLink.xcodeproj
 ```
 
-选择 **DeskLink** scheme，在 **My Mac (Mac Catalyst)** 或 **iPad 模拟器**上运行。在 iPad 真机运行时，请在 Xcode 中配置自己的开发团队签名。
+选择 **DeskLink** scheme，在 **My Mac (Mac Catalyst)** 或 **iPhone、iPad 模拟器**上运行。在 iPhone 或 iPad 真机上运行时，请在 Xcode 中配置自己的开发团队签名。
 
 ## 许可证
 

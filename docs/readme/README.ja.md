@@ -2,9 +2,13 @@
 
 [English](../../README.md) · [简体中文](README.zh-CN.md) · [Español](README.es.md) · **日本語** · [한국어](README.ko.md)
 
-**iPad や Mac から離れた場所にあるコンピュータを操作できます。** DeskLink はオープンソースの VNC クライアントです。「画面共有」を有効にした Mac や、互換性のある VNC サーバーを実行しているコンピュータに接続し、手元にあるかのようにアプリを開いたり、ファイルを操作したりできます。
+**iPhone、iPad、Mac から別のコンピュータの画面を見たり操作したりできます。** DeskLink はオープンソースの VNC クライアントです。「画面共有」を有効にした Mac や、互換性のある VNC サーバーを実行しているコンピュータに接続できます。デスクトップの作業を続けたり、Linux ワークステーションの状態を確認したり、別のコンピュータにあるファイルを開いたりできます。
 
-![タブレットにリモートコンピュータと同じデスクトップが表示されているイメージ](images/remote-desktop.jpg)
+| iPhone でリモート操作 | iPad のタッチショートカット | Mac の接続先一覧 |
+| :---: | :---: | :---: |
+| <a href="images/iphone-session.png"><img src="images/iphone-session.png" width="164" alt="iPhone でリモート操作"></a> | <a href="images/ipad-session.png"><img src="images/ipad-session.png" width="250" alt="iPad のタッチショートカット"></a> | <a href="images/mac-connections.jpg"><img src="images/mac-connections.jpg" width="405" alt="Mac の接続先一覧"></a> |
+
+*デモ用の接続先とリモートデスクトップを使った DeskLink のスクリーンショットです。画像を選ぶと拡大できます。*
 
 ## 主な機能
 
@@ -19,13 +23,9 @@
 2. 同じネットワーク上で DeskLink を開き、近くのコンピュータを選ぶか、クイック接続でホスト名または IP アドレスを入力します。
 3. 接続先の認証情報でログインします。繰り返し使う場合は接続先を保存できます。
 
-<img src="images/ipad-session.png" width="380" alt="デモ用 VNC デスクトップ上にフローティングショートカットメニューを表示した iPad 版 DeskLink">
-
-*フローティングショートカットメニューを開いた iPad のリモートデスクトップ接続。*
-
 ## ソースからビルドする
 
-対応環境は **iPadOS 18 以降**と **macOS 15 以降**（Mac Catalyst）です。ビルドには Xcode 26 以降を使用してください。
+対応環境は **iOS 18 以降**、**iPadOS 18 以降**、**macOS 15 以降**（Mac Catalyst）です。ビルドには Xcode 26 以降を使用してください。
 
 ```sh
 git clone https://github.com/nikeyda/DeskLink.git
@@ -33,7 +33,7 @@ cd DeskLink
 open DeskLink.xcodeproj
 ```
 
-**DeskLink** スキームを選び、**My Mac (Mac Catalyst)** または **iPad シミュレータ**で実行します。iPad の実機で実行するには、Xcode でご自身の開発チームの署名を設定してください。
+**DeskLink** スキームを選び、**My Mac (Mac Catalyst)** または **iPhone・iPad シミュレータ**で実行します。iPhone や iPad の実機で実行するには、Xcode でご自身の開発チームの署名を設定してください。
 
 ## ライセンス
 

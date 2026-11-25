@@ -2,9 +2,13 @@
 
 **English** · [简体中文](docs/readme/README.zh-CN.md) · [Español](docs/readme/README.es.md) · [日本語](docs/readme/README.ja.md) · [한국어](docs/readme/README.ko.md)
 
-**Control a remote computer from your iPad or Mac.** DeskLink is an open-source VNC client for accessing a Mac with Screen Sharing enabled or a computer running a compatible VNC server. Open apps, work with files, and use the remote desktop as if you were sitting in front of it.
+**Use your iPhone, iPad, or Mac to view and control another computer.** DeskLink is an open-source VNC client for a Mac with Screen Sharing enabled or any computer running a compatible VNC server. Pick up work on your desktop, check a Linux workstation, or open a file on a computer in another room.
 
-![Illustration of a tablet displaying the same desktop as a remote computer](docs/readme/images/remote-desktop.jpg)
+| Remote control on iPhone | Touch shortcuts on iPad | Connection library on Mac |
+| :---: | :---: | :---: |
+| <a href="docs/readme/images/iphone-session.png"><img src="docs/readme/images/iphone-session.png" width="164" alt="Remote control on iPhone"></a> | <a href="docs/readme/images/ipad-session.png"><img src="docs/readme/images/ipad-session.png" width="250" alt="Touch shortcuts on iPad"></a> | <a href="docs/readme/images/mac-connections.jpg"><img src="docs/readme/images/mac-connections.jpg" width="405" alt="Connection library on Mac"></a> |
+
+*DeskLink screenshots with demo connections and a sample remote desktop. Select an image to see it at full size.*
 
 ## What you can do
 
@@ -19,13 +23,9 @@
 2. On the same network, open DeskLink and pick a computer from the nearby list, or use **Quick Connect** to enter its hostname or IP address.
 3. Sign in with your remote credentials. Save the connection if you want to use it again.
 
-<img src="docs/readme/images/ipad-session.png" width="380" alt="DeskLink on iPad with the floating shortcut menu open over a demo VNC desktop">
-
-*An iPad session with the floating shortcut menu open.*
-
 ## Build from source
 
-The app targets **iPadOS 18+** and **macOS 15+** through Mac Catalyst. To build it, use Xcode 26 or later.
+The app targets **iOS 18+**, **iPadOS 18+**, and **macOS 15+** through Mac Catalyst. To build it, use Xcode 26 or later.
 
 ```sh
 git clone https://github.com/nikeyda/DeskLink.git
@@ -33,7 +33,7 @@ cd DeskLink
 open DeskLink.xcodeproj
 ```
 
-Select the **DeskLink** scheme and run it on **My Mac (Mac Catalyst)** or an **iPad simulator**. To run it on a physical iPad, configure signing in Xcode for your development team.
+Select the **DeskLink** scheme and run it on **My Mac (Mac Catalyst)** or an **iPhone or iPad simulator**. Configure your development team’s signing in Xcode to run on a physical iPhone or iPad.
 
 ## License
 
