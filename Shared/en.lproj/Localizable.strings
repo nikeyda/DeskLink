@@ -17,6 +17,10 @@
 "恢复显示" = "Show Device";
 "恢复显示：%@" = "Show Device: %@";
 "没有隐藏的设备" = "No Hidden Devices";
+"端口设置" = "Port Settings";
+"VNC 端口" = "VNC Port";
+"SSH 端口" = "SSH Port";
+"留空使用默认端口。仅在启用安全连接时使用 SSH 端口。" = "Leave a port blank to use its default. The SSH port is used when Secure Connection is on.";
 "使用备用光标" = "Use Fallback Cursor";
 "VNC 编码" = "VNC Encodings";
 "TightVNC JPEG 画质" = "TightVNC JPEG Quality";

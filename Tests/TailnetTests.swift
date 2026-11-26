@@ -110,6 +110,84 @@ final class TailnetTests: XCTestCase {
         XCTAssertEqual(directory.hiddenDevices.map(\.id), ["a"])
         XCTAssertNil(defaults.data(forKey: "tailnet.account"))
     }
+
+    func testPortOverridesValidateEachFieldAndTreatBlankAsDefault() throws {
+        let ports = try TailnetDevicePorts(vnc: " 65535 ", ssh: "1")
+        XCTAssertEqual(ports.vnc, 65535)
+        XCTAssertEqual(ports.ssh, 1)
+        XCTAssertNil(try TailnetDevicePorts(vnc: "", ssh: "").vnc)
+        XCTAssertNil(try TailnetDevicePorts(vnc: "", ssh: " ").ssh)
+        for invalid in ["0", "65536", "-22", "22x", "２２"] {
+            XCTAssertThrowsError(try TailnetDevicePorts(vnc: invalid, ssh: ""))
+            XCTAssertThrowsError(try TailnetDevicePorts(vnc: "", ssh: invalid))
+        }
+    }
+
+    @MainActor func testDevicePortsPersistWithoutSavingOAuthCredentials() async throws {
+        let domain = "TelescopeTailnetSessionPorts." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let service = DirectoryFixture()
+        let account = try TailnetAccount(tailnet: "fixture.example", clientID: "fixture")
+        let first = TailnetDirectory(defaults: defaults) { try await service.reply(to: $0) }
+        try await first.link(account, secret: "fixture-only", remember: false)
+        let initial = try XCTUnwrap(first.visibleDevices.first)
+        let id = try XCTUnwrap(first.directoryID(for: initial))
+        try first.setPorts(TailnetDevicePorts(vnc: "5910", ssh: "2200"), for: id)
+        XCTAssertNil(defaults.data(forKey: "tailnet.account"))
+        try first.unlink()
+
+        let reopened = TailnetDirectory(defaults: defaults) { try await service.reply(to: $0) }
+        try await reopened.link(account, secret: "fixture-only", remember: false)
+        XCTAssertEqual(reopened.ports(for: id)?.ssh, 2200)
+        XCTAssertEqual(reopened.computer(for: try XCTUnwrap(reopened.visibleDevices.first))?.endpoint.port, 5910)
+        try reopened.setPorts(TailnetDevicePorts(vnc: "", ssh: ""), for: id)
+        XCTAssertNil(TailnetDirectory(defaults: defaults).ports(for: id))
+    }
+
+    @MainActor func testPortsFollowTheDeviceAcrossRefreshAndRelaunchAndUpdateWidgetRoutes() async throws {
+        let domain = "TelescopeTailnetPorts." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let service = DirectoryFixture()
+        let directory = TailnetDirectory(defaults: defaults) { try await service.reply(to: $0) }
+        let account = try TailnetAccount(tailnet: "fixture.example", clientID: UUID().uuidString)
+        defer { try? directory.unlink() }
+        try await directory.link(account, secret: "test-only-port-credential", remember: true)
+
+        let device = try XCTUnwrap(directory.visibleDevices.first)
+        let id = try XCTUnwrap(directory.directoryID(for: device))
+        let ports = try TailnetDevicePorts(vnc: "5907", ssh: "2201")
+        XCTAssertNil(directory.ports(for: id))
+        try directory.setPorts(ports, for: id)
+        XCTAssertEqual(directory.computer(for: device)?.endpoint.address, "[fd7a:115c:a1e0::1]:5907")
+        XCTAssertNil(directory.computer(for: device)?.ssh)
+        XCTAssertEqual(directory.widgetComputers.first?.address, "[fd7a:115c:a1e0::1]:5907")
+        XCTAssertEqual(TailnetDirectory(defaults: defaults).ports(for: id)?.ssh, 2201)
+        XCTAssertEqual(TailnetDirectory(defaults: defaults).computerForWidget(id)?.endpoint.port, 5907)
+
+        await service.changeListing(to: #"{"devices":[{"id":"a","hostname":"Renamed","name":"renamed.fixture","addresses":["100.64.0.20"],"os":"linux","authorized":true},{"id":"other","hostname":"Another","name":"another.fixture","addresses":["100.64.0.21"],"os":"linux","authorized":true}]}"#)
+        await directory.refresh()
+        let refreshed = try XCTUnwrap(directory.visibleDevices.first { $0.id == "a" })
+        let other = try XCTUnwrap(directory.visibleDevices.first { $0.id == "other" })
+        XCTAssertEqual(directory.computer(for: refreshed)?.endpoint.address, "100.64.0.20:5907")
+        XCTAssertEqual(directory.computer(for: other)?.endpoint.port, 5900)
+        XCTAssertEqual(TailnetDirectory(defaults: defaults).computerForWidget(id)?.displayName, "Renamed")
+
+        try directory.unlink()
+        try await directory.link(TailnetAccount(tailnet: "other.fixture", clientID: UUID().uuidString), secret: "fixture-only", remember: false)
+        let differentTailnet = try XCTUnwrap(directory.visibleDevices.first { $0.id == "a" })
+        XCTAssertEqual(directory.computer(for: differentTailnet)?.endpoint.port, 5900)
+        XCTAssertThrowsError(try directory.setPorts(ports, for: id))
+        try directory.unlink()
+        try await directory.link(account, secret: "test-only-port-credential", remember: true)
+        XCTAssertEqual(directory.ports(for: id), ports)
+
+        try directory.setPorts(TailnetDevicePorts(vnc: "", ssh: ""), for: id)
+        let reopened = TailnetDirectory(defaults: defaults)
+        XCTAssertNil(reopened.ports(for: id))
+        XCTAssertEqual(reopened.computerForWidget(id)?.endpoint.port, 5900)
+    }
 }
 
 private actor DirectoryFixture {

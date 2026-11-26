@@ -72,6 +72,25 @@ struct TailnetDevice: Decodable, Identifiable, Sendable {
     }
 }
 
+struct TailnetDevicePorts: Codable, Equatable, Sendable {
+    let vnc: UInt16?
+    let ssh: UInt16?
+
+    init(vnc: String, ssh: String) throws {
+        self.vnc = try Self.parse(vnc)
+        self.ssh = try Self.parse(ssh)
+    }
+
+    private static func parse(_ text: String) throws -> UInt16? {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        guard value.utf8.allSatisfy({ (48...57).contains($0) }), let port = UInt16(value), port != 0 else {
+            throw Endpoint.ParseError.invalidPort
+        }
+        return port
+    }
+}
+
 private final class FixedServiceDelegate: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
@@ -89,6 +108,7 @@ final class TailnetDirectory {
         let computers: [ComputerEntity]
     }
     private static let hiddenDevicesKey = "tailnet.hiddenDevices"
+    private static let devicePortsKey = "tailnet.devicePorts"
     private static let session = URLSession(configuration: .ephemeral, delegate: FixedServiceDelegate(), delegateQueue: nil)
 
     private let defaults: UserDefaults
@@ -96,6 +116,7 @@ final class TailnetDirectory {
     private var secret: String?
     private var attempt = UUID()
     private var hiddenIDs: Set<UUID>
+    private var devicePorts: [UUID: TailnetDevicePorts]
     private var widgetCandidates = [ComputerEntity]()
     private(set) var account: TailnetAccount?
     private(set) var devices = [TailnetDevice]()
@@ -104,11 +125,19 @@ final class TailnetDirectory {
 
     var visibleDevices: [TailnetDevice] { devices.filter { !isHidden($0) } }
     var hiddenDevices: [TailnetDevice] { devices.filter { isHidden($0) } }
-    var widgetComputers: [ComputerEntity] { widgetCandidates.filter { !hiddenIDs.contains($0.id) } }
+    var widgetComputers: [ComputerEntity] {
+        widgetCandidates.filter { !hiddenIDs.contains($0.id) }.map { item in
+            guard devicePorts[item.id]?.vnc != nil, let endpoint = try? Endpoint(address: item.address) else { return item }
+            let configured = configuredEndpoint(endpoint, for: item.id)
+            return ComputerEntity(id: item.id, name: item.name, address: configured.address)
+        }
+    }
 
     init(defaults: UserDefaults = .standard, transport: Transport? = nil) {
         self.defaults = defaults
         hiddenIDs = Set((defaults.stringArray(forKey: Self.hiddenDevicesKey) ?? []).compactMap(UUID.init(uuidString:)))
+        devicePorts = defaults.data(forKey: Self.devicePortsKey)
+            .flatMap { try? JSONDecoder().decode([UUID: TailnetDevicePorts].self, from: $0) } ?? [:]
         self.transport = transport ?? { request in
             let (data, response) = try await Self.session.data(for: request)
             guard let response = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
@@ -186,6 +215,32 @@ final class TailnetDirectory {
     private func isHidden(_ device: TailnetDevice) -> Bool {
         guard let account, let id = device.directoryID(in: account) else { return false }
         return hiddenIDs.contains(id)
+    }
+
+    func directoryID(for device: TailnetDevice) -> UUID? {
+        account.flatMap { device.directoryID(in: $0) }
+    }
+
+    func ports(for id: UUID) -> TailnetDevicePorts? { devicePorts[id] }
+
+    func setPorts(_ ports: TailnetDevicePorts, for id: UUID) throws {
+        guard devices.contains(where: { directoryID(for: $0) == id }) else { throw URLError(.resourceUnavailable) }
+        var updated = devicePorts
+        updated[id] = ports.vnc == nil && ports.ssh == nil ? nil : ports
+        guard updated != devicePorts else { return }
+        defaults.set(try JSONEncoder().encode(updated), forKey: Self.devicePortsKey)
+        devicePorts = updated
+    }
+
+    func computer(for device: TailnetDevice) -> Computer? {
+        guard var computer = device.computer else { return nil }
+        if let id = directoryID(for: device) { computer.endpoint = configuredEndpoint(computer.endpoint, for: id) }
+        return computer
+    }
+
+    private func configuredEndpoint(_ endpoint: Endpoint, for id: UUID) -> Endpoint {
+        guard let port = devicePorts[id]?.vnc else { return endpoint }
+        return (try? Endpoint(address: endpoint.host, defaultPort: port)) ?? endpoint
     }
 
     func computerForWidget(_ id: UUID) -> Computer? {

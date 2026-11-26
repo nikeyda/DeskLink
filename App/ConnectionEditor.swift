@@ -41,6 +41,7 @@ struct EditorRequest: Identifiable {
     var folder: String?
     var initialSSHPort: UInt16?
     var initialSSHServer: String?
+    var suggestedSSHPort: UInt16?
     var link: DesktopLink?
 
     static func from(_ link: DesktopLink, in archive: LibraryArchive, allowUnsavedHost: Bool) throws -> Self {
@@ -285,7 +286,7 @@ struct ConnectionEditor: View {
         _allowsRemoteBell = State(initialValue: c?.allowsRemoteBell != false)
         _pcScrollSpeed = State(initialValue: c?.pcScrollSpeed ?? .standard)
         _useSSH = State(initialValue: c?.ssh != nil || request.initialSSHPort != nil)
-        _sshPort = State(initialValue: String(c?.ssh?.port ?? request.initialSSHPort ?? 22))
+        _sshPort = State(initialValue: String(c?.ssh?.port ?? request.initialSSHPort ?? request.suggestedSSHPort ?? 22))
         _sshServer = State(initialValue: c?.ssh?.server ?? request.initialSSHServer ?? "")
         _sshUser = State(initialValue: tunnelUser)
         _sshPassword = State(initialValue: link?.sshPort != nil && link?.keyName == nil ? link?.password ?? "" : "")

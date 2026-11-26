@@ -409,7 +409,7 @@ struct LibraryWindow: View {
                                 } label: { ConnectionTile(name: entry.name, address: nil, symbol: "bonjour") }
                                 .buttonStyle(.plain)
                                 .contextMenu {
-                                    Button("保存到连接库") { nearby.select(entry, completion: saveDiscovered) }
+                                    Button("保存到连接库") { nearby.select(entry) { saveDiscovered($0) } }
                                 }
                             }
                         }.padding(24)
@@ -689,20 +689,21 @@ struct LibraryWindow: View {
         if case let .folder(name) = page { editor = EditorRequest(purpose: .new, folder: name) }
         else { editor = EditorRequest(purpose: .new) }
     }
-    private func open(_ entry: Computer) {
+    private func open(_ entry: Computer, suggestedSSHPort: UInt16? = nil) {
         guard !privacy.locked else { queuedRoute = .saved(entry.id); return }
         if entry.saved || entry.lastConnected != nil,
            let request = try? SessionRequest.remembered(for: entry, synchronize: preferences.bool(forKey: "credentials.synchronize")) {
             editor = nil
             activeSession = request
         } else {
-            editor = EditorRequest(purpose: .connect, computer: entry)
+            editor = EditorRequest(purpose: .connect, computer: entry, suggestedSSHPort: suggestedSSHPort)
         }
     }
 
-    private func saveDiscovered(_ entry: Computer) {
+    private func saveDiscovered(_ entry: Computer, suggestedSSHPort: UInt16? = nil) {
         let existing = library.existingComputer(matching: entry)
-        editor = EditorRequest(purpose: existing?.saved == true ? .edit : .new, computer: existing ?? entry)
+        editor = EditorRequest(purpose: existing?.saved == true ? .edit : .new, computer: existing ?? entry,
+                               suggestedSSHPort: suggestedSSHPort)
     }
 
     private func open(_ entry: Computer, quality: PictureQuality) {
@@ -724,7 +725,7 @@ struct LibraryWindow: View {
         guard !privacy.locked else { queuedRoute = route; return }
         do {
             let request = try editorRequest(for: route)
-            if case .saved = route, let entry = request.computer { open(entry) }
+            if case .saved = route, let entry = request.computer { open(entry, suggestedSSHPort: request.suggestedSSHPort) }
             else { editor = request }
         } catch { ownError = error.localizedDescription }
     }
@@ -742,10 +743,13 @@ struct LibraryWindow: View {
             return try EditorRequest.from(link, in: library.archive, allowUnsavedHost: false)
             #endif
         case .saved(let id):
-            guard let entry = library.archive.computers.first(where: { $0.id == id }) ?? tailnet.computerForWidget(id) else {
+            if let entry = library.archive.computers.first(where: { $0.id == id }) {
+                return EditorRequest(purpose: .connect, computer: entry)
+            }
+            guard let entry = tailnet.computerForWidget(id) else {
                 throw EditorRequest.LinkError.missingComputer
             }
-            return EditorRequest(purpose: .connect, computer: entry)
+            return EditorRequest(purpose: .connect, computer: entry, suggestedSSHPort: tailnet.ports(for: id)?.ssh)
         }
     }
 }
