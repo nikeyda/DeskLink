@@ -103,12 +103,13 @@ enum TrackpadCursorStyle: Equatable, Sendable {
         presence: RemoteCursorPresence,
         allowingFallback: Bool,
         serverRendersCursor: Bool,
-        showsLocalDot: Bool = false
+        showsLocalDot: Bool = false,
+        usesFallbackCursor: Bool = false
     ) -> Self {
         if serverRendersCursor {
             return allowingFallback && showsLocalDot ? .localDot : .hidden
         }
-        guard presence != .hidden else { return .hidden }
+        if presence == .hidden { return usesFallbackCursor ? .fallbackArrow : .hidden }
         if hasServerCursor { return .serverBitmap }
         return allowingFallback && presence == .undescribed ? .fallbackArrow : .hidden
     }

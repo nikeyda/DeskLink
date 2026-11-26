@@ -148,6 +148,7 @@ extension Computer {
         configuration.swapsHardwareCommandAndControl = swapsHardwareCommandAndControl == true
         let localCursor = showsLocalCursor ?? (preferences.object(forKey: "connection.clientCursor") as? Bool ?? true)
         configuration.cursorRendering = localCursor ? .client : .server
+        configuration.usesFallbackCursor = usesFallbackCursor == true
         configuration.reconnectionPolicy.isEnabled = preferences.object(forKey: "connection.reconnect") as? Bool ?? true
         return configuration
     }
@@ -185,6 +186,8 @@ struct ConnectionEditor: View {
     @State private var trackpad: Bool
     @State private var allowsViewportZoom: Bool
     @State private var showsLocalCursor: Bool?
+    @State private var usesFallbackCursor: Bool
+    @AppStorage("connection.clientCursor") private var defaultShowsLocalCursor = true
     @State private var touchHoldDuration: TimeInterval?
     @AppStorage("gesture.holdDuration") private var defaultHoldDuration = RemoteTouchGestureConfiguration.defaultHoldDuration
     @State private var preparesTigerVNCKeyboard: Bool
@@ -256,6 +259,7 @@ struct ConnectionEditor: View {
         _trackpad = State(initialValue: c?.trackpad ?? false)
         _allowsViewportZoom = State(initialValue: c?.allowsViewportZoom != false)
         _showsLocalCursor = State(initialValue: c?.showsLocalCursor)
+        _usesFallbackCursor = State(initialValue: c?.usesFallbackCursor == true)
         _touchHoldDuration = State(initialValue: c?.touchHoldDuration)
         _preparesTigerVNCKeyboard = State(initialValue: c?.preparesTigerVNCKeyboard == true)
         _macHardwareKeyPositions = State(initialValue: c.map { $0.usesMacHardwareKeyPositions == true } ?? true)
@@ -538,6 +542,9 @@ struct ConnectionEditor: View {
                     Text("使用远程光标").tag(false as Bool?)
                 }
                 .accessibilityIdentifier("connection.cursor")
+                Toggle("使用备用光标", isOn: $usesFallbackCursor)
+                    .disabled(!(showsLocalCursor ?? defaultShowsLocalCursor))
+                    .accessibilityIdentifier("connection.fallbackCursor")
                 #if !targetEnvironment(macCatalyst)
                 Toggle("单独设置长按拖动延迟", isOn: Binding(
                     get: { touchHoldDuration != nil },
@@ -691,6 +698,7 @@ struct ConnectionEditor: View {
         entry.trackpad = trackpad
         entry.allowsViewportZoom = allowsViewportZoom ? nil : false
         entry.showsLocalCursor = showsLocalCursor
+        entry.usesFallbackCursor = usesFallbackCursor ? true : nil
         entry.touchHoldDuration = touchHoldDuration
         entry.preparesTigerVNCKeyboard = preparesTigerVNCKeyboard ? true : nil
         entry.usesMacHardwareKeyPositions = macHardwareKeyPositions

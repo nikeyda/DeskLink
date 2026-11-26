@@ -578,6 +578,7 @@ public struct RemoteDesktopView: View {
             // images so the responsive local pointer can adopt their shape.
             remoteCursor: session.remoteCursor,
             remoteCursorPresence: session.remoteCursorPresence,
+            usesFallbackCursor: session.configuration.usesFallbackCursor,
             swapsHardwareCommandAndControl: session.configuration.swapsHardwareCommandAndControl,
             allowsViewportZoom: session.configuration.allowsViewportZoom,
             desktopControls: desktopControls,

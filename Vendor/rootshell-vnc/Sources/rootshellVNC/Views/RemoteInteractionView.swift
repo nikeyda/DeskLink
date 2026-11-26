@@ -40,6 +40,7 @@ struct RemoteInteractionView: UIViewRepresentable {
     let disconnect: () -> Void
     let remoteCursor: RemoteCursor?
     let remoteCursorPresence: RemoteCursorPresence
+    var usesFallbackCursor = false
     var swapsHardwareCommandAndControl = false
     var allowsViewportZoom = true
     var desktopControls: VNCDesktopControls? = nil
@@ -120,7 +121,8 @@ struct RemoteInteractionView: UIViewRepresentable {
             toggleFullScreen: toggleFullScreen,
             disconnect: disconnect,
             remoteCursor: remoteCursor,
-            remoteCursorPresence: remoteCursorPresence)
+            remoteCursorPresence: remoteCursorPresence,
+            usesFallbackCursor: usesFallbackCursor)
     }
 
     @MainActor
@@ -220,8 +222,9 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
     private var trackpadConsumedTranslation = CGPoint.zero
     /// What the server has said about its pointer. A pointer nobody has
     /// described yet earns a locally drawn arrow so relative input has
-    /// something to aim; one the server hid must show nothing.
+    /// something to aim; one the server hid follows the connection's fallback preference.
     private var remoteCursorPresence = RemoteCursorPresence.undescribed
+    private var usesFallbackCursor = false
     /// Bumped whenever the server's shape changes, so a redraw decision can
     /// compare shapes without holding on to the previous image.
     private var remoteCursorShapeRevision: UInt64 = 0
@@ -1198,7 +1201,8 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         toggleFullScreen: (() -> Void)?,
         disconnect: @escaping () -> Void,
         remoteCursor: RemoteCursor?,
-        remoteCursorPresence: RemoteCursorPresence
+        remoteCursorPresence: RemoteCursorPresence,
+        usesFallbackCursor: Bool
     ) {
         if hardwareKeyboard.controlOptionAsCommand != controlOptionAsCommand
             || hardwareKeyboard.swapsCommandAndControl != swapsHardwareCommandAndControl {
@@ -1252,14 +1256,22 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
             viewSize: bounds.size,
             framebufferSize: framebufferSize)
 
+        let cursorPolicyChanged = self.remoteCursorPresence != remoteCursorPresence
+            || self.usesFallbackCursor != usesFallbackCursor
+        let cursorShapeChanged = self.remoteCursor?.image !== remoteCursor?.image
         self.remoteCursorPresence = remoteCursorPresence
-        if self.remoteCursor?.image !== remoteCursor?.image {
+        self.usesFallbackCursor = usesFallbackCursor
+        if cursorShapeChanged {
             self.remoteCursor = remoteCursor
             remoteCursorShapeRevision &+= 1
             logTrackpadCursorShape(remoteCursor)
             #if targetEnvironment(macCatalyst)
             catalystCursor = nil
             catalystCursorDisplayScale = 0
+            #endif
+        }
+        if cursorPolicyChanged || cursorShapeChanged {
+            #if targetEnvironment(macCatalyst)
             if hoverRecognizer.state == .began || hoverRecognizer.state == .changed {
                 applyCatalystCursor()
             }
@@ -4389,7 +4401,8 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
                 let dot = showsLocalCursorDot ? catalystLocalDotCursor() : nil
                 (dot ?? Self.invisibleCatalystCursor).set()
             } else {
-                NSCursor.arrow.set()
+                let hidesPointer = remoteCursorPresence == .hidden && !usesFallbackCursor
+                (hidesPointer ? Self.invisibleCatalystCursor : NSCursor.arrow).set()
             }
             return
         }
@@ -4460,9 +4473,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
     /// Draw the server-selected bitmap at the locally delivered hover point.
     /// This remains as responsive as UIKit's pointer because it does not wait
     /// for the remote cursor-position echo; only shape changes cross the wire.
-    /// `allowingFallback` belongs to the virtual cursor alone. A real pointer
-    /// on the glass already draws itself, so adding a local arrow under it
-    /// would show two pointers where the server described none.
+    /// The virtual cursor also needs a fallback before its first remote shape.
     private func updateRemoteCursorImage(
         at location: CGPoint?,
         allowingFallback: Bool = false
@@ -4483,7 +4494,8 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
             presence: remoteCursorPresence,
             allowingFallback: allowingFallback,
             serverRendersCursor: serverRendersCursor,
-            showsLocalDot: showsLocalCursorDot)
+            showsLocalDot: showsLocalCursorDot,
+            usesFallbackCursor: usesFallbackCursor)
         guard style != .hidden else {
             hideRemoteCursorImage()
             return
@@ -4499,7 +4511,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
                 dot.image, hotspot: dot.hotspot, size: dot.image.size, at: location)
             return
         }
-        if let remoteCursor {
+        if style == .serverBitmap, let remoteCursor {
             if allowingFallback {
                 drawTrackpadCursor(remoteCursor, at: location)
                 return
@@ -4515,10 +4527,6 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
                 at: location)
             return
         }
-        // A pointer nobody has described yet leaves relative pointing with
-        // nothing on screen to aim, and unlike direct touch there is no finger
-        // standing in for it. A pointer the server explicitly hid is the
-        // opposite: the desktop wants no pointer and drawing one would lie.
         guard style == .fallbackArrow,
               let fallback = fallbackCursorImage(.arrow, height: cursorHeight)
         else {
@@ -4574,6 +4582,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
             pointerMode: pointerMode,
             shapeRevision: remoteCursorShapeRevision,
             presence: remoteCursorPresence,
+            usesFallbackCursor: usesFallbackCursor,
             localDot: serverRendersCursor && showsLocalCursorDot,
             height: cursorHeight,
             displayScale: fallbackCursorDisplayScale,
@@ -4599,6 +4608,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         /// not move; without the presence here the hide would be skipped as
         /// "nothing changed" and the fallback arrow would stay on screen.
         var presence: RemoteCursorPresence
+        var usesFallbackCursor: Bool
         var localDot: Bool
         var height: CGFloat
         var displayScale: CGFloat
@@ -4717,7 +4727,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
                 x: -diameter / 2, y: -diameter / 2, width: diameter, height: diameter))
             return UIPointerStyle(shape: .path(dot), constrainedAxes: [])
         }
-        return remoteCursor == nil ? nil : .hidden()
+        return remoteCursor != nil || remoteCursorPresence == .hidden ? .hidden() : nil
     }
 
     func gestureRecognizer(

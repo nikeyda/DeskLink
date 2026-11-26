@@ -5,6 +5,24 @@ import RFBProtocol
 @testable import RFBTransport
 
 @MainActor final class DisplaySizeTests: XCTestCase {
+    func testFallbackCursorOnlySubstitutesClientDrawnPointers() {
+        func style(_ presence: RemoteCursorPresence, trackpad: Bool, fallback: Bool,
+                   serverDrawn: Bool = false, dot: Bool = false) -> TrackpadCursorStyle {
+            TrackpadCursorStyle.resolve(hasServerCursor: presence == .described, presence: presence,
+                                       allowingFallback: trackpad, serverRendersCursor: serverDrawn,
+                                       showsLocalDot: dot, usesFallbackCursor: fallback)
+        }
+        for trackpad in [false, true] {
+            XCTAssertEqual(style(.hidden, trackpad: trackpad, fallback: false), .hidden)
+            XCTAssertEqual(style(.hidden, trackpad: trackpad, fallback: true), .fallbackArrow)
+            XCTAssertEqual(style(.described, trackpad: trackpad, fallback: true), .serverBitmap)
+            XCTAssertEqual(style(.hidden, trackpad: trackpad, fallback: true, serverDrawn: true), .hidden)
+        }
+        XCTAssertEqual(style(.undescribed, trackpad: true, fallback: false), .fallbackArrow)
+        XCTAssertEqual(style(.undescribed, trackpad: false, fallback: true), .hidden)
+        XCTAssertEqual(style(.hidden, trackpad: true, fallback: true, serverDrawn: true, dot: true), .localDot)
+    }
+
     func testPCScrollSpeedPersistsAndPreservesFractionalMovement() throws {
         var computer = Computer(endpoint: try Endpoint(address: "scroll.fixture.invalid"))
         let legacy = try JSONEncoder().encode(computer)

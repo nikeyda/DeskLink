@@ -54,6 +54,7 @@ struct ScreensArchive: Decodable {
         let hardwareKeyboardMode: Int?
         let permuteCmdAndCtrlModifierKeys: Bool?
         let showLocalCursor: Bool?
+        let useFallbackCursor: Bool?
         let turnOffZooming: Bool?
         let onScreenDragDelay: TimeInterval?
         let pcScrollSpeed: Int?
@@ -93,6 +94,7 @@ struct ScreensArchive: Decodable {
             result.screensAuthenticationMethod = authenticationMethod
             result.swapsHardwareCommandAndControl = permuteCmdAndCtrlModifierKeys == true ? true : nil
             result.showsLocalCursor = showLocalCursor
+            result.usesFallbackCursor = useFallbackCursor == true ? true : nil
             result.allowsViewportZoom = turnOffZooming == true ? false : nil
             result.touchHoldDuration = onScreenDragDelay
             if let pcScrollSpeed {
@@ -230,6 +232,7 @@ extension ScreensArchive {
             record["pcScrollSpeed"] = (computer.pcScrollSpeed ?? .standard).screensPosition
             record["startInObserveMode"] = computer.viewOnly
             record["showLocalCursor"] = computer.showsLocalCursor ?? (preferences.object(forKey: "connection.clientCursor") as? Bool ?? true)
+            record["useFallbackCursor"] = computer.usesFallbackCursor == true
             record["turnOffZooming"] = computer.allowsViewportZoom == false
             record["onScreenDragDelay"] = computer.touchHoldDuration ?? (preferences.object(forKey: "gesture.holdDuration") as? Double
                 ?? RemoteTouchGestureConfiguration.defaultHoldDuration)

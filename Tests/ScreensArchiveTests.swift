@@ -87,6 +87,8 @@ final class ScreensArchiveTests: XCTestCase {
         preferences.set(0.85, forKey: "gesture.holdDuration")
         var original = try ScreensArchive.convert(fixture("screens-direct"))
         XCTAssertEqual(original.computers[0].showsLocalCursor, true)
+        XCTAssertFalse(original.computers[0].configuration(preferences: preferences).usesFallbackCursor)
+        original.computers[0].usesFallbackCursor = true
         XCTAssertEqual(original.computers[0].touchHoldDuration, 0.3)
         XCTAssertEqual(original.computers[0].configuration(preferences: preferences).cursorRendering, .client)
         let inherited = Computer(name: "Inherited", endpoint: try Endpoint(address: "pointer-fixture.invalid"))
@@ -94,10 +96,13 @@ final class ScreensArchiveTests: XCTestCase {
         let native = try LibraryArchive.read(original.encoded())
         XCTAssertNil(native.computers[1].touchHoldDuration)
         XCTAssertNil(native.computers[1].showsLocalCursor)
+        XCTAssertEqual(native.computers[0].usesFallbackCursor, true)
+        XCTAssertNil(native.computers[1].usesFallbackCursor)
         XCTAssertEqual(native.computers[1].configuration(preferences: preferences).cursorRendering, .server)
         let exported = try ScreensArchive.export(native, knownMacs: [], sharedClipboard: false, preferences: preferences)
         let imported = try ScreensArchive.convert(exported)
         XCTAssertEqual(imported.computers.map(\.showsLocalCursor), [true, false])
+        XCTAssertEqual(imported.computers.map { $0.configuration(preferences: preferences).usesFallbackCursor }, [true, false])
         XCTAssertEqual(imported.computers.map(\.touchHoldDuration), [0.3, 0.85])
     }
 

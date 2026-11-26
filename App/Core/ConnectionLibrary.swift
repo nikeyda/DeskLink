@@ -92,6 +92,7 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
     var trackpad = false
     var allowsViewportZoom: Bool?
     var showsLocalCursor: Bool?
+    var usesFallbackCursor: Bool?
     var touchHoldDuration: TimeInterval?
     var preparesTigerVNCKeyboard: Bool?
     var usesMacHardwareKeyPositions: Bool?

@@ -285,6 +285,9 @@ public struct VNCConfiguration: Sendable {
     /// session advertises, so it takes effect only on a new connection.
     public var cursorRendering: VNCCursorRendering
 
+    /// Draw a local arrow when the server explicitly hides a client-rendered pointer.
+    public var usesFallbackCursor = false
+
     /// Match physical keyboard positions to the input source on a compatible Mac.
     public var usesMacHardwareKeyPositions = false
     public var swapsHardwareCommandAndControl = false
