@@ -106,6 +106,7 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
     private var inheritsPointerMode: Bool?
     var cursorTrackingSpeed: Double?
     var allowsViewportZoom: Bool?
+    var initialViewportSizing: RemoteViewportSizing?
     var showsLocalCursor: Bool?
     var usesFallbackCursor: Bool?
     var touchHoldDuration: TimeInterval?

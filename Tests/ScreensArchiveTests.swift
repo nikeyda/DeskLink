@@ -246,6 +246,22 @@ final class ScreensArchiveTests: XCTestCase {
         }
     }
 
+    func testInitialFramingSurvivesBothArchiveFormats() throws {
+        let cases: [(Int?, RemoteViewportSizing?)] = [
+            (nil, nil), (0, nil), (1, .fill), (2, .actualSize), (999, nil),
+        ]
+        for (initial, expected) in cases {
+            let source = try modified { $0["initialScalingMode"] = initial }
+            let imported = try ScreensArchive.convert(source)
+            let native = try LibraryArchive.read(imported.encoded())
+            XCTAssertEqual(try XCTUnwrap(native.computers.first).initialViewportSizing, expected)
+            let exported = try ScreensArchive.export(native, knownMacs: [], sharedClipboard: true)
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: exported) as? [String: Any])
+            let records = try XCTUnwrap(object["screens"] as? [[String: Any]])
+            XCTAssertEqual(records.first?["initialScalingMode"] as? Int, (expected ?? .fit).rawValue)
+        }
+    }
+
     func testRemoteBellSettingSurvivesBothArchiveFormats() throws {
         for flag: Bool? in [nil, true, false] {
             let data = try modified { $0["allowBellSignal"] = flag }

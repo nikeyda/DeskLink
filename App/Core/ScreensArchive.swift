@@ -80,6 +80,7 @@ struct ScreensArchive: Decodable {
         let imageCompressionMode: Int?
         let tightVncJPEGEncodingQuality: Int?
         let turnOffZooming: Bool?
+        let initialScalingMode: Int?
         let onScreenDragDelay: TimeInterval?
         let pcScrollSpeed: Int?
         let startInObserveMode: Bool
@@ -136,6 +137,9 @@ struct ScreensArchive: Decodable {
             }
             result.framebufferQuality = framebuffer == FramebufferQuality() ? nil : framebuffer
             result.allowsViewportZoom = turnOffZooming == true ? false : nil
+            if let initialScalingMode, initialScalingMode != RemoteViewportSizing.fit.rawValue {
+                result.initialViewportSizing = RemoteViewportSizing(rawValue: initialScalingMode)
+            }
             result.touchHoldDuration = onScreenDragDelay
             if let pcScrollSpeed {
                 guard let speed = RemoteScrollSpeed.allCases.first(where: { $0.screensPosition == pcScrollSpeed }) else {
@@ -281,6 +285,7 @@ extension ScreensArchive {
             record["imageCompressionMode"] = framebuffer.compression.screensCompressionMode
             record["tightVncJPEGEncodingQuality"] = framebuffer.resolvedTightJPEGQuality
             record["turnOffZooming"] = computer.allowsViewportZoom == false
+            record["initialScalingMode"] = (computer.initialViewportSizing ?? .fit).rawValue
             record["onScreenDragDelay"] = computer.touchHoldDuration ?? (preferences.object(forKey: "gesture.holdDuration") as? Double
                 ?? RemoteTouchGestureConfiguration.defaultHoldDuration)
             record["useSharedClipboard"] = sharedClipboard && computer.automaticallySharesClipboard != false

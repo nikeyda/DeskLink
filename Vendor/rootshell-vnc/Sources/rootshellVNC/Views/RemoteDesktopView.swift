@@ -61,7 +61,7 @@ public struct RemoteDesktopView: View {
     @Bindable var session: VNCSession
     @Environment(\.displayScale) private var displayScale
 
-    @State private var viewport = RemoteViewportState()
+    @State private var viewport: RemoteViewportState
     /// Height at the bottom that a docked HUD bar keeps clear of the fitted screen.
     @State private var hudReserve: CGFloat = 0
     @State private var viewportPanningMode: RemoteViewportPanningMode
@@ -141,6 +141,7 @@ public struct RemoteDesktopView: View {
         hudSafeAreaEdges: Edge.Set = .all,
         clipboardSynchronizer: VNCClipboardSynchronizer? = nil,
         initialViewportPanningMode: RemoteViewportPanningMode = .edge,
+        initialViewportSizing: RemoteViewportSizing = .fit,
         initialPointerMode: RemotePointerMode = .direct,
         pointerSpeed: Double = 1.0,
         cursorHeight: CGFloat = 17,
@@ -154,6 +155,7 @@ public struct RemoteDesktopView: View {
         self.session = session
         self.hostOwnsRecoveryChrome = hostOwnsRecoveryChrome
         self.hudMenuExtras = hudMenuExtras
+        self._viewport = State(initialValue: RemoteViewportState(sizing: initialViewportSizing))
         self._viewportPanningMode = State(initialValue: initialViewportPanningMode)
         self._localPointerMode = State(initialValue: initialPointerMode)
         self.pointerSpeed = pointerSpeed
@@ -328,12 +330,13 @@ public struct RemoteDesktopView: View {
                     width: geometry.size.width,
                     height: max(1, geometry.size.height - hudReserve))
 
+                let transform = viewport.renderScale(viewSize: contentSize, framebufferSize: framebufferSize)
                 ZStack {
                     Color.black
                         .ignoresSafeArea()
 
                     desktopContent(in: contentSize)
-                        .scaleEffect(viewport.scale)
+                        .scaleEffect(x: transform.width, y: transform.height)
                         .offset(viewport.offset)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
@@ -429,7 +432,10 @@ public struct RemoteDesktopView: View {
                         presentPendingLoginPasswordPrompt()
                     }
                 }
-                .onChange(of: displayScale) { _, _ in
+                .onChange(of: displayScale, initial: true) { oldScale, newScale in
+                    viewport.displayScale = newScale
+                    guard oldScale != newScale else { return }
+                    viewport.clampOffset(viewSize: contentSize, framebufferSize: framebufferSize)
                     #if canImport(UIKit)
                     updateRemoteDisplaySizeFromMeasuredContainer()
                     #else
@@ -1423,33 +1429,48 @@ private struct StandardFramebufferContent: View {
 
 /// A read-only monitor window has a presentation layer and no input responder.
 public struct VNCMonitorPicture: View {
+    @Environment(\.displayScale) private var displayScale
     private let session: VNCSession
     private let region: CGRect?
+    private let sizing: RemoteViewportSizing
 
-    public init(session: VNCSession, region: CGRect? = nil) {
+    public init(session: VNCSession, region: CGRect? = nil, sizing: RemoteViewportSizing = .fit) {
         self.session = session
         self.region = region
+        self.sizing = sizing
     }
 
     public var body: some View {
         GeometryReader { proxy in
-            #if canImport(UIKit)
-            if session.isHighPerformanceMode {
-                AdaptiveDisplayView(primaryRenderer: session.videoBandRenderer,
-                                    secondaryRenderer: session.secondaryVideoBandRenderer,
-                                    displayRegions: session.presentedVideoDisplayRegions,
-                                    cropRegion: region ?? session.selectedVirtualRegion,
-                                    independentLayers: true, brightnessGain: 1)
-            } else {
-                StandardFramebufferContent(session: session, cropRegion: region ?? session.presentedFramebufferRegion,
-                                           showsWaitingCard: false, brightnessGain: 1, viewSize: proxy.size)
-            }
-            #else
-            StandardFramebufferContent(session: session, cropRegion: region ?? session.presentedFramebufferRegion,
-                                       showsWaitingCard: false, brightnessGain: 1, viewSize: proxy.size)
-            #endif
+            let transform = RemoteViewportState(sizing: sizing, displayScale: displayScale)
+                .renderScale(viewSize: proxy.size, framebufferSize: region?.size ?? session.presentedFramebufferSize)
+            picture(in: proxy.size)
+                .scaleEffect(x: transform.width, y: transform.height)
         }
+        .clipped()
         .background(.black)
+    }
+
+    @ViewBuilder
+    private func picture(in size: CGSize) -> some View {
+        #if canImport(UIKit)
+        if session.isHighPerformanceMode {
+            AdaptiveDisplayView(primaryRenderer: session.videoBandRenderer,
+                                secondaryRenderer: session.secondaryVideoBandRenderer,
+                                displayRegions: session.presentedVideoDisplayRegions,
+                                cropRegion: region ?? session.selectedVirtualRegion,
+                                independentLayers: true, brightnessGain: 1)
+        } else {
+            standardPicture(in: size)
+        }
+        #else
+        standardPicture(in: size)
+        #endif
+    }
+
+    private func standardPicture(in size: CGSize) -> some View {
+        StandardFramebufferContent(session: session, cropRegion: region ?? session.presentedFramebufferRegion,
+                                   showsWaitingCard: false, brightnessGain: 1, viewSize: size)
     }
 }
 

@@ -108,12 +108,15 @@ struct SessionScreen: View {
         #if targetEnvironment(macCatalyst)
         let keyboard: VNCKeyboardCapture? = nil
         let remoteActivity: (@MainActor () -> Void)? = nil
+        let initialSizing = RemoteViewportSizing.fit
         #else
+        let initialSizing = request.computer.initialViewportSizing ?? .fit
         let keyboard: VNCKeyboardCapture? = toolbar.keyboard
         let remoteActivity: (@MainActor () -> Void)? = toolbarStyle == .carousel ? toolbar.noteRemoteActivity : nil
         #endif
         let desktop = RemoteDesktopView(session: session, keyboardCapture: keyboard, isFullScreen: fullscreen,
                                  toggleFullScreen: toggleFullScreen, clipboardSynchronizer: clipboard,
+                                 initialViewportSizing: initialSizing,
                                  pointerSpeed: cursorTrackingSpeed ?? pointerSpeed, touchGestures: gestures, onRemoteInput: remoteActivity,
                                  onSharedClipboardUserChange: setClipboardSharing, hudMenuExtras: pointerMenuExtras)
             .controllingPointerMode($pointerMode)
@@ -260,8 +263,9 @@ struct SessionScreen: View {
                         } else if observing { ObservedPicture(session: session) }
                         else { remoteDesktop.ignoresSafeArea(.keyboard) }
                         #else
-                        if observing { ObservedPicture(session: session) }
-                        else {
+                        if observing {
+                            ObservedPicture(session: session, sizing: request.computer.initialViewportSizing ?? .fit)
+                        } else {
                             InteractiveDesktop(desktop: remoteDesktop, session: session, controls: controls, bar: toolbar,
                                                chooseMonitor: chooseMonitor, startDictation: { showsDictation = true },
                                                captureScreenshot: captureScreenshot)
@@ -649,12 +653,13 @@ struct SessionScreen: View {
 /// Observe mode owns no input responder, clipboard controller or file drop target.
 struct ObservedPicture: View {
     let session: VNCSession
+    var sizing: RemoteViewportSizing = .fit
 
     var body: some View {
         ZStack {
             Color.black
-            if session.isHighPerformanceMode {
-                VNCMonitorPicture(session: session)
+            if session.isHighPerformanceMode || (sizing != .fit && session.hasPresentedStandardPicture) {
+                VNCMonitorPicture(session: session, sizing: sizing)
             } else if case let .image(image) = session.presentedFrame {
                 Image(decorative: image, scale: 1).resizable().scaledToFit()
             } else {

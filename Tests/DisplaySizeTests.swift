@@ -5,6 +5,45 @@ import RFBProtocol
 @testable import RFBTransport
 
 @MainActor final class DisplaySizeTests: XCTestCase {
+    func testInitialFramingUsesOneTransformForPictureAndPointer() throws {
+        let view = CGSize(width: 400, height: 300)
+        let remote = CGSize(width: 800, height: 400)
+        let point = CGPoint(x: 125, y: 100)
+        let fit = RemoteViewportState()
+        XCTAssertEqual(fit.displayedFrame(viewSize: view, framebufferSize: remote),
+                       CGRect(x: 0, y: 50, width: 400, height: 200))
+
+        var fill = RemoteViewportState(sizing: .fill)
+        XCTAssertEqual(fill.displayedFrame(viewSize: view, framebufferSize: remote),
+                       CGRect(x: -100, y: 0, width: 600, height: 300))
+        let mapped = try XCTUnwrap(fill.framebufferPoint(for: point, viewSize: view, framebufferSize: remote))
+        let roundTrip = try XCTUnwrap(fill.viewPoint(forFramebufferPoint: mapped, viewSize: view, framebufferSize: remote))
+        XCTAssertEqual(roundTrip.x, point.x, accuracy: 0.001)
+        XCTAssertEqual(roundTrip.y, point.y, accuracy: 0.001)
+        XCTAssertNotEqual(fill.edgeScrollTranslation(
+            for: .zero, viewSize: view, framebufferSize: remote, elapsedTime: 0.01), .zero)
+        fill.zoom(by: 0.9, around: point, viewSize: view, framebufferSize: remote)
+        XCTAssertEqual(fill.sizing, .fill)
+        fill.zoom(by: 0.5, around: point, viewSize: view, framebufferSize: remote)
+        XCTAssertTrue(fill.isIdentity)
+
+        var actual = RemoteViewportState(sizing: .actualSize)
+        actual.displayScale = 2
+        let small = CGSize(width: 200, height: 100)
+        XCTAssertEqual(actual.displayedFrame(viewSize: view, framebufferSize: small),
+                       CGRect(x: 150, y: 125, width: 100, height: 50))
+        XCTAssertNil(actual.framebufferPoint(for: point, viewSize: view, framebufferSize: small))
+        XCTAssertEqual(actual.framebufferPoint(
+            for: CGPoint(x: 170, y: 140), viewSize: view, framebufferSize: small),
+            CGPoint(x: 40, y: 30))
+        let almostSquare = CGSize(width: 200, height: 202)
+        XCTAssertEqual(actual.displayedFrame(viewSize: CGSize(width: 400, height: 400),
+                                            framebufferSize: almostSquare)?.size,
+                       CGSize(width: 100, height: 101))
+        actual.reset()
+        XCTAssertTrue(actual.isIdentity)
+    }
+
     func testFallbackCursorOnlySubstitutesClientDrawnPointers() {
         func style(_ presence: RemoteCursorPresence, trackpad: Bool, fallback: Bool,
                    serverDrawn: Bool = false, dot: Bool = false) -> TrackpadCursorStyle {

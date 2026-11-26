@@ -206,6 +206,9 @@ struct ConnectionEditor: View {
     @State private var pointerMode: RemotePointerMode?
     @State private var cursorTrackingSpeed: Double?
     @State private var allowsViewportZoom: Bool
+    #if !targetEnvironment(macCatalyst)
+    @State private var initialViewportSizing: RemoteViewportSizing
+    #endif
     @State private var showsLocalCursor: Bool?
     @State private var usesFallbackCursor: Bool
     @AppStorage("connection.clientCursor") private var defaultShowsLocalCursor = true
@@ -283,6 +286,9 @@ struct ConnectionEditor: View {
         _pointerMode = State(initialValue: c?.pointerModeOverride)
         _cursorTrackingSpeed = State(initialValue: CursorTrackingSpeed.validated(c?.cursorTrackingSpeed))
         _allowsViewportZoom = State(initialValue: c?.allowsViewportZoom != false)
+        #if !targetEnvironment(macCatalyst)
+        _initialViewportSizing = State(initialValue: c?.initialViewportSizing ?? .fit)
+        #endif
         _showsLocalCursor = State(initialValue: c?.showsLocalCursor)
         _usesFallbackCursor = State(initialValue: c?.usesFallbackCursor == true)
         _touchHoldDuration = State(initialValue: c?.touchHoldDuration)
@@ -562,6 +568,14 @@ struct ConnectionEditor: View {
                     #endif
                 }
                 Toggle("记住上次选择的显示器", isOn: $rememberMonitor)
+                #if !targetEnvironment(macCatalyst)
+                Picker("连接时缩放", selection: $initialViewportSizing) {
+                    Text("适合屏幕").tag(RemoteViewportSizing.fit)
+                    Text("填满屏幕").tag(RemoteViewportSizing.fill)
+                    Text("实际大小").tag(RemoteViewportSizing.actualSize)
+                }
+                .accessibilityIdentifier("connection.initialViewportSizing")
+                #endif
                 Toggle("允许捏合缩放", isOn: $allowsViewportZoom)
                     .accessibilityIdentifier("connection.viewportZoom")
                 if quality == .adaptive {
@@ -793,6 +807,9 @@ struct ConnectionEditor: View {
         entry.pointerModeOverride = pointerMode
         entry.cursorTrackingSpeed = cursorTrackingSpeed
         entry.allowsViewportZoom = allowsViewportZoom ? nil : false
+        #if !targetEnvironment(macCatalyst)
+        entry.initialViewportSizing = initialViewportSizing == .fit ? nil : initialViewportSizing
+        #endif
         entry.showsLocalCursor = showsLocalCursor
         entry.usesFallbackCursor = usesFallbackCursor ? true : nil
         entry.touchHoldDuration = touchHoldDuration

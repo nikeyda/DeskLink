@@ -90,6 +90,85 @@ final class CursorTrackingUITests: XCTestCase {
         add(screenshot)
     }
 
+    func testSavedInitialFramingChangesPictureAndRemotePresses() async throws {
+        continueAfterFailure = false
+        let desktop = LocalTestDisplay()
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString]
+        app.launch()
+
+        let create = app.buttons["library.empty.new"].firstMatch
+        XCTAssertTrue(create.waitForExistence(timeout: 10))
+        create.tap()
+        let host = app.textFields["connection.host"]
+        host.tap()
+        host.typeText("127.0.0.1:\(port)")
+        let editor = app.collectionViews["connection.form"].firstMatch
+        let display = editor.buttons["显示器"].firstMatch
+        let sizing = editor.descendants(matching: .any).matching(identifier: "connection.initialViewportSizing").firstMatch
+        func saveFraming(_ name: String) {
+            reveal(display, in: editor)
+            display.tap()
+            reveal(sizing, in: editor)
+            sizing.tap()
+            let choice = app.buttons[name].firstMatch
+            XCTAssertTrue(choice.waitForExistence(timeout: 5))
+            choice.tap()
+            app.buttons["connection.submit"].firstMatch.tap()
+        }
+        let saved = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.computer.")).firstMatch
+        let input = app.descendants(matching: .any).matching(identifier: "session.input").firstMatch
+        func connect() async throws {
+            XCTAssertTrue(saved.waitForExistence(timeout: 8))
+            let frames = desktop.frameCount
+            saved.tap()
+            let submit = app.buttons["connection.submit"].firstMatch
+            XCTAssertTrue(submit.waitForExistence(timeout: 6))
+            submit.tap()
+            try await waitUntil { desktop.frameCount > frames && input.isHittable }
+        }
+        func pressSeparation() async throws -> Int {
+            let center = input.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            let prior = desktop.primaryPresses.count
+            center.withOffset(CGVector(dx: -14, dy: 0)).tap()
+            try await waitUntil { desktop.primaryPresses.count >= prior + 1 }
+            center.withOffset(CGVector(dx: 14, dy: 0)).tap()
+            try await waitUntil { desktop.primaryPresses.count >= prior + 2 }
+            return desktop.primaryPresses[prior + 1] - desktop.primaryPresses[prior]
+        }
+        func capture(_ name: String) {
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = name
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+        }
+
+        saveFraming("实际大小")
+        try await connect()
+        let actual = try await pressSeparation()
+        XCTAssertEqual(Double(actual), 28 * UIScreen.main.scale, accuracy: 2)
+        capture("Actual size with a 160×96 remote picture")
+        app.buttons["session.close"].firstMatch.tap()
+        try await waitUntil { desktop.closedConnections == 1 }
+
+        saved.press(forDuration: 0.8)
+        app.buttons["编辑连接"].firstMatch.tap()
+        saveFraming("填满屏幕")
+        app.terminate()
+        app.launch()
+        try await connect()
+        let fill = try await pressSeparation()
+        XCTAssertGreaterThan(fill, 0)
+        XCTAssertLessThan(fill, actual / 2)
+        capture("Fill with the same remote picture")
+        let receipt = XCTAttachment(string: "Actual size: \(actual) px\nFill: \(fill) px")
+        receipt.name = "Remote pointer distances for initial framing"
+        receipt.lifetime = .keepAlways
+        add(receipt)
+    }
+
     private func reveal(_ element: XCUIElement, in form: XCUIElement) {
         for _ in 0..<8 {
             if element.isHittable, form.frame.insetBy(dx: 0, dy: 15).contains(CGPoint(x: element.frame.midX, y: element.frame.midY)) {

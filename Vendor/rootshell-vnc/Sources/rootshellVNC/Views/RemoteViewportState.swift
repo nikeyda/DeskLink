@@ -5,11 +5,16 @@ public enum RemoteViewportPanningMode: CaseIterable, Hashable, Sendable {
     case continuous
 }
 
+/// How the remote picture is framed when a connection opens.
+public enum RemoteViewportSizing: Int, CaseIterable, Sendable, Codable {
+    case fit = 0
+    case fill = 1
+    case actualSize = 2
+}
+
 /// Zoom/pan state shared by the lossless and adaptive renderers.
 ///
-/// The state is expressed relative to the aspect-fit desktop: scale 1 is the
-/// complete screen, and offset is measured in view points from its centered
-/// position. Keeping the transform here gives rendering and input conversion
+/// Gestures scale the selected framing and offset it from the center in view points. Keeping the transform here gives rendering and input conversion
 /// one source of truth.
 struct RemoteViewportState: Equatable, Sendable {
     static let minimumScale: CGFloat = 1
@@ -17,14 +22,22 @@ struct RemoteViewportState: Equatable, Sendable {
     static let edgeScrollActivationInset: CGFloat = 24
     static let maximumEdgeScrollSpeed: CGFloat = 2_400
 
+    private(set) var sizing: RemoteViewportSizing = .fit
+    var displayScale: CGFloat
     private(set) var scale: CGFloat = minimumScale
     private(set) var offset: CGSize = .zero
 
+    init(sizing: RemoteViewportSizing = .fit, displayScale: CGFloat = 1) {
+        self.sizing = sizing
+        self.displayScale = displayScale
+    }
+
     var isIdentity: Bool {
-        scale == Self.minimumScale && offset == .zero
+        sizing == .fit && scale == Self.minimumScale && offset == .zero
     }
 
     mutating func reset() {
+        sizing = .fit
         scale = Self.minimumScale
         offset = .zero
     }
@@ -39,14 +52,19 @@ struct RemoteViewportState: Equatable, Sendable {
               viewSize.width > 0, viewSize.height > 0 else { return }
 
         let oldScale = scale
-        let newScale = min(
-            Self.maximumScale,
-            max(Self.minimumScale, oldScale * factor))
+        let framing = sizingScale(viewSize: viewSize, framebufferSize: framebufferSize)
+        let minimum = min(Self.minimumScale, 1 / max(framing.width, framing.height))
+        let newScale = min(Self.maximumScale, max(minimum, oldScale * factor))
         // Matching UIScrollView's minimum-zoom behavior, pinching inward at
         // the fitted scale restores the canonical centered viewport. This
         // also gives a panned-but-unzoomed desktop an immediate natural reset.
-        if newScale == Self.minimumScale, factor < 1 {
-            reset()
+        if newScale == minimum, factor < 1 {
+            if sizing == .fit || minimum < Self.minimumScale {
+                reset()
+            } else {
+                scale = minimum
+                offset = .zero
+            }
             return
         }
         guard newScale != oldScale else { return }
@@ -82,7 +100,7 @@ struct RemoteViewportState: Equatable, Sendable {
         framebufferSize: CGSize,
         elapsedTime: Double
     ) -> CGSize {
-        guard scale > Self.minimumScale,
+        guard isMagnified(viewSize: viewSize, framebufferSize: framebufferSize),
               elapsedTime.isFinite, elapsedTime > 0,
               let frame = displayedFrame(
                 viewSize: viewSize,
@@ -116,7 +134,7 @@ struct RemoteViewportState: Equatable, Sendable {
         viewSize: CGSize,
         framebufferSize: CGSize
     ) -> CGSize {
-        guard scale > Self.minimumScale,
+        guard isMagnified(viewSize: viewSize, framebufferSize: framebufferSize),
               let frame = displayedFrame(
             viewSize: viewSize,
             framebufferSize: framebufferSize) else { return .zero }
@@ -292,7 +310,7 @@ struct RemoteViewportState: Equatable, Sendable {
         horizontalInset: CGFloat,
         verticalInset: CGFloat
     ) -> CGSize {
-        guard scale > Self.minimumScale,
+        guard isMagnified(viewSize: viewSize, framebufferSize: framebufferSize),
               viewPoint.x.isFinite, viewPoint.y.isFinite,
               horizontalInset.isFinite, verticalInset.isFinite,
               displayedFrame(
@@ -340,6 +358,35 @@ struct RemoteViewportState: Equatable, Sendable {
         return CGSize(width: fit, height: fit)
     }
 
+    /// Both the rendered picture and input conversion start with the same fitted canvas.
+    func renderScale(viewSize: CGSize, framebufferSize: CGSize) -> CGSize {
+        let framing = sizingScale(viewSize: viewSize, framebufferSize: framebufferSize)
+        return CGSize(width: framing.width * scale, height: framing.height * scale)
+    }
+
+    private func isMagnified(viewSize: CGSize, framebufferSize: CGSize) -> Bool {
+        let transform = renderScale(viewSize: viewSize, framebufferSize: framebufferSize)
+        return max(transform.width, transform.height) > Self.minimumScale
+    }
+
+    private func sizingScale(viewSize: CGSize, framebufferSize: CGSize) -> CGSize {
+        guard sizing != .fit, viewSize.width > 0, viewSize.height > 0,
+              framebufferSize.width > 0, framebufferSize.height > 0 else {
+            return CGSize(width: 1, height: 1)
+        }
+        let fit = Self.fitScale(content: framebufferSize, into: viewSize)
+        let uniform: CGFloat
+        switch sizing {
+        case .fit: return CGSize(width: 1, height: 1)
+        case .fill:
+            uniform = max(viewSize.width / framebufferSize.width,
+                          viewSize.height / framebufferSize.height)
+        case .actualSize:
+            uniform = 1 / max(1, displayScale)
+        }
+        return CGSize(width: uniform / fit.width, height: uniform / fit.height)
+    }
+
     func displayedFrame(
         viewSize: CGSize,
         framebufferSize: CGSize
@@ -350,9 +397,10 @@ struct RemoteViewportState: Equatable, Sendable {
         }
 
         let fit = Self.fitScale(content: framebufferSize, into: viewSize)
+        let transform = renderScale(viewSize: viewSize, framebufferSize: framebufferSize)
         let size = CGSize(
-            width: framebufferSize.width * fit.width * scale,
-            height: framebufferSize.height * fit.height * scale)
+            width: framebufferSize.width * fit.width * transform.width,
+            height: framebufferSize.height * fit.height * transform.height)
         return CGRect(
             x: (viewSize.width - size.width) / 2 + offset.width,
             y: (viewSize.height - size.height) / 2 + offset.height,
