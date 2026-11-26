@@ -2,6 +2,33 @@ import XCTest
 @testable import DeskLink
 
 final class TailnetTests: XCTestCase {
+    @MainActor func testUnifiedSearchFindsOutsideTheSelectedFolderAndKeepsPortsAndVisibility() async throws {
+        let domain = "TelescopeTailnetSearch." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let service = DirectoryFixture()
+        let directory = TailnetDirectory(defaults: defaults) { try await service.reply(to: $0) }
+        try await directory.link(TailnetAccount(tailnet: "fixture.example", clientID: "fixture"),
+                                 secret: "fixture-only", remember: false)
+        let device = try XCTUnwrap(directory.visibleDevices.first)
+        let id = try XCTUnwrap(directory.directoryID(for: device))
+        directory.addFolder("Studio")
+        let studio = try XCTUnwrap(directory.selectedFolder)
+        directory.moveDevice(id, to: studio.id)
+        directory.addFolder("Home")
+        XCTAssertTrue(directory.devicesInSelectedFolder.isEmpty)
+        try directory.setPorts(TailnetDevicePorts(vnc: "5910", ssh: "2200"), for: id)
+
+        let query = LibrarySearchQuery("STUDIO 5910")
+        let result = try XCTUnwrap(directory.searchMatches(query).first)
+        XCTAssertEqual(result.id, device.id)
+        XCTAssertEqual(result.folder, studio.name)
+        XCTAssertEqual(result.computer.endpoint.port, 5910)
+        XCTAssertEqual(result.sshPort, 2200)
+        directory.setHidden(true, device: device)
+        XCTAssertTrue(directory.searchMatches(query).isEmpty)
+    }
+
     func testAccountRejectsPathInjectionAndEscapesFormFields() throws {
         for invalid in ["", ".", "..", "example/other", "x?bearer", "//example", "two words"] {
             XCTAssertThrowsError(try TailnetAccount(tailnet: invalid, clientID: "id"))

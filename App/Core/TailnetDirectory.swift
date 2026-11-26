@@ -96,6 +96,13 @@ struct TailnetFolder: Codable, Equatable, Identifiable {
     var name: String
 }
 
+struct TailnetSearchMatch: Identifiable, Equatable {
+    let id: String
+    let computer: Computer
+    let folder: String?
+    let sshPort: UInt16?
+}
+
 private final class FixedServiceDelegate: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
@@ -145,6 +152,18 @@ final class TailnetDirectory {
     var devicesInSelectedFolder: [TailnetDevice] {
         guard let selection = selectedFolder?.id else { return visibleDevices }
         return visibleDevices.filter { folderID(for: $0) == selection }
+    }
+
+    func searchMatches(_ query: LibrarySearchQuery) -> [TailnetSearchMatch] {
+        let names = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0.name) })
+        return visibleDevices.compactMap { device in
+            guard let computer = computer(for: device) else { return nil }
+            let folder = folderID(for: device).flatMap { names[$0] }
+            let fields: [String?] = [device.hostname, device.name, computer.endpoint.address, folder]
+            guard query.matches(fields + device.addresses.map(Optional.some)) else { return nil }
+            let sshPort = directoryID(for: device).flatMap { ports(for: $0)?.ssh }
+            return TailnetSearchMatch(id: device.id, computer: computer, folder: folder, sshPort: sshPort)
+        }
     }
 
     private var activeFolders: Folders {

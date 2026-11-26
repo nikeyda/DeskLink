@@ -114,6 +114,8 @@ struct LibraryWindow: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.supportsMultipleWindows) private var supportsMultipleWindows
     @State private var search = ""
+    @State private var sidebarSearchPresented = false
+    @State private var detailSearchPresented = false
     @State private var editor: EditorRequest?
     @State private var activeSession: SessionRequest?
     @State private var showFolder = false
@@ -148,13 +150,17 @@ struct LibraryWindow: View {
 
     private var hiddenItems: HiddenSidebarItems { HiddenSidebarItems(rawValue: hiddenSidebarItems) }
 
-    private var offersNearbyCount: Bool {
-        UIDevice.current.userInterfaceIdiom == .phone && showsNearbyCount
+    private var usesUnifiedSearch: Bool { UIDevice.current.userInterfaceIdiom == .phone }
+    private var offersNearbyCount: Bool { usesUnifiedSearch && showsNearbyCount }
+    private var unifiedQuery: LibrarySearchQuery { LibrarySearchQuery(search) }
+    private var categorySearch: String { usesUnifiedSearch ? "" : search }
+    private var searchesAllSources: Bool {
+        usesUnifiedSearch && (sidebarSearchPresented || detailSearchPresented) && !unifiedQuery.isEmpty
     }
 
     private var discoversNearbyComputers: Bool {
         !privacy.locked && activeSession == nil && scenePhase != .background
-            && !hiddenItems.contains(.nearby) && (page == .nearby || offersNearbyCount)
+            && !hiddenItems.contains(.nearby) && (page == .nearby || offersNearbyCount || searchesAllSources)
     }
 
     private var nearbyCount: Int { offersNearbyCount ? nearby.entries.count : 0 }
@@ -184,8 +190,8 @@ struct LibraryWindow: View {
         default:
             list = library.archive.computers.filter(\.saved)
         }
-        let matching = search.isEmpty ? list : list.filter {
-            $0.displayName.localizedCaseInsensitiveContains(search) || $0.endpoint.address.localizedCaseInsensitiveContains(search)
+        let matching = categorySearch.isEmpty ? list : list.filter {
+            $0.displayName.localizedCaseInsensitiveContains(categorySearch) || $0.endpoint.address.localizedCaseInsensitiveContains(categorySearch)
         }
         return order.wrappedValue.arrange(matching)
     }
@@ -200,46 +206,31 @@ struct LibraryWindow: View {
                 .id(activeSession.id)
             } else {
                 NavigationSplitView {
-                    List(selection: $page) {
-                        if !hiddenItems.contains(.nearby) {
-                            Label("附近", systemImage: "bonjour")
-                                .badge(nearbyCount)
-                                .accessibilityValue(nearbyCount == 0 ? "" : nearbyCount.formatted())
-                                .accessibilityIdentifier("library.nearby")
-                                .tag(CollectionPage.nearby)
+                    if usesUnifiedSearch {
+                        ZStack {
+                            if sidebarSearchPresented && !unifiedQuery.isEmpty { unifiedResults }
+                            else { librarySidebar }
                         }
-                        if !hiddenItems.contains(.tailscale) {
-                            Label("Tailscale", systemImage: "network").tag(CollectionPage.tailscale)
-                        }
-                        if !hiddenItems.isSuperset(of: .linkSection) {
-                            Section("链接") {
-                                if !hiddenItems.contains(.links) {
-                                    Label("所有链接", systemImage: "link").tag(CollectionPage.links)
-                                        .accessibilityIdentifier("library.links")
-                                }
-                                if !hiddenItems.contains(.recent) {
-                                    Label("最近连接", systemImage: "clock").tag(CollectionPage.recent)
-                                }
-                                if !hiddenItems.contains(.favorites) {
-                                    Label("收藏", systemImage: "star").tag(CollectionPage.favorites)
-                                        .accessibilityIdentifier("library.favorites")
-                                }
-                                if !hiddenItems.contains(.links) { folderRows(in: .links) }
-                            }
-                        }
-                        Section("自定义连接") {
-                            Label("所有连接", systemImage: "rectangle.on.rectangle").tag(CollectionPage.all)
-                                .accessibilityIdentifier("library.all")
-                            folderRows(in: .custom)
-                        }
-                    }
-                    .navigationTitle(AppName.display)
-                    .navigationSplitViewColumnWidth(min: 165, ideal: 205, max: 290)
+                        .navigationTitle(AppName.display)
+                        .searchable(text: $search, isPresented: $sidebarSearchPresented,
+                                    placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索所有来源")
+                    } else { librarySidebar }
                 } detail: {
-                    collection
+                    if usesUnifiedSearch {
+                        ZStack {
+                            if detailSearchPresented && !unifiedQuery.isEmpty { unifiedResults }
+                            else { collection }
+                        }
                         .navigationTitle((page ?? .all).title)
-                        .searchable(text: $search, prompt: "搜索")
+                        .searchable(text: $search, isPresented: $detailSearchPresented,
+                                    placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索所有来源")
                         .toolbar { libraryToolbar }
+                    } else {
+                        collection
+                            .navigationTitle((page ?? .all).title)
+                            .searchable(text: $search, prompt: "搜索")
+                            .toolbar { libraryToolbar }
+                    }
                 }
                 .onChange(of: hiddenSidebarItems, initial: true) {
                     if let page, !hiddenItems.isDisjoint(with: page.sidebarItem) {
@@ -267,6 +258,11 @@ struct LibraryWindow: View {
         .onChange(of: discoversNearbyComputers, initial: true) { _, browsing in
             if browsing { nearby.start() }
             else { nearby.stop() }
+        }
+        .task(id: searchesAllSources) {
+            if searchesAllSources, !hiddenItems.contains(.tailscale), tailnet.devices.isEmpty {
+                await tailnet.refresh()
+            }
         }
         .onDisappear { nearby.stop() }
         .sheet(item: $editor) { request in
@@ -422,11 +418,152 @@ struct LibraryWindow: View {
         }
     }
 
+    private var librarySidebar: some View {
+        List(selection: $page) {
+            if !hiddenItems.contains(.nearby) {
+                Label("附近", systemImage: "bonjour")
+                    .badge(nearbyCount)
+                    .accessibilityValue(nearbyCount == 0 ? "" : nearbyCount.formatted())
+                    .accessibilityIdentifier("library.nearby")
+                    .tag(CollectionPage.nearby)
+            }
+            if !hiddenItems.contains(.tailscale) {
+                Label("Tailscale", systemImage: "network").tag(CollectionPage.tailscale)
+            }
+            if !hiddenItems.isSuperset(of: .linkSection) {
+                Section("链接") {
+                    if !hiddenItems.contains(.links) {
+                        Label("所有链接", systemImage: "link").tag(CollectionPage.links)
+                            .accessibilityIdentifier("library.links")
+                    }
+                    if !hiddenItems.contains(.recent) {
+                        Label("最近连接", systemImage: "clock").tag(CollectionPage.recent)
+                    }
+                    if !hiddenItems.contains(.favorites) {
+                        Label("收藏", systemImage: "star").tag(CollectionPage.favorites)
+                            .accessibilityIdentifier("library.favorites")
+                    }
+                    if !hiddenItems.contains(.links) { folderRows(in: .links) }
+                }
+            }
+            Section("自定义连接") {
+                Label("所有连接", systemImage: "rectangle.on.rectangle").tag(CollectionPage.all)
+                    .accessibilityIdentifier("library.all")
+                folderRows(in: .custom)
+            }
+        }
+        .navigationTitle(AppName.display)
+        .navigationSplitViewColumnWidth(min: 165, ideal: 205, max: 290)
+    }
+
+    @ViewBuilder private var unifiedResults: some View {
+        let query = unifiedQuery
+        let stored = query.storedMatches(in: library.archive.computers)
+        let local = hiddenItems.contains(.nearby) ? [] : nearby.entries.filter { query.matches([$0.name]) }
+        let peers = hiddenItems.contains(.tailscale) ? [] : tailnet.searchMatches(query)
+        if stored.isEmpty && local.isEmpty && peers.isEmpty {
+            emptySearch
+                .accessibilityIdentifier("library.search.empty")
+        } else {
+            List {
+                searchSection("已保存的电脑", items: stored.saved, source: "saved", symbol: "desktopcomputer")
+                searchSection("最近连接", items: stored.recent, source: "recent", symbol: "clock")
+                searchSection("临时链接", items: stored.links, source: "link", symbol: "link")
+                if !local.isEmpty {
+                    Section("附近") {
+                        ForEach(local) { item in
+                            Button {
+                                nearby.select(item) {
+                                    endUnifiedSearch()
+                                    editor = EditorRequest(purpose: .connect, computer: $0)
+                                }
+                            } label: {
+                                searchLabel(item.name, symbol: "bonjour")
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("library.search.nearby." + item.id)
+                            .contextMenu {
+                                Button("保存到连接库") {
+                                    nearby.select(item) {
+                                        endUnifiedSearch()
+                                        saveDiscovered($0)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if !peers.isEmpty {
+                    Section("Tailscale") {
+                        ForEach(peers) { item in
+                            Button {
+                                endUnifiedSearch()
+                                open(item.computer, suggestedSSHPort: item.sshPort)
+                            } label: {
+                                searchLabel(item.computer.displayName, address: item.computer.endpoint.address,
+                                            folder: item.folder, symbol: "network")
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("library.search.tailscale." + item.id)
+                            .contextMenu {
+                                Button("保存到连接库") {
+                                    endUnifiedSearch()
+                                    saveDiscovered(item.computer, suggestedSSHPort: item.sshPort)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .listStyle(.insetGrouped)
+            .scrollDismissesKeyboard(.interactively)
+        }
+    }
+
+    @ViewBuilder private func searchSection(_ title: LocalizedStringKey, items: [Computer], source: String, symbol: String) -> some View {
+        if !items.isEmpty {
+            Section(title) {
+                ForEach(items) { item in
+                    Button {
+                        endUnifiedSearch()
+                        open(item)
+                    } label: {
+                        searchLabel(item.displayName, address: item.endpoint.address,
+                                    folder: item.saved ? item.folder : item.linkFolder, symbol: symbol)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("library.search." + source + "." + item.id.uuidString)
+                    .contextMenu { actions(for: item) }
+                }
+            }
+        }
+    }
+
+    private func searchLabel(_ name: String, address: String? = nil, folder: String? = nil, symbol: String) -> some View {
+        Label {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(verbatim: name)
+                let details = [address, folder].compactMap { $0 }.joined(separator: " · ")
+                if !details.isEmpty { Text(verbatim: details).font(.caption).foregroundStyle(.secondary) }
+            }
+        } icon: {
+            Image(systemName: symbol).foregroundStyle(Color.accentColor)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
+    private func endUnifiedSearch() {
+        sidebarSearchPresented = false
+        detailSearchPresented = false
+        search = ""
+    }
+
     @ViewBuilder private var collection: some View {
         if page == .tailscale {
-            TailnetView(directory: tailnet, search: search, select: open, save: saveDiscovered)
+            TailnetView(directory: tailnet, search: categorySearch, select: open, save: saveDiscovered)
         } else if page == .nearby {
-            let results = nearby.entries.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }
+            let results = nearby.entries.filter { categorySearch.isEmpty || $0.name.localizedCaseInsensitiveContains(categorySearch) }
             Group {
                 if let error = nearby.searchError {
                     ContentUnavailableView {
@@ -448,7 +585,7 @@ struct LibraryWindow: View {
                         Button("重新查找") { nearby.retry() }
                             .accessibilityIdentifier("nearby.retry")
                     }
-                } else if results.isEmpty && !search.isEmpty && !nearby.entries.isEmpty {
+                } else if results.isEmpty && !categorySearch.isEmpty && !nearby.entries.isEmpty {
                     emptySearch
                 } else if results.isEmpty {
                     ContentUnavailableView("未找到附近的电脑", systemImage: "bonjour")
@@ -560,7 +697,7 @@ struct LibraryWindow: View {
     }
 
     @ViewBuilder private var emptyCollection: some View {
-        if !search.isEmpty {
+        if !categorySearch.isEmpty {
             emptySearch
         } else {
             switch page ?? .all {
