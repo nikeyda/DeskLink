@@ -1,6 +1,17 @@
 import Foundation
 import RFBProtocol
 
+/// Encodings and protocol extensions that can be omitted from a conventional VNC handshake.
+public enum PortableFramebufferCodec: Int32, CaseIterable, Sendable {
+    case tight = 7
+    case lastRect = -224
+    case zrle = 16
+    case zlib = 6
+    case copyRect = 1
+    case cursor = -239
+    case raw = 0
+}
+
 /// Per-computer policies for standard framebuffer connections and conventional RFB fallbacks.
 public struct FramebufferQuality: Codable, Equatable, Sendable {
     public enum Scope: String, Codable, CaseIterable, Sendable {

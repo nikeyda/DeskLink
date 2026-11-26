@@ -139,3 +139,7 @@ RSA-AES 连接使用「认证方式」「自动协商」「Raspberry Pi · RSA-A
 ## 备用光标
 
 使用本地光标的连接可开启「使用备用光标」。远端主动隐藏指针时显示本地箭头。英文开关名为 “Use Fallback Cursor”。
+
+## VNC 编码
+
+连接编辑器的「显示器 → VNC 编码」可设置 Tight、Tight LastRect、ZRLE、Zlib、CopyRect、Cursor 和 Raw。说明为「允许远端使用所选编码。某些编码取决于远端服务和颜色深度。」英文标题为 “VNC Encodings”。

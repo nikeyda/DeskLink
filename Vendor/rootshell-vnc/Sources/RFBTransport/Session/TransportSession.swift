@@ -528,6 +528,7 @@ public actor TransportSession {
     private var appleDCTRequested: Bool
     private var appleClassicAutoUpdateRequested: Bool
     private let framebufferQuality: FramebufferQuality?
+    private let disabledPortableCodecs: Set<PortableFramebufferCodec>
     private var appleFramebufferScale = AppleFramebufferScale.native
     private let losslessFallbackEncodings: [Encoding]?
 
@@ -1016,6 +1017,7 @@ public actor TransportSession {
         username: String? = nil,
         preferredPixelFormat: PixelFormat = .bgra8888,
         preferredEncodings: [Encoding]? = nil,
+        disabledPortableCodecs: Set<PortableFramebufferCodec> = [],
         preferFullQualityVideo: Bool = false,
         framebufferQuality: FramebufferQuality? = nil,
         losslessFallbackEncodings: [Encoding]? = nil,
@@ -1101,6 +1103,7 @@ public actor TransportSession {
         self.requestedAppleMediaStream = configuredEncodings.contains(.appleH264)
         self.appleDCTRequested = shouldUseAppleDCT
         self.framebufferQuality = framebufferQuality
+        self.disabledPortableCodecs = disabledPortableCodecs
         self.losslessFallbackEncodings = losslessFallbackEncodings
         self.appleClassicAutoUpdateRequested = shouldUseAppleClassicAutoUpdate
         self.serverRendersCursor = serverRendersCursor
@@ -2077,7 +2080,8 @@ public actor TransportSession {
             stateMachine.preferredEncodings = Self.portableEncodings(
                 from: stateMachine.preferredEncodings,
                 preferTight: requestedAppleMediaStream || stateMachine.preferredEncodings.contains(.tight),
-                serverRendersCursor: serverRendersCursor)
+                serverRendersCursor: serverRendersCursor,
+                disabled: disabledPortableCodecs)
             if let scope = framebufferQuality?.compression, stateMachine.preferredEncodings.contains(.tight),
                await appliesFramebufferQuality(scope) {
                 stateMachine.preferredEncodings.append(FramebufferQuality.tightJPEGLevelFour)
@@ -2217,7 +2221,8 @@ public actor TransportSession {
     private nonisolated static func portableEncodings(
         from configured: [Encoding],
         preferTight: Bool,
-        serverRendersCursor: Bool = false
+        serverRendersCursor: Bool = false,
+        disabled: Set<PortableFramebufferCodec> = []
     ) -> [Encoding] {
         var result: [Encoding] = []
         func append(_ encoding: Encoding) {
@@ -2248,7 +2253,12 @@ public actor TransportSession {
         // This list is a rewrite, not an addition, so the cursor fallbacks
         // have to be withheld here as well or a conventional server would
         // start sending shapes the configured list already declined.
-        return suppressingCursorShapes(result, when: serverRendersCursor)
+        // Raw stays decodable because RFC 6143 allows a server to send it even
+        // when it was omitted from SetEncodings.
+        result.removeAll { encoding in
+            PortableFramebufferCodec(rawValue: encoding.rawValue).map { disabled.contains($0) } ?? false
+        }
+        return suppressingCursorShapes(result, when: serverRendersCursor || disabled.contains(.cursor))
     }
 
     private func performAuthentication(_ securityType: SecurityType) async throws {

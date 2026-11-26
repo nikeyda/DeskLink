@@ -360,6 +360,7 @@ public struct VNCConfiguration: Sendable {
     /// always include `.raw` as a fallback, though it will be appended
     /// automatically if absent.
     public var preferredEncodings: [Encoding]
+    public var disabledPortableCodecs: Set<PortableFramebufferCodec> = []
 
     /// Optional connection-specific policies, evaluated against the established network route.
     public var framebufferQuality: FramebufferQuality?

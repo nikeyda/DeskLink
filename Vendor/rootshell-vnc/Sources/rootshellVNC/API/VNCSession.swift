@@ -3925,6 +3925,7 @@ public final class VNCSession {
             username: credentials.username,
             preferredPixelFormat: configuration.effectivePixelFormat,
             preferredEncodings: configuration.effectiveEncodings,
+            disabledPortableCodecs: configuration.disabledPortableCodecs,
             preferFullQualityVideo: configuration.videoQualityMode == .fullQuality,
             framebufferQuality: configuration.effectivePixelFormat.bitsPerPixel == 32 &&
                 configuration.videoQualityMode != .fullQuality ? configuration.framebufferQuality : nil,

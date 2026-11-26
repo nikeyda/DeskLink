@@ -1,4 +1,5 @@
 import rootshellVNC
+import RFBTransport
 import UniformTypeIdentifiers
 import XCTest
 @testable import DeskLink
@@ -104,6 +105,19 @@ final class ScreensArchiveTests: XCTestCase {
         XCTAssertEqual(imported.computers.map(\.showsLocalCursor), [true, false])
         XCTAssertEqual(imported.computers.map { $0.configuration(preferences: preferences).usesFallbackCursor }, [true, false])
         XCTAssertEqual(imported.computers.map(\.touchHoldDuration), [0.3, 0.85])
+    }
+
+    func testPortableCodecsRoundTripThroughOriginalWindowsAndNativeArchives() throws {
+        var archive = try ScreensArchive.convert(fixture("screens-codecs"))
+        let original = try XCTUnwrap(archive.computers.first)
+        XCTAssertEqual(original.disabledVNCCodecs, [7, 16])
+        XCTAssertEqual(original.configuration.disabledPortableCodecs, [.tight, .zrle])
+        archive.computers[0].disabledVNCCodecs = PortableFramebufferCodec.allCases.map(\.rawValue).sorted()
+        let native = try LibraryArchive.read(archive.encoded())
+        let screens = try ScreensArchive.convert(ScreensArchive.export(native, knownMacs: [], sharedClipboard: true))
+        XCTAssertEqual(screens.computers[0].disabledVNCCodecs, archive.computers[0].disabledVNCCodecs)
+        XCTAssertEqual(screens.computers[0].configuration.disabledPortableCodecs, Set(PortableFramebufferCodec.allCases))
+        XCTAssertEqual(screens.computers[0].configuration.cursorRendering, .server)
     }
 
     func testExportSavedProfilesAndPreserveSSHWithoutIncludingSecretsOrRecents() throws {

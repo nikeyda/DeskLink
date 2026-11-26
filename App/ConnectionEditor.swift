@@ -5,6 +5,20 @@ import rootshellVNC
 enum EditorPurpose { case quick, new, edit, connect }
 private enum DesktopSizing { case physical, dynamic, fixed }
 
+private extension PortableFramebufferCodec {
+    var title: String {
+        switch self {
+        case .tight: "Tight"
+        case .lastRect: "Tight LastRect"
+        case .zrle: "ZRLE"
+        case .zlib: "Zlib"
+        case .copyRect: "CopyRect"
+        case .cursor: "Cursor"
+        case .raw: "Raw"
+        }
+    }
+}
+
 private extension VNCDisconnectAction {
     var label: LocalizedStringKey {
         switch self {
@@ -141,13 +155,14 @@ extension Computer {
         configuration.allowsFileTransfers = preferences.object(forKey: "connection.files") as? Bool ?? true
         if allowsRemoteBell != false { configuration.serverBellHandler = { RemoteBell.play() } }
         configuration.framebufferQuality = framebufferQuality ?? FramebufferQuality()
+        configuration.disabledPortableCodecs = Set((disabledVNCCodecs ?? []).compactMap(PortableFramebufferCodec.init(rawValue:)))
         configuration.allowsViewportZoom = allowsViewportZoom != false
         if usesRaspberryPiRSAAES { configuration.securityPolicy = .rsaAES }
         configuration.preparesTigerVNCKeyboard = preparesTigerVNCKeyboard == true
         configuration.usesMacHardwareKeyPositions = usesMacHardwareKeyPositions == true
         configuration.swapsHardwareCommandAndControl = swapsHardwareCommandAndControl == true
         let localCursor = showsLocalCursor ?? (preferences.object(forKey: "connection.clientCursor") as? Bool ?? true)
-        configuration.cursorRendering = localCursor ? .client : .server
+        configuration.cursorRendering = localCursor && !configuration.disabledPortableCodecs.contains(.cursor) ? .client : .server
         configuration.usesFallbackCursor = usesFallbackCursor == true
         configuration.reconnectionPolicy.isEnabled = preferences.object(forKey: "connection.reconnect") as? Bool ?? true
         return configuration
@@ -172,6 +187,7 @@ struct ConnectionEditor: View {
     @State private var quality: PictureQuality
     @State private var colorDepth: ColorDepth
     @State private var framebuffer: FramebufferQuality
+    @State private var disabledVNCCodecs: Set<Int32>
     @State private var disconnectAction: VNCDisconnectAction?
     @State private var savesDisconnectScreenshot: Bool
     @State private var layout: DisplayLayout
@@ -238,6 +254,7 @@ struct ConnectionEditor: View {
         _quality = State(initialValue: offeredQuality)
         _colorDepth = State(initialValue: display.colorDepth ?? .full)
         _framebuffer = State(initialValue: c?.framebufferQuality ?? FramebufferQuality())
+        _disabledVNCCodecs = State(initialValue: Set(c?.disabledVNCCodecs ?? []))
         _disconnectAction = State(initialValue: c?.disconnectAction)
         _savesDisconnectScreenshot = State(initialValue: c?.savesDisconnectScreenshot == true)
         let initialLayout = display.layout
@@ -495,6 +512,20 @@ struct ConnectionEditor: View {
                     imagePolicy("图像压缩", selection: $framebuffer.compression)
                         .accessibilityIdentifier("connection.tightCompression")
                 }
+                DisclosureGroup("VNC 编码") {
+                    ForEach(PortableFramebufferCodec.allCases, id: \.rawValue) { codec in
+                        Toggle(isOn: Binding(
+                            get: { !disabledVNCCodecs.contains(codec.rawValue) },
+                            set: { enabled in
+                                if enabled { disabledVNCCodecs.remove(codec.rawValue) }
+                                else { disabledVNCCodecs.insert(codec.rawValue) }
+                            }
+                        )) { Text(verbatim: codec.title) }
+                        .accessibilityIdentifier("connection.codec." + String(codec.rawValue))
+                    }
+                    Text("允许远端使用所选编码。某些编码取决于远端服务和颜色深度。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 Picker("显示器", selection: $layout) {
                     Text(VNCConfiguration.DisplayMode.oneDisplay.title).tag(DisplayLayout.single)
                     Text(VNCConfiguration.DisplayMode.allDisplaysCombined.title).tag(DisplayLayout.combined)
@@ -543,7 +574,8 @@ struct ConnectionEditor: View {
                 }
                 .accessibilityIdentifier("connection.cursor")
                 Toggle("使用备用光标", isOn: $usesFallbackCursor)
-                    .disabled(!(showsLocalCursor ?? defaultShowsLocalCursor))
+                    .disabled(!(showsLocalCursor ?? defaultShowsLocalCursor)
+                              || disabledVNCCodecs.contains(PortableFramebufferCodec.cursor.rawValue))
                     .accessibilityIdentifier("connection.fallbackCursor")
                 #if !targetEnvironment(macCatalyst)
                 Toggle("单独设置长按拖动延迟", isOn: Binding(
@@ -704,6 +736,7 @@ struct ConnectionEditor: View {
         entry.usesMacHardwareKeyPositions = macHardwareKeyPositions
         entry.swapsHardwareCommandAndControl = swapsHardwareCommandAndControl ? true : nil
         entry.framebufferQuality = framebuffer == FramebufferQuality() ? nil : framebuffer
+        entry.disabledVNCCodecs = disabledVNCCodecs.isEmpty ? nil : disabledVNCCodecs.sorted()
         entry.momentumScrolling = momentumScrolling ? nil : false
         entry.allowsRemoteBell = allowsRemoteBell ? nil : false
         entry.pcScrollSpeed = pcScrollSpeed == .standard ? nil : pcScrollSpeed

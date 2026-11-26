@@ -98,6 +98,7 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
     var usesMacHardwareKeyPositions: Bool?
     var swapsHardwareCommandAndControl: Bool?
     var framebufferQuality: FramebufferQuality?
+    var disabledVNCCodecs: [Int32]?
     var screensOperatingSystem: Int?
     var screensAuthenticationMethod: Int?
     /// Screens v6 exports the Raspberry Pi RSA-AES profile with both fields set to 5.
