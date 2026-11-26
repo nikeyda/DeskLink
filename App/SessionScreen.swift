@@ -64,11 +64,12 @@ struct SessionScreen: View {
 
     private var gestures: RemoteTouchGestureConfiguration {
         var result = RemoteTouchGestureConfiguration.standard
+        result.scrollSpeed = request.computer.scrollSpeed(forMac: session.serverUsesAppleModifierConvention)
         result.upFingers = upFingers
         result.downFingers = downFingers
         result.horizontalFingers = horizontalFingers
         #if !targetEnvironment(macCatalyst)
-        result.holdDuration = holdDuration
+        result.holdDuration = request.computer.touchHoldDuration ?? holdDuration
         result.allowsMomentumScrolling = request.computer.momentumScrolling != false || !session.serverUsesAppleModifierConvention
         result.pencilDoubleTap = pencilDoubleTap
         result.pencilSqueeze = pencilSqueeze
@@ -92,6 +93,7 @@ struct SessionScreen: View {
                                  onSharedClipboardUserChange: setClipboardSharing)
             .desktopControls(controls)
             .onMonitorShortcut(chooseMonitor)
+            .onScreenshotShortcut(captureScreenshot)
         if #available(iOS 26, macCatalyst 26, *) { return desktop.onDictation { showsDictation = true } }
         return desktop
     }
@@ -100,12 +102,16 @@ struct SessionScreen: View {
         self.request = request
         self.library = library
         self.pasteboard = pasteboard
-        _sharesClipboard = State(initialValue: preferences.object(forKey: "connection.sharedClipboard") as? Bool ?? true)
+        let clipboardEnabled = preferences.object(forKey: "connection.sharedClipboard") as? Bool ?? true
+        _sharesClipboard = State(initialValue: clipboardEnabled && request.computer.automaticallySharesClipboard != false)
         self.close = close
         let trust = HostTrust(defaults: preferences)
         _hostTrust = State(initialValue: trust)
         var configuration = request.computer.configuration(preferences: preferences,
             streamingPaused: library.videoRetryDate(for: request.computer) != nil)
+        configuration.rsaHostValidationHandler = { host, port, fingerprint in
+            await trust.verify(host: host, port: port, fingerprint: fingerprint, kind: .rsa)
+        }
         configuration.certificateValidationHandler = { await trust.verifyCertificate($0) }
         if request.computer.viewOnly { configuration.allowsFileTransfers = false }
         if let ssh = request.computer.ssh {
@@ -176,6 +182,9 @@ struct SessionScreen: View {
                             Button(action: captureScreenshot) {
                                 Label("保存屏幕快照", systemImage: "camera").labelStyle(.iconOnly)
                             }.accessibilityIdentifier("session.screenshot")
+                            #if !targetEnvironment(macCatalyst)
+                            .keyboardShortcut("r", modifiers: [.shift, .control, .command])
+                            #endif
                             if !observing, let clipboard {
                                 Menu {
                                     if let sharing = clipboardSharing {
@@ -196,6 +205,9 @@ struct SessionScreen: View {
                                 Label("断开连接", systemImage: "xmark.circle").labelStyle(.iconOnly)
                             }
                             .accessibilityIdentifier("session.close")
+                            #if !targetEnvironment(macCatalyst)
+                            .keyboardShortcut("c", modifiers: [.shift, .control, .command])
+                            #endif
                         }
                     }
                     .padding(.horizontal).padding(.vertical, 10)
@@ -357,8 +369,9 @@ struct SessionScreen: View {
             Button("取消", role: .cancel) { hostTrust.answer(false) }
             Button("确认") { hostTrust.answer(true, remember: identity.kind == .ssh) }
             if identity.kind == .tls { Button("记住证书") { hostTrust.answer(true) } }
+            if identity.kind == .rsa { Button("记住主机指纹") { hostTrust.answer(true) } }
         } message: { identity in
-            Text(verbatim: (identity.kind == .ssh ? "请核对远程计算机的 SSH 指纹。\n" : "") + identity.host + "\n" + identity.fingerprint)
+            Text(verbatim: (identity.kind == .ssh ? "请核对远程计算机的 SSH 指纹。\n" : identity.kind == .rsa ? "请核对远程计算机的 RSA 公钥指纹。\n" : "") + identity.displayAddress + "\n" + identity.fingerprint)
         }
         .statusBarHidden(fullscreen)
         .persistentSystemOverlays(fullscreen ? .hidden : .automatic)
@@ -414,14 +427,18 @@ struct SessionScreen: View {
 
     private func captureScreenshot() {
         guard !stopped, !closing, !privacy.locked, phase != .background else { return }
+        withScreenshotRegion { screenshot.capture(session, region: $0) }
+    }
+
+    private func withScreenshotRegion(_ capture: (CGRect?) -> Void) {
         #if targetEnvironment(macCatalyst)
         if let group = monitorGroup {
             guard let region = session.windowMonitorRegion(for: group.primary) else { return }
-            screenshot.capture(session, region: region)
+            capture(region)
             return
         }
         #endif
-        screenshot.capture(session)
+        capture(nil)
     }
 
     #if targetEnvironment(macCatalyst)
@@ -559,6 +576,10 @@ struct SessionScreen: View {
             return
         }
         let action = observing ? nil : request.computer.disconnectAction
+        if request.computer.savesDisconnectScreenshot == true, phase != .background,
+           let frame = session.presentedFrame {
+            withScreenshotRegion { library.saveDisconnectScreenshot(for: request.computer, frame: frame, region: $0) }
+        }
         action?.send(to: session)
         // A desktop that stopped reading must still let its window close.
         let timeout = Task { @MainActor in

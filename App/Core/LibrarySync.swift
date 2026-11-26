@@ -2,6 +2,20 @@ import Foundation
 import Observation
 
 enum ReplicaFolder {
+    enum Location: String, Codable, Sendable { case iCloudDrive, localDocuments }
+
+    static func location(of folder: URL) -> Location? {
+        if (try? folder.resourceValues(forKeys: [.isUbiquitousItemKey]))?.isUbiquitousItem == true {
+            return .iCloudDrive
+        }
+        #if !targetEnvironment(macCatalyst)
+        var relationship = FileManager.URLRelationship.other
+        try? FileManager.default.getRelationship(&relationship, ofDirectoryAt: URL.documentsDirectory, toItemAt: folder)
+        if relationship == .same || relationship == .contains { return .localDocuments }
+        #endif
+        return nil
+    }
+
     static func bookmark(for folder: URL) throws -> Data {
         let scoped = folder.startAccessingSecurityScopedResource()
         defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
@@ -12,7 +26,7 @@ enum ReplicaFolder {
         #endif
     }
 
-    static func exchange(bookmark: Data, writer: UUID, pending: LibraryReplica) throws -> (LibraryReplica, Data) {
+    static func exchange(bookmark: Data, writer: UUID, pending: LibraryReplica) throws -> (LibraryReplica, Data, Location?) {
         var stale = false
         #if targetEnvironment(macCatalyst)
         let options: URL.BookmarkResolutionOptions = [.withSecurityScope, .withoutUI]
@@ -22,7 +36,7 @@ enum ReplicaFolder {
         let folder = try URL(resolvingBookmarkData: bookmark, options: options, relativeTo: nil, bookmarkDataIsStale: &stale)
         let scoped = folder.startAccessingSecurityScopedResource()
         defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
-        return try (exchange(in: folder, writer: writer, pending: pending), stale ? self.bookmark(for: folder) : bookmark)
+        return try (exchange(in: folder, writer: writer, pending: pending), stale ? self.bookmark(for: folder) : bookmark, location(of: folder))
     }
 
     static func exchange(in folder: URL, writer: UUID, pending: LibraryReplica) throws -> LibraryReplica {
@@ -87,6 +101,7 @@ final class LibrarySync {
         var baseline = LibraryArchive()
         var baselinePreferences: [String: PreferenceValue]?
         var lastSync: Date?
+        var location: ReplicaFolder.Location?
     }
 
     private let settings: URL
@@ -96,6 +111,7 @@ final class LibrarySync {
     private(set) var running = false
     var error: String?
     var folderName: String? { pair?.name }
+    var folderLocation: ReplicaFolder.Location? { pair?.location }
     var lastSync: Date? { pair?.lastSync }
 
     var preferencesChanged: Bool {
@@ -141,7 +157,7 @@ final class LibrarySync {
                 try pending.record(from: checkpoint.baseline, to: original, writer: checkpoint.writer)
                 try pending.recordPreferences(from: checkpoint.baselinePreferences ?? [:], to: originalPreferences, writer: checkpoint.writer)
                 let bookmark = checkpoint.bookmark, writer = checkpoint.writer
-                let (received, refreshed) = try await Task.detached(priority: .utility) {
+                let (received, refreshed, location) = try await Task.detached(priority: .utility) {
                     try ReplicaFolder.exchange(bookmark: bookmark, writer: writer, pending: pending)
                 }.value
                 guard pair?.writer == writer else { continue }
@@ -162,6 +178,7 @@ final class LibrarySync {
                 checkpoint.baseline = next
                 checkpoint.replica = merged
                 checkpoint.bookmark = refreshed
+                checkpoint.location = location
                 checkpoint.lastSync = .now
                 try save(checkpoint)
                 pair = checkpoint

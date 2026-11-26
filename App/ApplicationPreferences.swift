@@ -24,6 +24,9 @@ struct ApplicationPreferences: View {
                     Toggle("允许文件传输", isOn: $transfers).accessibilityIdentifier("preferences.transfers")
                     Toggle("新连接默认共享剪贴板", isOn: $sharedClipboard).accessibilityIdentifier("preferences.sharedClipboard")
                 }
+                #if targetEnvironment(macCatalyst)
+                MacAvailabilityPreferences()
+                #endif
                 LibrarySyncPreferences()
                 Section {
                     NavigationLink("连接库备份") { LibraryBackupPreferences() }
@@ -127,9 +130,16 @@ private struct LibrarySyncPreferences: View {
             Button("选择同步文件夹") { choosing = true }
             if let folder = sync.folderName {
                 LabeledContent("文件夹", value: folder)
-                LabeledContent("上次同步") {
+                if let location = sync.folderLocation {
+                    LabeledContent("位置") {
+                        if location == .iCloudDrive { Text("iCloud 云盘") } else { Text("本机") }
+                    }
+                }
+                LabeledContent {
                     if let date = sync.lastSync { Text(date.formatted(date: .abbreviated, time: .shortened)) }
                     else { Text("尚未同步") }
+                } label: {
+                    if sync.folderLocation == .localDocuments { Text("上次写入本机") } else { Text("上次同步") }
                 }
                 Button { Task { await sync.refresh(library) } } label: {
                     HStack { Text("立即同步"); if sync.running { ProgressView() } }
@@ -141,7 +151,11 @@ private struct LibrarySyncPreferences: View {
             }
             if let error = sync.error { Text(error).foregroundStyle(.red) }
         } header: { Text("连接库同步") } footer: {
-            Text("在两台设备上选择 iCloud 云盘中的同一文件夹，即可同步连接、文件夹和操作偏好。")
+            if sync.folderLocation == .localDocuments {
+                Text("当前文件夹在本机。要跨设备同步，请在两台设备上选择 iCloud 云盘中的同一文件夹。")
+            } else {
+                Text("在两台设备上选择 iCloud 云盘中的同一文件夹，即可同步连接、文件夹和操作偏好。")
+            }
         }
         .fileImporter(isPresented: $choosing, allowedContentTypes: [.folder]) { selection in
             do {
@@ -167,7 +181,7 @@ private struct TrustedHostPreferences: View {
     var body: some View {
         List(entries) { entry in
             VStack(alignment: .leading, spacing: 6) {
-                Text(verbatim: entry.kind.rawValue.uppercased() + " · " + entry.host).font(.headline)
+                Text(verbatim: entry.kind.rawValue.uppercased() + " · " + entry.displayAddress).font(.headline)
                 Text(verbatim: entry.fingerprint).font(.footnote.monospaced()).textSelection(.enabled)
                 Button("忘记主机指纹", role: .destructive) { removing = entry }
                     .buttonStyle(.borderless)
@@ -184,7 +198,7 @@ private struct TrustedHostPreferences: View {
                 HostTrust.forget(entry, in: preferences)
                 entries = HostTrust.saved(in: preferences)
             }
-        } message: { entry in Text(verbatim: entry.host + "\n" + entry.fingerprint) }
+        } message: { entry in Text(verbatim: entry.displayAddress + "\n" + entry.fingerprint) }
     }
 }
 
@@ -194,7 +208,7 @@ struct PrivacyGate: View {
     var body: some View {
         VStack(spacing: 16) {
             Image(systemName: "lock.fill").font(.largeTitle).foregroundStyle(.secondary).accessibilityHidden(true)
-            Text("屏幕连线").font(.headline)
+            Text(verbatim: AppName.display).font(.headline)
             Button("身份验证") { Task { await privacy.unlock() } }
                 .buttonStyle(.borderedProminent).disabled(privacy.authenticating)
             if let error = privacy.error { Text(error).font(.footnote).foregroundStyle(.secondary) }

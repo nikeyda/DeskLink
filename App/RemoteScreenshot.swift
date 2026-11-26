@@ -15,7 +15,10 @@ struct RemoteScreenshot: FileDocument {
     }
 
     init(frame: VNCPresentedFrame, region: CGRect? = nil) throws {
-        let image: CGImage
+        data = try Self.pngData(for: Self.image(from: frame, region: region))
+    }
+
+    static func image(from frame: VNCPresentedFrame, region: CGRect?) throws -> CGImage {
         switch frame {
         case .image(let desktop):
             if let region {
@@ -23,18 +26,21 @@ struct RemoteScreenshot: FileDocument {
                 guard bounds.contains(region), !region.isEmpty, let part = desktop.cropping(to: region.integral) else {
                     throw CocoaError(.fileWriteUnknown)
                 }
-                image = part
-            } else { image = desktop }
+                return part
+            } else { return desktop }
         case .surfaces(let surfaces):
-            image = try Self.render(surfaces, region: region)
+            return try Self.render(surfaces, region: region)
         }
+    }
+
+    nonisolated static func pngData(for image: CGImage) throws -> Data {
         let output = NSMutableData()
         guard let encoder = CGImageDestinationCreateWithData(output, UTType.png.identifier as CFString, 1, nil) else {
             throw CocoaError(.fileWriteUnknown)
         }
         CGImageDestinationAddImage(encoder, image, nil)
         guard CGImageDestinationFinalize(encoder) else { throw CocoaError(.fileWriteUnknown) }
-        data = output as Data
+        return output as Data
     }
 
     private static func render(_ surfaces: [VNCPresentedFrame.Surface], region: CGRect?) throws -> CGImage {

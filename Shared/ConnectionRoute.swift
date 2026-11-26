@@ -8,7 +8,7 @@ enum ConnectionRoute: Equatable {
     case desktopLink(DesktopLink)
 
     init(url: URL) throws {
-        if let scheme = url.scheme?.lowercased(), ["vnc", "screens", "ssh"].contains(scheme) {
+        if let scheme = url.scheme?.lowercased(), DesktopLink.supportedSchemes.contains(scheme) {
             self = .desktopLink(try DesktopLink(text: url.absoluteString))
             return
         }

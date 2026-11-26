@@ -106,9 +106,11 @@ struct MacMonitorWindow: View {
     }
 
     private func desktop(_ group: MacMonitorWindows.Group, region: CGRect) -> RemoteDesktopView {
+        var gestures = RemoteTouchGestureConfiguration.standard
+        gestures.scrollSpeed = group.computer.scrollSpeed(forMac: group.session.serverUsesAppleModifierConvention)
         let view = RemoteDesktopView(session: group.session,
                                      initialPointerMode: group.computer.trackpad ? .trackpad : .direct,
-                                     pointerSpeed: pointerSpeed, hostOwnsRecoveryChrome: true)
+                                     pointerSpeed: pointerSpeed, touchGestures: gestures, hostOwnsRecoveryChrome: true)
             .showingMonitor(in: region).desktopControls(controls)
             .onMonitorShortcut { group.sessionMenu?()?.chooseMonitor($0) }
             .hidesHUD(true)

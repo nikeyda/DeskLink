@@ -1,5 +1,7 @@
 import Foundation
+import Network
 import Observation
+import dnssd
 
 struct NearbyComputer: Identifiable {
     let service: NetService
@@ -8,10 +10,12 @@ struct NearbyComputer: Identifiable {
 }
 
 @MainActor @Observable
-final class NearbyComputers: NSObject, @preconcurrency NetServiceBrowserDelegate, @preconcurrency NetServiceDelegate {
+final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
     private(set) var entries: [NearbyComputer] = []
     var errorMessage: String?
-    private var browser: NetServiceBrowser?
+    private(set) var searchError: NWError?
+    var needsLocalNetworkAccess: Bool { searchError == .dns(DNSServiceErrorType(kDNSServiceErr_PolicyDenied)) }
+    private var browser: NWBrowser?
     private var resolving: NetService?
     private var selection: ((Computer) -> Void)?
 
@@ -19,17 +23,41 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceBrowserDelegate
         guard browser == nil else { return }
         entries = []
         errorMessage = nil
-        let browser = NetServiceBrowser()
+        searchError = nil
+        let browser = NWBrowser(for: .bonjour(type: "_rfb._tcp", domain: "local."), using: .tcp)
         self.browser = browser
-        browser.delegate = self
-        browser.searchForServices(ofType: "_rfb._tcp.", inDomain: "local.")
+        browser.stateUpdateHandler = { [weak self, weak browser] state in
+            MainActor.assumeIsolated {
+                guard let self, let browser, browser === self.browser else { return }
+                self.updateSearchState(state)
+            }
+        }
+        browser.browseResultsChangedHandler = { [weak self, weak browser] results, _ in
+            MainActor.assumeIsolated {
+                guard let self, let browser, browser === self.browser else { return }
+                var found: [String: NearbyComputer] = [:]
+                for result in results {
+                    guard case let .service(name, type, domain, _) = result.endpoint else { continue }
+                    let service = NetService(domain: domain, type: type, name: name)
+                    let entry = NearbyComputer(service: service)
+                    found[entry.id] = entry
+                }
+                self.entries = found.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            }
+        }
+        browser.start(queue: .main)
     }
 
     func stop() {
-        browser?.delegate = nil
-        browser?.stop()
+        browser?.cancel()
         browser = nil
+        entries = []
         cancelSelection()
+    }
+
+    func retry() {
+        stop()
+        start()
     }
 
     func select(_ entry: NearbyComputer, completion: @escaping (Computer) -> Void) {
@@ -47,21 +75,16 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceBrowserDelegate
         selection = nil
     }
 
-    func netServiceBrowser(_ browser: NetServiceBrowser, didFind service: NetService, moreComing: Bool) {
-        let found = NearbyComputer(service: service)
-        guard !entries.contains(where: { $0.id == found.id }) else { return }
-        entries.append(found)
-        entries.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-    }
-
-    func netServiceBrowser(_ browser: NetServiceBrowser, didRemove service: NetService, moreComing: Bool) {
-        let removed = NearbyComputer(service: service)
-        entries.removeAll { $0.id == removed.id }
-    }
-
-    func netServiceBrowser(_ browser: NetServiceBrowser, didNotSearch errorDict: [String: NSNumber]) {
-        errorMessage = Self.description(errorDict)
-        stop()
+    func updateSearchState(_ state: NWBrowser.State) {
+        switch state {
+        case .waiting(let error), .failed(let error):
+            searchError = error
+            entries = []
+            cancelSelection()
+        case .ready:
+            searchError = nil
+        default: break
+        }
     }
 
     func netServiceDidResolveAddress(_ sender: NetService) {

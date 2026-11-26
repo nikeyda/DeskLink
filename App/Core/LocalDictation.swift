@@ -9,7 +9,7 @@ enum LocalDictation {
         var errorDescription: String? {
             switch self {
             case .language: "当前设备无法使用所选语言进行听写。"
-            case .microphone: "请在系统设置中允许「屏幕连线」使用麦克风。"
+            case .microphone: "请在系统设置中允许「\(AppName.display)」使用麦克风。"
             case .capture: "无法开始录音，请检查麦克风后重试。"
             case .silence: "没有识别到文字，请重试。"
             }
@@ -22,12 +22,14 @@ enum LocalDictation {
     }
 
     static func recognize(_ audio: URL, using module: DictationTranscriber) async throws -> String {
+        let input = try AVAudioFile(forReading: audio)
+        guard input.length > 0 else { throw Problem.silence }
         let analyzer = SpeechAnalyzer(modules: [module])
         return try await withTaskCancellationHandler {
             async let transcript: String = recognizedText(from: module)
             do {
                 try Task.checkCancellation()
-                try await analyzer.start(inputAudioFile: AVAudioFile(forReading: audio), finishAfterFile: true)
+                try await analyzer.start(inputAudioFile: input, finishAfterFile: true)
                 let text = try await transcript.trimmingCharacters(in: .whitespacesAndNewlines)
                 try Task.checkCancellation()
                 guard !text.isEmpty else { throw Problem.silence }
@@ -67,7 +69,19 @@ final class DictationRecording {
     private var previousAudioMode: (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions)?
     #endif
 
-    func start(format: AVAudioFormat) throws {
+    // iPadOS can terminate the process before the recording sheet runs its cleanup.
+    static func removeInterruptedRecordings(in directory: URL) {
+        let prefix = "DeskLink-dictation-"
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isRegularFileKey])) ?? []
+        for url in files where url.pathExtension == "caf" {
+            let name = url.deletingPathExtension().lastPathComponent
+            guard name.hasPrefix(prefix), UUID(uuidString: String(name.dropFirst(prefix.count))) != nil,
+                  (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    func start(format: AVAudioFormat, maximumDuration: TimeInterval? = nil) throws {
         do {
             #if !targetEnvironment(macCatalyst)
             let audio = AVAudioSession.sharedInstance()
@@ -77,7 +91,8 @@ final class DictationRecording {
             #endif
             let recorder = try AVAudioRecorder(url: file, settings: format.settings)
             self.recorder = recorder
-            guard recorder.record() else { throw LocalDictation.Problem.capture }
+            let started = maximumDuration.map { recorder.record(forDuration: $0) } ?? recorder.record()
+            guard started else { throw LocalDictation.Problem.capture }
         } catch {
             discard()
             throw error

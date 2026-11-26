@@ -1,10 +1,12 @@
-PRODUCT_NAME = DeskLink
+PRODUCT_NAME = Telescope
+PRODUCT_MODULE_NAME = DeskLink
+EXECUTABLE_NAME = DeskLink
 PRODUCT_BUNDLE_IDENTIFIER = local.nikey.desklink
-CURRENT_PROJECT_VERSION = 35
+CURRENT_PROJECT_VERSION = 76
 MARKETING_VERSION = 0.1
 GENERATE_INFOPLIST_FILE = YES
 INFOPLIST_FILE = Config/Info.plist
-INFOPLIST_KEY_CFBundleDisplayName = 屏幕连线
+INFOPLIST_KEY_CFBundleDisplayName = Telescope
 INFOPLIST_KEY_LSApplicationCategoryType = public.app-category.utilities
 INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES
 INFOPLIST_KEY_UILaunchScreen_Generation = YES

@@ -3,11 +3,19 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleAllowMixedLocalizations</key><true/>
-    <key>CFBundleLocalizations</key><array><string>zh-Hans</string></array>
     <key>DeskLinkWidgetGroup</key><string>$(AppIdentifierPrefix)local.nikey.desklink.widget-index</string>
     <key>CFBundleURLTypes</key>
-    <array><dict><key>CFBundleURLName</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-    <key>CFBundleURLSchemes</key><array><string>desklink</string></array></dict></array>
+    <array>
+        <dict><key>CFBundleURLName</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+        <key>CFBundleURLSchemes</key><array><string>desklink</string></array></dict>
+        <dict><key>CFBundleURLName</key><string>$(PRODUCT_BUNDLE_IDENTIFIER).remote</string>
+        <key>CFBundleTypeRole</key><string>Viewer</string>
+        <key>CFBundleURLSchemes</key><array><string>vnc</string><string>ssh</string></array></dict>
+        <dict><key>CFBundleURLName</key><string>$(PRODUCT_BUNDLE_IDENTIFIER).ssh-link</string>
+        <key>CFBundleTypeRole</key><string>Viewer</string>
+        <key>LSHandlerRank</key><string>Alternate</string>
+        <key>CFBundleURLSchemes</key><array><string>screens-ssh</string></array></dict>
+    </array>
     <key>NSBonjourServices</key><array><string>_rfb._tcp</string></array>
     <key>CFBundleDocumentTypes</key>
     <array><dict>
@@ -16,16 +24,22 @@
         <key>LSHandlerRank</key><string>Alternate</string>
         <key>LSItemContentTypes</key><array><string>com.apple.vnc-internet-location</string></array>
     </dict><dict>
-        <key>CFBundleTypeName</key><string>屏幕连线归档</string>
+        <key>CFBundleTypeName</key><string>远程随航归档</string>
         <key>CFBundleTypeRole</key><string>Viewer</string>
         <key>LSHandlerRank</key><string>Owner</string>
         <key>LSItemContentTypes</key><array><string>local.nikey.desklink.archive</string></array>
+    </dict><dict>
+        <key>CFBundleTypeName</key><string>Screens Archive</string>
+        <key>CFBundleTypeRole</key><string>Viewer</string>
+        <key>LSHandlerRank</key><string>Alternate</string>
+        <key>LSItemContentTypes</key><array><string>com.edovia.screens5.archive</string></array>
     </dict></array>
     <key>LSSupportsOpeningDocumentsInPlace</key><true/>
+    <key>UIFileSharingEnabled</key><true/>
     <key>UTExportedTypeDeclarations</key>
     <array><dict>
         <key>UTTypeIdentifier</key><string>local.nikey.desklink.archive</string>
-        <key>UTTypeDescription</key><string>屏幕连线归档</string>
+        <key>UTTypeDescription</key><string>远程随航归档</string>
         <key>UTTypeConformsTo</key><array><string>public.json</string></array>
         <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>desklink</string></array></dict>
     </dict></array>
@@ -34,6 +48,10 @@
         <key>UTTypeIdentifier</key><string>com.apple.vnc-internet-location</string>
         <key>UTTypeConformsTo</key><array><string>com.apple.internet-location</string><string>public.data</string></array>
         <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>vncloc</string></array></dict>
+    </dict><dict>
+        <key>UTTypeIdentifier</key><string>com.edovia.screens5.archive</string>
+        <key>UTTypeConformsTo</key><array><string>public.data</string></array>
+        <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>screens</string></array></dict>
     </dict></array>
     <key>NSLocalNetworkUsageDescription</key><string>使用本地网络发现并连接你选择的计算机。</string>
     <key>NSFaceIDUsageDescription</key><string>身份验证</string>

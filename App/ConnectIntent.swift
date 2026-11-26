@@ -9,7 +9,7 @@ struct ConnectToComputer: OpenIntent {
     static let openAppWhenRun = true
     @Parameter(title: "已存储的电脑") var target: ComputerEntity
 
-    static var parameterSummary: some ParameterSummary { Summary("使用「屏幕连线」连接到\(\.$target)") }
+    static var parameterSummary: some ParameterSummary { Summary("使用「远程随航」连接到\(\.$target)") }
 
     @MainActor func perform() async throws -> some IntentResult {
         let opened = await UIApplication.shared.open(ConnectionRoute.savedURL(target.id))

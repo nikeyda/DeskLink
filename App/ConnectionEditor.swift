@@ -31,23 +31,36 @@ struct EditorRequest: Identifiable {
 
     static func from(_ link: DesktopLink, in archive: LibraryArchive, allowUnsavedHost: Bool) throws -> Self {
         if link.requestsGuest { throw LinkError.guestUnavailable }
+        let name: String?
+        let endpoint: Endpoint?
         switch link.target {
-        case .address(let endpoint):
-            return Self(purpose: .quick, initialAddress: endpoint.address, initialSSHPort: link.sshPort, link: link)
-        case .savedName(let name):
-            let endpoint = try? Endpoint(address: name)
-            let saved = archive.computers.filter(\.saved)
-            var matches = saved.filter { $0.displayName.caseInsensitiveCompare(name) == .orderedSame }
-            if matches.isEmpty, let endpoint { matches = saved.filter { $0.endpoint == endpoint } }
-            if matches.count > 1, let username = link.username {
-                let accounts = matches.filter { $0.username == username }
-                if !accounts.isEmpty { matches = accounts }
+        case .address(let address):
+            // The Mac handles vnc:// and screens:// as saved-computer links.
+            // SSH addresses and direct VNC links on iPad keep their original route.
+            guard allowUnsavedHost, link.sshPort == nil else {
+                return Self(purpose: .quick, initialAddress: address.address, initialSSHPort: link.sshPort, link: link)
             }
-            if matches.count > 1 { throw LinkError.ambiguousName }
-            if let computer = matches.first { return Self(purpose: .connect, computer: computer, link: link) }
-            if allowUnsavedHost, let endpoint { return Self(purpose: .quick, initialAddress: endpoint.address, link: link) }
-            throw LinkError.missingComputer
+            // A literal IP, qualified hostname, or host with a port must keep
+            // its destination even if another record has that display name.
+            name = nil
+            endpoint = address
+        case .savedName(let displayName):
+            name = displayName
+            endpoint = try? Endpoint(address: displayName)
         }
+        let saved = archive.computers.filter(\.saved)
+        var matches = name.map { displayName in
+            saved.filter { $0.displayName.caseInsensitiveCompare(displayName) == .orderedSame }
+        } ?? []
+        if matches.isEmpty, let endpoint { matches = saved.filter { $0.endpoint == endpoint } }
+        if matches.count > 1, let username = link.username {
+            let accounts = matches.filter { $0.username == username }
+            if !accounts.isEmpty { matches = accounts }
+        }
+        if matches.count > 1 { throw LinkError.ambiguousName }
+        if let computer = matches.first { return Self(purpose: .connect, computer: computer, link: link) }
+        if allowUnsavedHost, let endpoint { return Self(purpose: .quick, initialAddress: endpoint.address, link: link) }
+        throw LinkError.missingComputer
     }
 
     enum LinkError: LocalizedError {
@@ -70,13 +83,31 @@ struct SessionRequest: Identifiable {
     var synchronizeCredentials = false
     var sshProof: SSHProof?
     var sshSecretToRemember: String?
+
+    static func remembered(for computer: Computer, synchronize: Bool) throws -> Self? {
+        guard let password = try PasswordStore.read(computer, synchronize: synchronize), !password.isEmpty else { return nil }
+        var request = Self(computer: computer, password: password, rememberPassword: true, synchronizeCredentials: synchronize)
+        if let ssh = computer.ssh {
+            guard !ssh.username.isEmpty else { return nil }
+            let secret: String?
+            if ssh.usesKey, let name = ssh.keyName {
+                secret = try PasswordStore.namedKey(name, synchronize: synchronize)
+            } else {
+                secret = try PasswordStore.read(computer, kind: ssh.usesKey ? .sshKey : .sshPassword, synchronize: synchronize)
+            }
+            guard let secret, !secret.isEmpty else { return nil }
+            request.sshProof = ssh.usesKey ? .privateKey(try SSHKeyFile.identity(secret)) : .password(secret)
+            if ssh.keyName == nil { request.sshSecretToRemember = secret }
+        }
+        return request
+    }
 }
 
 extension Computer {
     var configuration: VNCConfiguration { configuration(preferences: .standard) }
 
     func configuration(preferences: UserDefaults, streamingPaused: Bool = false) -> VNCConfiguration {
-        let display = display(for: .current)
+        let display = display(for: .current).resolved(for: .current)
         let picture: VNCConfiguration.VideoQualityMode = switch display.quality {
         case .adaptive: .adaptive
         case .standard: .standard
@@ -108,8 +139,14 @@ extension Computer {
             }
         }
         configuration.allowsFileTransfers = preferences.object(forKey: "connection.files") as? Bool ?? true
+        if allowsRemoteBell != false { configuration.serverBellHandler = { RemoteBell.play() } }
         configuration.framebufferQuality = framebufferQuality ?? FramebufferQuality()
-        let localCursor = preferences.object(forKey: "connection.clientCursor") as? Bool ?? true
+        configuration.allowsViewportZoom = allowsViewportZoom != false
+        if usesRaspberryPiRSAAES { configuration.securityPolicy = .rsaAES }
+        configuration.preparesTigerVNCKeyboard = preparesTigerVNCKeyboard == true
+        configuration.usesMacHardwareKeyPositions = usesMacHardwareKeyPositions == true
+        configuration.swapsHardwareCommandAndControl = swapsHardwareCommandAndControl == true
+        let localCursor = showsLocalCursor ?? (preferences.object(forKey: "connection.clientCursor") as? Bool ?? true)
         configuration.cursorRendering = localCursor ? .client : .server
         configuration.reconnectionPolicy.isEnabled = preferences.object(forKey: "connection.reconnect") as? Bool ?? true
         return configuration
@@ -127,6 +164,7 @@ struct ConnectionEditor: View {
     @State private var port: String
     @State private var username: String
     @State private var password = ""
+    @State private var usesRaspberryPiRSAAES: Bool
     @State private var loadedAccount: Computer?
     @State private var remember = false
     @AppStorage("credentials.synchronize") private var synchronizeCredentials = false
@@ -134,6 +172,7 @@ struct ConnectionEditor: View {
     @State private var colorDepth: ColorDepth
     @State private var framebuffer: FramebufferQuality
     @State private var disconnectAction: VNCDisconnectAction?
+    @State private var savesDisconnectScreenshot: Bool
     @State private var layout: DisplayLayout
     @State private var rememberMonitor: Bool
     @State private var observe: Bool
@@ -144,7 +183,16 @@ struct ConnectionEditor: View {
     @State private var smoothVideo: Bool
     @State private var audio: Bool
     @State private var trackpad: Bool
+    @State private var allowsViewportZoom: Bool
+    @State private var showsLocalCursor: Bool?
+    @State private var touchHoldDuration: TimeInterval?
+    @AppStorage("gesture.holdDuration") private var defaultHoldDuration = RemoteTouchGestureConfiguration.defaultHoldDuration
+    @State private var preparesTigerVNCKeyboard: Bool
+    @State private var macHardwareKeyPositions: Bool
+    @State private var swapsHardwareCommandAndControl: Bool
     @State private var momentumScrolling: Bool
+    @State private var allowsRemoteBell: Bool
+    @State private var pcScrollSpeed: RemoteScrollSpeed
     @State private var useSSH: Bool
     @State private var sshPort: String
     @State private var sshServer: String
@@ -179,19 +227,17 @@ struct ConnectionEditor: View {
         _port = State(initialValue: String(initial?.port ?? 5900))
         let desktopUser = (link?.sshPort == nil ? link?.username : nil) ?? c?.username ?? ""
         let tunnelUser = (link?.sshPort != nil ? link?.username : nil) ?? c?.ssh?.username ?? ""
+        _usesRaspberryPiRSAAES = State(initialValue: c?.usesRaspberryPiRSAAES == true)
         _username = State(initialValue: desktopUser)
         _password = State(initialValue: link?.sshPort == nil ? link?.password ?? "" : "")
-        let display = c?.display(for: .current) ?? DesktopDisplayPreferences()
+        let display = (c?.display(for: .current) ?? DesktopDisplayPreferences()).resolved(for: .current)
         let offeredQuality = display.quality
         _quality = State(initialValue: offeredQuality)
         _colorDepth = State(initialValue: display.colorDepth ?? .full)
         _framebuffer = State(initialValue: c?.framebufferQuality ?? FramebufferQuality())
         _disconnectAction = State(initialValue: c?.disconnectAction)
-        var initialLayout = display.layout
-        if offeredQuality != .adaptive, initialLayout == .virtualPair { initialLayout = .single }
-        #if !targetEnvironment(macCatalyst)
-        if initialLayout == .virtualPair { initialLayout = .single }
-        #endif
+        _savesDisconnectScreenshot = State(initialValue: c?.savesDisconnectScreenshot == true)
+        let initialLayout = display.layout
         _layout = State(initialValue: initialLayout)
         _rememberMonitor = State(initialValue: display.rememberMonitor != false)
         _observe = State(initialValue: link?.observe ?? c?.viewOnly ?? false)
@@ -208,7 +254,15 @@ struct ConnectionEditor: View {
         _smoothVideo = State(initialValue: display.smoothVideo ?? true)
         _audio = State(initialValue: display.remoteAudio)
         _trackpad = State(initialValue: c?.trackpad ?? false)
+        _allowsViewportZoom = State(initialValue: c?.allowsViewportZoom != false)
+        _showsLocalCursor = State(initialValue: c?.showsLocalCursor)
+        _touchHoldDuration = State(initialValue: c?.touchHoldDuration)
+        _preparesTigerVNCKeyboard = State(initialValue: c?.preparesTigerVNCKeyboard == true)
+        _macHardwareKeyPositions = State(initialValue: c.map { $0.usesMacHardwareKeyPositions == true } ?? true)
+        _swapsHardwareCommandAndControl = State(initialValue: c?.swapsHardwareCommandAndControl == true)
         _momentumScrolling = State(initialValue: c?.momentumScrolling != false)
+        _allowsRemoteBell = State(initialValue: c?.allowsRemoteBell != false)
+        _pcScrollSpeed = State(initialValue: c?.pcScrollSpeed ?? .standard)
         _useSSH = State(initialValue: c?.ssh != nil || request.initialSSHPort != nil)
         _sshPort = State(initialValue: String(c?.ssh?.port ?? request.initialSSHPort ?? 22))
         _sshServer = State(initialValue: c?.ssh?.server ?? request.initialSSHServer ?? "")
@@ -262,6 +316,7 @@ struct ConnectionEditor: View {
                 displaySection
                 if let error { Text(error).foregroundStyle(.red) }
             }
+            .accessibilityIdentifier("connection.form")
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -367,6 +422,10 @@ struct ConnectionEditor: View {
 
     private var credentialSection: some View {
         Section("身份验证") {
+            Picker("认证方式", selection: $usesRaspberryPiRSAAES) {
+                Text("自动协商").tag(false)
+                Text("Raspberry Pi · RSA-AES").tag(true)
+            }.accessibilityIdentifier("connection.authentication")
             TextField("用户名", text: $username)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -411,6 +470,8 @@ struct ConnectionEditor: View {
     private var displaySection: some View {
         Section {
             Toggle("仅观察", isOn: $observe).accessibilityIdentifier("connection.observe")
+            Toggle("播放远程响铃", isOn: $allowsRemoteBell)
+                .accessibilityIdentifier("connection.remoteBell")
             DisclosureGroup("显示器", isExpanded: $showSettings) {
                 Picker("图像质量", selection: $quality) {
                     Text(VNCConfiguration.VideoQualityMode.standard.title).tag(PictureQuality.standard)
@@ -440,6 +501,8 @@ struct ConnectionEditor: View {
                     #endif
                 }
                 Toggle("记住上次选择的显示器", isOn: $rememberMonitor)
+                Toggle("允许捏合缩放", isOn: $allowsViewportZoom)
+                    .accessibilityIdentifier("connection.viewportZoom")
                 if quality == .adaptive {
                     Picker("桌面尺寸", selection: $sizing) {
                         Text(VNCConfiguration.DisplaySizingMode.remoteDisplay.title).tag(DesktopSizing.physical)
@@ -469,6 +532,54 @@ struct ConnectionEditor: View {
                         .disabled(layout != .single)
                 }
                 Toggle("触控板", isOn: $trackpad)
+                Picker("光标显示", selection: $showsLocalCursor) {
+                    Text("跟随应用设置").tag(nil as Bool?)
+                    Text("使用本地光标").tag(true as Bool?)
+                    Text("使用远程光标").tag(false as Bool?)
+                }
+                .accessibilityIdentifier("connection.cursor")
+                #if !targetEnvironment(macCatalyst)
+                Toggle("单独设置长按拖动延迟", isOn: Binding(
+                    get: { touchHoldDuration != nil },
+                    set: { touchHoldDuration = $0 ? defaultHoldDuration : nil }
+                ))
+                .accessibilityIdentifier("connection.customDragDelay")
+                if let delay = touchHoldDuration {
+                    let effective = RemoteTouchGestureConfiguration(holdDuration: delay).resolvedHoldDuration
+                    LabeledContent("长按拖动延迟", value: "\(effective.formatted(.number.precision(.fractionLength(2)))) 秒")
+                    Slider(value: Binding(get: { effective }, set: { touchHoldDuration = $0 }),
+                           in: RemoteTouchGestureConfiguration.holdDurationRange, step: 0.05) {
+                        Text("长按拖动延迟")
+                    }
+                    .accessibilityIdentifier("connection.dragDelay")
+                }
+                #endif
+                Picker("PC 滚动速度", selection: $pcScrollSpeed) {
+                    ForEach(RemoteScrollSpeed.allCases, id: \.self) { speed in
+                        Text(verbatim: Double(speed.multiplier).formatted() + "×").tag(speed)
+                    }
+                }
+                .disabled(observe)
+                .accessibilityIdentifier("connection.pcScrollSpeed")
+                Picker("Mac 实体键盘", selection: $macHardwareKeyPositions) {
+                    Text("按远端键位输入").tag(true)
+                    Text("发送本地字符").tag(false)
+                }
+                .disabled(observe)
+                .accessibilityIdentifier("connection.hardwareKeyboard")
+                Toggle(isOn: $preparesTigerVNCKeyboard) {
+                    VStack(alignment: .leading) {
+                        Text("兼容 TigerVNC 首字输入")
+                        Text("首个按键是 Unicode 扩展字符时，先轻按一次 Shift。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .disabled(observe)
+                .accessibilityIdentifier("connection.tigerKeyboard")
+                Toggle("互换实体键盘的 Command 和 Control", isOn: $swapsHardwareCommandAndControl)
+                    .disabled(observe)
+                    .accessibilityIdentifier("connection.swapCommandControl")
                 #if !targetEnvironment(macCatalyst)
                 Toggle("连接 Mac 时使用惯性滚动", isOn: $momentumScrolling)
                     .accessibilityIdentifier("connection.momentum")
@@ -482,6 +593,10 @@ struct ConnectionEditor: View {
                     }
                 }
                 .disabled(observe)
+            }
+            if isSaving {
+                Toggle("断开时保存桌面快照", isOn: $savesDisconnectScreenshot)
+                    .accessibilityIdentifier("connection.disconnectScreenshot")
             }
         }
     }
@@ -558,8 +673,10 @@ struct ConnectionEditor: View {
         entry.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         entry.endpoint = endpoint
         entry.username = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        entry.usesRaspberryPiRSAAES = usesRaspberryPiRSAAES
         entry.viewOnly = observe
         entry.disconnectAction = disconnectAction
+        entry.savesDisconnectScreenshot = savesDisconnectScreenshot ? true : nil
         var display = DesktopDisplayPreferences(
             quality: quality, colorDepth: colorDepth == .full ? nil : colorDepth, layout: layout,
             matchWindow: sizing != .physical, fixedDesktop: sizing == .fixed ? fixedDimensions : nil,
@@ -572,8 +689,16 @@ struct ConnectionEditor: View {
         }
         entry.setDisplay(display, for: .current)
         entry.trackpad = trackpad
+        entry.allowsViewportZoom = allowsViewportZoom ? nil : false
+        entry.showsLocalCursor = showsLocalCursor
+        entry.touchHoldDuration = touchHoldDuration
+        entry.preparesTigerVNCKeyboard = preparesTigerVNCKeyboard ? true : nil
+        entry.usesMacHardwareKeyPositions = macHardwareKeyPositions
+        entry.swapsHardwareCommandAndControl = swapsHardwareCommandAndControl ? true : nil
         entry.framebufferQuality = framebuffer == FramebufferQuality() ? nil : framebuffer
         entry.momentumScrolling = momentumScrolling ? nil : false
+        entry.allowsRemoteBell = allowsRemoteBell ? nil : false
+        entry.pcScrollSpeed = pcScrollSpeed == .standard ? nil : pcScrollSpeed
         let selectedSecret = sshUseKey ? sshKey : sshPassword
         let kind: PasswordStore.Kind = sshUseKey ? .sshKey : .sshPassword
         if useSSH {
@@ -599,6 +724,7 @@ struct ConnectionEditor: View {
             } catch { self.error = error.localizedDescription }
         } else {
             if request.computer == nil { entry.saved = false }
+            if request.purpose == .quick || request.link != nil { entry.openedFromLink = true }
             if !remember, let loadedAccount {
                 do { try PasswordStore.write(nil, for: loadedAccount, synchronize: synchronizeCredentials) }
                 catch { self.error = error.localizedDescription; return }

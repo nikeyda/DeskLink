@@ -39,7 +39,30 @@ struct DesktopDisplayPreferences: Codable, Equatable, Sendable {
     var rememberMonitor: Bool?
     var lastMonitor: VNCMonitorSelection?
     var windowedMonitors: [UInt32]?
+
+    /// Older archives can contain a shared display layout from another client.
+    /// Resolve it for this connection without changing the archived preferences.
+    func resolved(for client: DisplayClient) -> Self {
+        var result = self
+        if layout == .virtualPair, client != .mac || quality != .adaptive {
+            result.layout = .single
+        }
+        if result.layout == .combined {
+            result.matchWindow = false
+            result.fixedDesktop = nil
+        } else if quality == .adaptive {
+            if result.layout == .virtualPair, result.fixedDesktop == nil {
+                result.fixedDesktop = .standard
+            }
+            if result.fixedDesktop != nil { result.matchWindow = true }
+        } else {
+            result.fixedDesktop = nil
+        }
+        return result
+    }
 }
+
+enum LibraryFolderScope: CaseIterable, Sendable { case custom, links }
 
 struct Computer: Codable, Identifiable, Equatable, Sendable {
     var id = UUID()
@@ -49,6 +72,8 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
     var saved = true
     var favorite = false
     var folder: String?
+    var linkFolder: String?
+    var openedFromLink: Bool?
     var lastConnected: Date?
     var modifiedAt: Date?
     private(set) var connectionCounts: [String: UInt64]?
@@ -56,6 +81,7 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
     var quality = PictureQuality.standard
     var colorDepth: ColorDepth?
     var disconnectAction: VNCDisconnectAction?
+    var savesDisconnectScreenshot: Bool?
     var layout = DisplayLayout.single
     var matchWindow = false
     var fixedDesktop: DesktopDimensions?
@@ -64,16 +90,52 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
     var remoteAudio = true
     var deviceDisplays: [String: DesktopDisplayPreferences]?
     var trackpad = false
+    var allowsViewportZoom: Bool?
+    var showsLocalCursor: Bool?
+    var touchHoldDuration: TimeInterval?
+    var preparesTigerVNCKeyboard: Bool?
+    var usesMacHardwareKeyPositions: Bool?
+    var swapsHardwareCommandAndControl: Bool?
     var framebufferQuality: FramebufferQuality?
+    var screensOperatingSystem: Int?
+    var screensAuthenticationMethod: Int?
+    /// Screens v6 exports the Raspberry Pi RSA-AES profile with both fields set to 5.
+    var usesRaspberryPiRSAAES: Bool {
+        get { screensAuthenticationMethod == 5 }
+        set {
+            if newValue {
+                screensOperatingSystem = 5
+                screensAuthenticationMethod = 5
+            } else if screensAuthenticationMethod == 5 {
+                screensAuthenticationMethod = nil
+            }
+        }
+    }
+    var automaticallySharesClipboard: Bool?
+    var allowsRemoteBell: Bool?
     var momentumScrolling: Bool?
+    var pcScrollSpeed: RemoteScrollSpeed?
     var ssh: SSHSettings?
 
     init(name: String = "", endpoint: Endpoint) {
         self.name = name
         self.endpoint = endpoint
+        usesMacHardwareKeyPositions = true
+        openedFromLink = false
     }
 
     var displayName: String { name.isEmpty ? endpoint.host : name }
+    func scrollSpeed(forMac: Bool) -> RemoteScrollSpeed {
+        forMac ? .standard : pcScrollSpeed ?? .standard
+    }
+    // Older libraries kept successful temporary connections without recording their source.
+    var isLink: Bool { openedFromLink ?? (!saved && lastConnected != nil) }
+
+    func folder(in scope: LibraryFolderScope) -> String? { scope == .links ? linkFolder : folder }
+
+    mutating func setFolder(_ name: String?, in scope: LibraryFolderScope) {
+        if scope == .links { linkFolder = name } else { folder = name }
+    }
 
     private var observedCounts: [String: UInt64] {
         connectionCounts ?? (lastConnected == nil ? [:] : ["legacy": 1])
@@ -96,6 +158,7 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
     }
 
     mutating func includeActivity(from other: Self) {
+        if other.isLink { openedFromLink = true }
         if connectionCounts != nil || other.connectionCounts != nil {
             connectionCounts = observedCounts.merging(other.observedCounts, uniquingKeysWith: max)
         }
@@ -106,6 +169,7 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
         var copy = self
         copy.lastConnected = nil
         copy.connectionCounts = nil
+        copy.openedFromLink = nil
         return copy
     }
 
@@ -169,11 +233,24 @@ struct LibraryArchive: Codable, Equatable, Sendable {
     var version = 1
     var folders: [String] = []
     var computers: [Computer] = []
+    private(set) var linkFolders: [String]?
+
+    func folders(in scope: LibraryFolderScope) -> [String] { scope == .links ? linkFolders ?? [] : folders }
+
+    mutating func setFolders(_ names: [String], in scope: LibraryFolderScope) {
+        if scope == .links { linkFolders = names.isEmpty ? nil : names } else { folders = names }
+    }
 
     var widgetComputers: [ComputerEntity] {
-        computers.filter { $0.saved || $0.lastConnected != nil }.map {
+        computers.filter { $0.saved || $0.isLink }.map {
             ComputerEntity(id: $0.id, name: $0.displayName, address: $0.endpoint.address)
         }
+    }
+
+    func widgetComputers(including directory: [ComputerEntity]) -> [ComputerEntity] {
+        let library = widgetComputers
+        var ids = Set(library.map(\.id))
+        return library + directory.filter { ids.insert($0.id).inserted }
     }
 
     func duplicate(of computer: Computer) -> Computer {
@@ -182,6 +259,8 @@ struct LibraryArchive: Codable, Equatable, Sendable {
         copy.modifiedAt = nil
         copy.favorite = false
         copy.saved = true
+        copy.openedFromLink = false
+        copy.linkFolder = nil
         let base = computer.displayName + " 副本"
         let names = Set(computers.filter(\.saved).map { $0.displayName.lowercased() })
         copy.name = base
@@ -197,8 +276,10 @@ struct LibraryArchive: Codable, Equatable, Sendable {
         let archive = try JSONDecoder().decode(Self.self, from: data)
         guard archive.version == 1,
               Set(archive.computers.map(\.id)).count == archive.computers.count,
-              Set(archive.folders).count == archive.folders.count,
-              archive.folders.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }),
+              LibraryFolderScope.allCases.allSatisfy({ scope in
+                  let names = archive.folders(in: scope)
+                  return Set(names).count == names.count && names.allSatisfy { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+              }),
               archive.computers.allSatisfy({ entry in
                   entry.fixedDesktop?.isSupported != false &&
                       entry.deviceDisplays?.values.contains(where: { $0.fixedDesktop?.isSupported == false }) != true
@@ -208,7 +289,10 @@ struct LibraryArchive: Codable, Equatable, Sendable {
                   return ssh.port > 0 && !ssh.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                       && (ssh.server == nil || ssh.server.flatMap { try? Endpoint.hostOnly($0) } == ssh.server)
               }),
-              archive.computers.allSatisfy({ $0.folder.map(archive.folders.contains) ?? true }) else {
+              archive.computers.allSatisfy({ entry in
+                  (entry.folder.map(archive.folders.contains) ?? true) &&
+                      (entry.linkFolder.map { entry.isLink && archive.folders(in: .links).contains($0) } ?? true)
+              }) else {
             throw CocoaError(.fileReadCorruptFile)
         }
         return archive
@@ -225,6 +309,7 @@ struct ArchiveImportResult: Equatable {
     var connections = 0
     var folders = 0
     var duplicates = 0
+    var importedScreens = false
 }
 
 @MainActor @Observable
@@ -233,6 +318,9 @@ final class ConnectionLibrary {
     var errorMessage: String?
     private let file: URL
     private let reportDirectory: URL
+    private let previewDirectory: URL
+    private(set) var previews: [UUID: SavedDesktopPreview] = [:]
+    @ObservationIgnored private var pendingPreviews: [UUID: Task<Void, Never>] = [:]
     private var videoRetryDates: [UUID: Date] = [:]
     private let activityWriter: UUID
     let backups: LibraryBackups
@@ -252,6 +340,7 @@ final class ConnectionLibrary {
         }
         reportDirectory = customFile?.deletingPathExtension().appendingPathExtension("session-reports")
             ?? URL.cachesDirectory.appending(path: "DeskLink/SessionReports")
+        previewDirectory = file.deletingPathExtension().appendingPathExtension("previews")
         backups = LibraryBackups(library: file)
         do {
             archive = try LibraryArchive.read(Data(contentsOf: file))
@@ -265,6 +354,51 @@ final class ConnectionLibrary {
            let dates = try? PropertyListDecoder().decode([UUID: Date].self, from: data) {
             videoRetryDates = dates
         }
+        for computer in archive.computers where computer.saved && computer.savesDisconnectScreenshot == true {
+            let url = previewURL(for: computer.id)
+            if FileManager.default.fileExists(atPath: url.path) {
+                previews[computer.id] = SavedDesktopPreview(computerID: computer.id, url: url)
+            }
+        }
+    }
+
+    private func previewURL(for id: UUID) -> URL {
+        previewDirectory.appending(path: id.uuidString).appendingPathExtension("png")
+    }
+
+    func saveDisconnectScreenshot(for computer: Computer, frame: VNCPresentedFrame, region: CGRect?) {
+        guard computer.savesDisconnectScreenshot == true,
+              let entry = archive.computers.first(where: { $0.id == computer.id }),
+              entry.saved, entry.savesDisconnectScreenshot == true, entry.hasSameDestination(as: computer) else { return }
+        do {
+            let image = try RemoteScreenshot.image(from: frame, region: region)
+            let id = entry.id
+            pendingPreviews[id]?.cancel()
+            pendingPreviews[id] = Task {
+                let encoded = await Task.detached(priority: .utility) { Result { try RemoteScreenshot.pngData(for: image) } }.value
+                guard !Task.isCancelled else { return }
+                defer { pendingPreviews[id] = nil }
+                do {
+                    let data = try encoded.get()
+                    var directory = previewDirectory
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    var values = URLResourceValues()
+                    values.isExcludedFromBackup = true
+                    try directory.setResourceValues(values)
+                    let url = previewURL(for: id)
+                    try data.write(to: url, options: [.atomic, .completeFileProtection])
+                    previews[id] = SavedDesktopPreview(computerID: id, url: url)
+                } catch { errorMessage = error.localizedDescription }
+            }
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    func clearPreview(for id: UUID) {
+        pendingPreviews.removeValue(forKey: id)?.cancel()
+        do { try FileManager.default.removeItem(at: previewURL(for: id)) }
+        catch let error as CocoaError where error.code == .fileNoSuchFile { }
+        catch { errorMessage = error.localizedDescription }
+        previews[id] = nil
     }
 
     @discardableResult
@@ -280,7 +414,12 @@ final class ConnectionLibrary {
     @discardableResult
     private func store(_ computer: Computer, backup: Bool) -> Bool {
         change(backup: backup) { value in
-            if let folder = computer.folder, !value.folders.contains(folder) { value.folders.append(folder) }
+            for scope in LibraryFolderScope.allCases {
+                let names = value.folders(in: scope)
+                if let folder = computer.folder(in: scope), !names.contains(folder) {
+                    value.setFolders(names + [folder], in: scope)
+                }
+            }
             if let i = value.computers.firstIndex(where: { $0.id == computer.id }) {
                 value.computers[i] = computer
             } else {
@@ -291,6 +430,7 @@ final class ConnectionLibrary {
 
     func recordSuccess(_ computer: Computer, now: Date = .now) {
         var entry = existingComputer(matching: computer) ?? computer
+        if computer.openedFromLink == true { entry.openedFromLink = true }
         entry.recordConnection(at: now, writer: activityWriter)
         store(entry, backup: false)
     }
@@ -342,6 +482,7 @@ final class ConnectionLibrary {
         if let previous = lastReport(for: entry.id) {
             guard report.startedAt > previous.startedAt ||
                 (report.startedAt == previous.startedAt && report.capturedAt > previous.capturedAt) else { return }
+            guard report.hasReceivedMedia || !previous.hasReceivedMedia else { return }
         }
         guard let data = try? JSONEncoder().encode(report) else { return }
         let file = reportDirectory.appending(path: entry.id.uuidString).appendingPathExtension("json")
@@ -352,6 +493,12 @@ final class ConnectionLibrary {
     private func installArchive(_ next: LibraryArchive) {
         let destinations = Dictionary(uniqueKeysWithValues: next.computers.map { ($0.id, $0) })
         let previousRetryCount = videoRetryDates.count
+        for previous in archive.computers where previous.savesDisconnectScreenshot == true {
+            let next = destinations[previous.id]
+            if next?.saved != true || next?.savesDisconnectScreenshot != true || next?.hasSameDestination(as: previous) != true {
+                clearPreview(for: previous.id)
+            }
+        }
         for previous in archive.computers where destinations[previous.id]?.hasSameDestination(as: previous) != true {
             videoRetryDates.removeValue(forKey: previous.id)
             let file = reportDirectory.appending(path: previous.id.uuidString).appendingPathExtension("json")
@@ -374,33 +521,41 @@ final class ConnectionLibrary {
     }
 
     @discardableResult
-    func addFolder(_ name: String) -> Bool {
+    func addFolder(_ name: String, in scope: LibraryFolderScope = .custom) -> Bool {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return false }
-        return change { if !$0.folders.contains(name) { $0.folders.append(name) } }
-    }
-
-    @discardableResult
-    func renameFolder(_ old: String, to input: String) -> Bool {
-        let name = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard archive.folders.contains(old), !name.isEmpty, name == old || !archive.folders.contains(name) else { return false }
         return change { value in
-            value.folders = value.folders.map { $0 == old ? name : $0 }
-            for i in value.computers.indices where value.computers[i].folder == old { value.computers[i].folder = name }
+            let names = value.folders(in: scope)
+            if !names.contains(name) { value.setFolders(names + [name], in: scope) }
         }
     }
 
     @discardableResult
-    func removeFolder(_ name: String) -> Bool {
+    func renameFolder(_ old: String, to input: String, in scope: LibraryFolderScope = .custom) -> Bool {
+        let name = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        let names = archive.folders(in: scope)
+        guard names.contains(old), !name.isEmpty, name == old || !names.contains(name) else { return false }
+        return change { value in
+            value.setFolders(names.map { $0 == old ? name : $0 }, in: scope)
+            for i in value.computers.indices where value.computers[i].folder(in: scope) == old {
+                value.computers[i].setFolder(name, in: scope)
+            }
+        }
+    }
+
+    @discardableResult
+    func removeFolder(_ name: String, in scope: LibraryFolderScope = .custom) -> Bool {
         change { value in
-            value.folders.removeAll { $0 == name }
-            for i in value.computers.indices where value.computers[i].folder == name { value.computers[i].folder = nil }
+            value.setFolders(value.folders(in: scope).filter { $0 != name }, in: scope)
+            for i in value.computers.indices where value.computers[i].folder(in: scope) == name {
+                value.computers[i].setFolder(nil, in: scope)
+            }
         }
     }
 
     @discardableResult
     func applySync(_ value: LibraryArchive) -> Bool {
-        let savedChanged = value.folders != archive.folders ||
+        let savedChanged = value.folders != archive.folders || value.linkFolders != archive.linkFolders ||
             value.computers.filter(\.saved).map(\.withoutSessionHistory) !=
             archive.computers.filter(\.saved).map(\.withoutSessionHistory)
         return change(backup: savedChanged) { $0 = value }
@@ -439,12 +594,14 @@ final class ConnectionLibrary {
         let existingIDs = Set(archive.computers.map(\.id))
         let additions = imported.computers.filter { !existingIDs.contains($0.id) }
         let folders = imported.folders.filter { !archive.folders.contains($0) }
+        let linkFolders = imported.folders(in: .links).filter { !archive.folders(in: .links).contains($0) }
         let saved = change { state in
             state.folders.append(contentsOf: folders)
+            state.setFolders(state.folders(in: .links) + linkFolders, in: .links)
             state.computers.append(contentsOf: additions)
         }
         guard saved else { return nil }
-        return ArchiveImportResult(connections: additions.count, folders: folders.count,
+        return ArchiveImportResult(connections: additions.count, folders: folders.count + linkFolders.count,
                                    duplicates: imported.computers.count - additions.count)
     }
 

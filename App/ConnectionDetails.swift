@@ -20,6 +20,22 @@ struct ConnectionReport: Identifiable, Codable, Equatable {
     let keyEvents: UInt64
     var videoCodec: UInt32?
     var audioPlayback: VNCSessionStatistics.AudioPlayback?
+    var reconnectTrigger: VNCSession.ReconnectTrigger?
+    var fileDrag: VNCFileTransferController.DragStatistics?
+
+    var hasReceivedMedia: Bool { frames > 0 || (audioPackets ?? 0) > 0 }
+
+    var reconnectLabel: String? {
+        switch reconnectTrigger {
+        case .transportEnded: "传输连接中断"
+        case .timedOut: "传输超时"
+        case .appResumed: "应用回到前台"
+        case .mediaRecovery: "恢复视频流"
+        case .settingsChanged: "更改连接设置"
+        case .manual: "手动重试"
+        case nil: nil
+        }
+    }
 
     func videoCodecLabel(historical: Bool) -> String {
         guard let videoCodec else { return historical ? "未记录视频编码" : "等待视频帧" }
@@ -44,28 +60,40 @@ struct ConnectionReport: Identifiable, Codable, Equatable {
         }
     }
 
+    static func encryptionLabel(_ value: VNCContentEncryption, usesSSH: Bool,
+                                awaitingHighPerformancePicture: Bool) -> String {
+        switch value {
+        case .rsaAES(let bits): return (usesSSH ? "SSH、" : "") + "RSA-AES-\(bits)"
+        case .tlsX509: return usesSSH ? "SSH、TLS" : "TLS"
+        case .appleComCryption(_, _, let media):
+            let apple = media ? "Apple 屏幕共享加密、SRTP" : "Apple 屏幕共享加密"
+            return usesSSH ? "SSH、" + apple : apple
+        case .none:
+            if usesSSH { return "SSH" }
+            return awaitingHighPerformancePicture ? "正在协商" : "未加密"
+        }
+    }
+
     @MainActor
     static func capture(session: VNCSession, usesSSH: Bool, id: UUID, startedAt: Date) async -> Self? {
         guard session.connectionState.isConnected, let stats = await session.currentStatistics(),
               session.connectionState.isConnected else { return nil }
         let wire = stats.transport
-        let encryption: String
-        switch session.negotiatedContentEncryption {
-        case .some(.tlsX509): encryption = usesSSH ? "SSH、TLS" : "TLS"
-        case .some(.appleComCryption(_, _, let media)):
-            let apple = media ? "Apple 屏幕共享加密、SRTP" : "Apple 屏幕共享加密"
-            encryption = usesSSH ? "SSH、" + apple : apple
-        case .some(.none): encryption = usesSSH ? "SSH" : "未加密"
-        case nil: encryption = usesSSH ? "SSH" : "正在协商"
-        }
+        let version = wire.handshake.negotiatedVersion
+        let frames = wire.isHighPerformanceMode ? stats.framesDecoded : wire.framebufferUpdateCount
+        let awaitingPicture = version?.isApple == true && session.configuration.enableHighPerformanceMode && frames == 0
+        let encryption = encryptionLabel(wire.handshake.contentEncryption, usesSSH: usesSSH,
+                                         awaitingHighPerformancePicture: awaitingPicture)
         return Self(id: id, startedAt: startedAt, capturedAt: stats.capturedAt,
-                    version: session.getDiagnostics().clientVersion?.description, encryption: encryption,
+                    version: version?.description, encryption: encryption,
                     width: session.framebufferWidth, height: session.framebufferHeight,
                     usesVideo: wire.isHighPerformanceMode, encodings: wire.encodingUsage.map(\.encoding.displayName),
-                    frames: wire.isHighPerformanceMode ? stats.framesDecoded : wire.framebufferUpdateCount,
+                    frames: frames,
                     audioPackets: wire.isHighPerformanceMode ? wire.audioPacketsReceived : nil,
                     receiveRate: wire.recentBitrateKbps, pointerEvents: wire.pointerEventsSent, keyEvents: wire.keyEventsSent,
-                    videoCodec: stats.decodedVideoCodec, audioPlayback: stats.audioPlayback)
+                    videoCodec: stats.decodedVideoCodec, audioPlayback: stats.audioPlayback,
+                    reconnectTrigger: session.lastReconnectTrigger,
+                    fileDrag: session.fileTransfers.dragStatistics)
     }
 }
 
@@ -83,6 +111,7 @@ struct ConnectionDetails: View {
                         if let version = report.version { row("协议", version, id: "protocol") }
                         row("传输加密", report.encryption, id: "encryption")
                         row("桌面像素", "\(report.width) × \(report.height)", id: "dimensions")
+                        if let trigger = report.reconnectLabel { row("上次重连原因", trigger, id: "reconnect") }
                     }
                     Section("画面与音频") {
                         if report.usesVideo {

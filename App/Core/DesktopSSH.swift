@@ -22,11 +22,18 @@ enum SSHProof: Sendable {
 }
 
 struct HostFingerprint: Identifiable {
-    enum Kind: String, CaseIterable { case ssh, tls }
+    enum Kind: String, CaseIterable { case ssh, tls, rsa }
     var id: String { "\(kind.rawValue).trusted." + host }
     let kind: Kind
     let host: String
     let fingerprint: String
+
+    var displayAddress: String {
+        guard let separator = host.lastIndex(of: ":"), host[..<separator].contains(":"),
+              let address = try? Endpoint.hostOnly(String(host[..<separator])),
+              let port = UInt16(host[host.index(after: separator)...]) else { return host }
+        return "[\(address)]:\(port)"
+    }
 }
 
 @MainActor @Observable

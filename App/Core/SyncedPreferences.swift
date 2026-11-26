@@ -14,6 +14,7 @@ enum SyncedPreference: String, CaseIterable {
     case savedOrder = "library.savedOrder"
     case favoriteOrder = "library.favoriteOrder"
     case recentOrder = "library.recentOrder"
+    case linkOrder = "library.linkOrder"
     case reconnect = "connection.reconnect"
     case cursor = "connection.clientCursor"
     case speed = "pointer.speed"
@@ -63,7 +64,7 @@ enum SyncedPreference: String, CaseIterable {
         case (.keyInterval, .speed(let value)): VNCKeyRepeat.intervalRange.contains(value)
         case (.up, .number(let n)), (.down, .number(let n)), (.horizontal, .number(let n)): [0, 3, 4].contains(n)
         case (.style, .text(let text)): ["docked", "floating", "carousel"].contains(text)
-        case (.savedOrder, .text(let text)), (.favoriteOrder, .text(let text)): ComputerOrder(rawValue: text) != nil
+        case (.savedOrder, .text(let text)), (.favoriteOrder, .text(let text)), (.linkOrder, .text(let text)): ComputerOrder(rawValue: text) != nil
         case (.recentOrder, .text(let text)): ComputerOrder(rawValue: text).map { $0 != .manual } == true
         case (.size, .text(let text)): ["small", "standard", "large", "extraLarge"].contains(text)
         case (.doubleTap, .text(let text)), (.squeeze, .text(let text)):
@@ -80,7 +81,7 @@ enum SyncedPreference: String, CaseIterable {
         case .list, .reconnect, .cursor, .keyboardTrailing, .twoFingerToggle, .keyRepeat: result = .flag(defaults.bool(forKey: rawValue))
         case .speed, .holdDuration, .keyDelay, .keyInterval: result = .speed(defaults.double(forKey: rawValue))
         case .up, .down, .horizontal: result = .number(defaults.integer(forKey: rawValue))
-        case .style, .size, .buttons, .doubleTap, .squeeze, .savedOrder, .favoriteOrder, .recentOrder:
+        case .style, .size, .buttons, .doubleTap, .squeeze, .savedOrder, .favoriteOrder, .recentOrder, .linkOrder:
             result = defaults.string(forKey: rawValue).map(PreferenceValue.text)
         }
         return result.flatMap { accepts($0) ? $0 : nil }

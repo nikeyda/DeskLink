@@ -247,12 +247,19 @@ struct InteractiveDesktop: View {
 
     private var buttons: [DeskToolbarButton] { DeskToolbarButton.buttons(in: order) }
 
+    private var keyboardEdgeSwipe: ((CGPoint, UIView) -> Void)? {
+        guard bar.keyboard.softwareKeyboardRequested, style == .docked || bar.expanded else { return nil }
+        return { point, view in controls.movePointerToBottomEdge(at: point, in: view) }
+    }
+
     var body: some View {
         desktop
             .hidesHUD(!bar.visible)
             .onPencilToolbarAction { action, point in bar.handle(action, at: point, style: style) }
             .hudAccessory(isEnabled: style != .carousel, docksToBottom: style == .docked,
-                          providesKeyboardButton: true, buttonStyle: { _ in size.buttonStyle }) { width in
+                          providesKeyboardButton: true,
+                          onUpwardSwipe: keyboardEdgeSwipe,
+                          buttonStyle: { _ in size.buttonStyle }) { width in
                 if style == .docked || bar.expanded { strip(width: width) }
             } beside: { dimensions in
                 if style == .floating {
@@ -453,4 +460,5 @@ struct InteractiveDesktop: View {
         }
     }
 }
+
 #endif

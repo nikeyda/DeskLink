@@ -58,6 +58,13 @@ struct TailnetDevice: Decodable, Identifiable, Sendable {
         item.saved = false
         return item
     }
+
+    func widgetComputer(in account: TailnetAccount) -> ComputerEntity? {
+        guard !id.isEmpty, let computer else { return nil }
+        // A widget follows the node across renames and address changes.
+        let identity = "local.nikey.desklink/tailnet/" + account.tailnet.lowercased() + "/" + id
+        return ComputerEntity(id: UUID.derived(from: identity), name: computer.displayName, address: computer.endpoint.address)
+    }
 }
 
 private final class FixedServiceDelegate: NSObject, URLSessionTaskDelegate {
@@ -72,6 +79,10 @@ final class TailnetDirectory {
     typealias Transport = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
     private struct Token: Decodable { let access_token: String; let token_type: String }
     private struct Listing: Decodable { let devices: [TailnetDevice] }
+    private struct RememberedDirectory: Codable {
+        let account: TailnetAccount
+        let computers: [ComputerEntity]
+    }
     private static let session = URLSession(configuration: .ephemeral, delegate: FixedServiceDelegate(), delegateQueue: nil)
 
     private let defaults: UserDefaults
@@ -80,6 +91,7 @@ final class TailnetDirectory {
     private var attempt = UUID()
     private(set) var account: TailnetAccount?
     private(set) var devices = [TailnetDevice]()
+    private(set) var widgetComputers = [ComputerEntity]()
     private(set) var loading = false
     var error: String?
 
@@ -90,9 +102,14 @@ final class TailnetDirectory {
             guard let response = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
             return (data, response)
         }
-        if let data = defaults.data(forKey: "tailnet.account"),
-           let stored = try? JSONDecoder().decode(TailnetAccount.self, from: data) {
-            account = try? TailnetAccount(tailnet: stored.tailnet, clientID: stored.clientID)
+        if let data = defaults.data(forKey: "tailnet.account") {
+            let decoder = JSONDecoder()
+            let cache = try? decoder.decode(RememberedDirectory.self, from: data)
+            if let stored = cache?.account ?? (try? decoder.decode(TailnetAccount.self, from: data)),
+               let validated = try? TailnetAccount(tailnet: stored.tailnet, clientID: stored.clientID) {
+                account = validated
+                widgetComputers = cache?.computers ?? []
+            }
         }
     }
 
@@ -108,8 +125,7 @@ final class TailnetDirectory {
         if let previous = account, defaults.data(forKey: "tailnet.account") != nil, previous != new || !remember {
             try PasswordStore.write(nil, for: previous.credentialKey(), kind: .tailnet)
         }
-        if remember { defaults.set(try JSONEncoder().encode(new), forKey: "tailnet.account") }
-        else { defaults.removeObject(forKey: "tailnet.account") }
+        try storeWidgetComputers(listing, account: new, remember: remember)
         account = new
         self.secret = secret
         devices = listing
@@ -127,7 +143,11 @@ final class TailnetDirectory {
                 throw URLError(.userAuthenticationRequired)
             }
             let listing = try await requestDevices(account, secret: proof)
-            if attempt == generation { devices = listing; error = nil }
+            if attempt == generation {
+                try storeWidgetComputers(listing, account: account, remember: defaults.data(forKey: "tailnet.account") != nil)
+                devices = listing
+                error = nil
+            }
         } catch { if attempt == generation { self.error = error.localizedDescription } }
     }
 
@@ -139,9 +159,30 @@ final class TailnetDirectory {
         account = nil
         secret = nil
         devices = []
+        widgetComputers = []
         loading = false
         error = nil
         defaults.removeObject(forKey: "tailnet.account")
+    }
+
+    func computerForWidget(_ id: UUID) -> Computer? {
+        guard let item = widgetComputers.first(where: { $0.id == id }),
+              let endpoint = try? Endpoint(address: item.address) else { return nil }
+        var computer = Computer(name: item.name, endpoint: endpoint)
+        computer.saved = false
+        return computer
+    }
+
+    private func storeWidgetComputers(_ listing: [TailnetDevice], account: TailnetAccount, remember: Bool) throws {
+        guard remember else {
+            defaults.removeObject(forKey: "tailnet.account")
+            widgetComputers = []
+            return
+        }
+        let computers = listing.compactMap { $0.widgetComputer(in: account) }
+        let cache = RememberedDirectory(account: account, computers: computers)
+        defaults.set(try JSONEncoder().encode(cache), forKey: "tailnet.account")
+        widgetComputers = computers
     }
 
     private func requestDevices(_ account: TailnetAccount, secret: String) async throws -> [TailnetDevice] {

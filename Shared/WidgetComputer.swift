@@ -19,7 +19,7 @@ struct ComputerQuery: EntityStringQuery {
         #if WIDGET_EXTENSION
         WidgetCatalog.read()
         #else
-        ConnectionLibrary().archive.widgetComputers
+        ConnectionLibrary().archive.widgetComputers(including: TailnetDirectory().widgetComputers)
         #endif
     }
 

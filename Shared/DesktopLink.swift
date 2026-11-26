@@ -2,6 +2,7 @@ import Foundation
 
 /// A link can carry a password for one connection. Its original text and password have no archive representation.
 struct DesktopLink: Equatable {
+    static let supportedSchemes: Set<String> = ["vnc", "screens", "ssh", "screens-ssh"]
     enum Target: Equatable {
         case address(Endpoint)
         case savedName(String)
@@ -20,8 +21,9 @@ struct DesktopLink: Equatable {
         guard text.utf8.count <= 8192, !text.contains("#"), let separator = text.range(of: "://") else {
             throw URLError(.badURL)
         }
-        let scheme = text[..<separator.lowerBound].lowercased()
-        guard ["vnc", "screens", "ssh"].contains(scheme) else { throw URLError(.badURL) }
+        let inputScheme = text[..<separator.lowerBound].lowercased()
+        guard Self.supportedSchemes.contains(inputScheme) else { throw URLError(.badURL) }
+        let scheme = inputScheme == "screens-ssh" ? "ssh" : inputScheme
         let parts = text[separator.upperBound...].split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
         guard var authority = parts.first else { throw URLError(.badURL) }
         if authority.hasSuffix("/") { authority = authority.dropLast() }
@@ -46,6 +48,12 @@ struct DesktopLink: Equatable {
         case "screens":
             target = .savedName(host)
             sshPort = nil
+        #if targetEnvironment(macCatalyst)
+        case "vnc" where host.rangeOfCharacter(from: CharacterSet(charactersIn: ":[]")) == nil
+                && (host.contains(where: \.isWhitespace) || !host.contains(".")):
+            target = .savedName(host)
+            sshPort = nil
+        #endif
         case "ssh":
             let tunnel = try Endpoint(address: host, defaultPort: 22)
             target = .address(try Endpoint(address: tunnel.host))

@@ -1,5 +1,7 @@
+import AppIntents
 import SwiftUI
 import WidgetKit
+import rootshellVNC
 
 @main
 struct DeskLinkApp: App {
@@ -10,12 +12,18 @@ struct DeskLinkApp: App {
     @State private var privacy: AppLock
     #if targetEnvironment(macCatalyst)
     @State private var monitorWindows = MacMonitorWindows()
+    @State private var availability: MacAvailability
     #endif
     private let preferences: UserDefaults
     private let pasteboard: UIPasteboard
     @Environment(\.scenePhase) private var phase
 
     init() {
+        #if os(iOS) && !targetEnvironment(macCatalyst)
+        if #available(iOS 26, *) {
+            DictationRecording.removeInterruptedRecordings(in: FileManager.default.temporaryDirectory)
+        }
+        #endif
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
         if let flag = arguments.firstIndex(of: "--test-library"),
@@ -26,15 +34,24 @@ struct DeskLinkApp: App {
             pasteboard = UIPasteboard(name: UIPasteboard.Name("local.nikey.desklink.tests." + id.uuidString), create: true)
                 ?? .withUniqueName()
             preferences = defaults
+            #if targetEnvironment(macCatalyst)
+            _availability = State(initialValue: MacAvailability(defaults: defaults))
+            #endif
             _tailnet = State(initialValue: TailnetDirectory(defaults: defaults))
             _privacy = State(initialValue: AppLock(defaults: defaults))
             _sync = State(initialValue: LibrarySync(settings: file.deletingPathExtension().appendingPathExtension("sync.json"), defaults: defaults))
             return
         }
         #endif
+        #if os(iOS) && !targetEnvironment(macCatalyst)
+        VNCDownloadStore.shared.publishCompletedDownloads(in: URL.documentsDirectory.appending(path: "Downloads", directoryHint: .isDirectory))
+        #endif
         _library = State(initialValue: ConnectionLibrary())
         pasteboard = .general
         preferences = .standard
+        #if targetEnvironment(macCatalyst)
+        _availability = State(initialValue: MacAvailability(defaults: .standard))
+        #endif
         _tailnet = State(initialValue: TailnetDirectory())
         _sync = State(initialValue: LibrarySync())
         _privacy = State(initialValue: AppLock())
@@ -59,8 +76,12 @@ struct DeskLinkApp: App {
                 .environment(privacy)
                 #if targetEnvironment(macCatalyst)
                 .environment(monitorWindows)
+                .environment(availability)
                 #endif
                 .defaultAppStorage(preferences)
+                #if DEBUG && !targetEnvironment(macCatalyst)
+                .task { await AppleClipboardPeer.runIfRequested(library: library, board: pasteboard) }
+                #endif
                 .allowsHitTesting(!privacy.locked)
                 .accessibilityHidden(privacy.locked)
                 .overlay { if privacy.locked { PrivacyGate(privacy: privacy) } }
@@ -71,12 +92,12 @@ struct DeskLinkApp: App {
                 .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
                     if sync.preferencesChanged { Task { await sync.refresh(library) } }
                 }
-                .onChange(of: library.archive.widgetComputers, initial: true) {
+                .onChange(of: library.archive.widgetComputers(including: tailnet.widgetComputers), initial: true) { _, entries in
                     #if DEBUG
                     guard !ProcessInfo.processInfo.arguments.contains("--test-library") else { return }
                     #endif
                     guard library.canSync else { return }
-                    let entries = library.archive.widgetComputers
+                    DeskLinkShortcuts.updateAppShortcutParameters()
                     Task { await computerSearch.refresh(entries) }
                     if WidgetCatalog.publish(entries) {
                         WidgetCenter.shared.reloadTimelines(ofKind: WidgetCatalog.kind)
@@ -89,7 +110,9 @@ struct DeskLinkApp: App {
                     #else
                     let indexesComputers = true
                     #endif
-                    if indexesComputers, library.canSync { await computerSearch.refresh(library.archive.widgetComputers) }
+                    if indexesComputers, library.canSync {
+                        await computerSearch.refresh(library.archive.widgetComputers(including: tailnet.widgetComputers))
+                    }
                     while !Task.isCancelled {
                         if sync.folderName != nil { await sync.refresh(library) }
                         do { try await Task.sleep(for: .seconds(60)) } catch { return }
