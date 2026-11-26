@@ -17,6 +17,16 @@
 "恢复显示" = "Show Device";
 "恢复显示：%@" = "Show Device: %@";
 "没有隐藏的设备" = "No Hidden Devices";
+"文件夹" = "Folder";
+"所有设备" = "All Devices";
+"新建文件夹" = "New Folder";
+"文件夹名称" = "Folder Name";
+"重命名文件夹" = "Rename Folder";
+"删除文件夹" = "Delete Folder";
+"此文件夹没有设备" = "This folder has no devices";
+"移到文件夹" = "Move to Folder";
+"移出文件夹" = "Remove from Folder";
+"文件夹中的设备仍可在「所有设备」查看。" = "Devices in this folder will still appear in All Devices.";
 "端口设置" = "Port Settings";
 "VNC 端口" = "VNC Port";
 "SSH 端口" = "SSH Port";

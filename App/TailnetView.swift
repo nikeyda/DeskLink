@@ -10,6 +10,8 @@ struct TailnetView: View {
     @State private var unlinking = false
     @State private var managingHiddenDevices = false
     @State private var portsEditor: TailnetPortsEditor.Request?
+    @State private var folderEditor: TailnetFolderEditor.Request?
+    @State private var deletingFolder: TailnetFolder?
 
     var body: some View {
         Group {
@@ -18,34 +20,19 @@ struct TailnetView: View {
                     Label("Tailscale", systemImage: "network")
                 } actions: { Button("连接") { editing = true } }
             } else {
-                let results = directory.visibleDevices.filter(matches)
+                let results = directory.devicesInSelectedFolder.filter(matches)
                 List {
                     if let error = directory.error { Text(error).foregroundStyle(.red) }
+                    if !directory.folders.isEmpty { folderPicker }
                     ForEach(results) { item in
                         if let computer = directory.computer(for: item) {
-                            let id = directory.directoryID(for: item)
-                            let ports = id.flatMap { directory.ports(for: $0) }
-                            Button { select(computer, ports?.ssh) } label: {
-                                Label {
-                                    VStack(alignment: .leading) {
-                                        Text(computer.displayName)
-                                        Text(computer.endpoint.address + " · " + item.os).font(.caption).foregroundStyle(.secondary)
-                                    }
-                                } icon: { Image(systemName: "desktopcomputer") }
-                            }
-                            .contextMenu {
-                                Button("保存到连接库") { save(computer, ports?.ssh) }
-                                if let id {
-                                    Button("端口设置", systemImage: "network") {
-                                        portsEditor = .init(id: id, name: computer.displayName, ports: ports)
-                                    }
-                                    Button("隐藏设备", systemImage: "eye.slash") { directory.setHidden(true, device: item) }
-                                }
-                            }
+                            deviceRow(item, computer: computer)
                         }
                     }
                     if !directory.loading && results.isEmpty {
-                        if search.isEmpty && !directory.hiddenDevices.isEmpty {
+                        if search.isEmpty, directory.selectedFolder != nil {
+                            Text("此文件夹没有设备").foregroundStyle(.secondary)
+                        } else if search.isEmpty && !directory.hiddenDevices.isEmpty {
                             Button("查看隐藏的设备") { managingHiddenDevices = true }
                         } else {
                             Text("未找到匹配的连接")
@@ -57,11 +44,24 @@ struct TailnetView: View {
                     ToolbarItem { Button { Task { await directory.refresh() } } label: { Label("重试", systemImage: "arrow.clockwise") } }
                     ToolbarItem {
                         Menu {
+                            Button("新建文件夹", systemImage: "folder.badge.plus") {
+                                folderEditor = .init(folder: nil)
+                            }
+                            if let folder = directory.selectedFolder {
+                                Button("重命名文件夹", systemImage: "pencil") {
+                                    folderEditor = .init(folder: folder)
+                                }
+                                Button(role: .destructive) { deletingFolder = folder } label: {
+                                    Label("删除文件夹", systemImage: "trash")
+                                }
+                            }
+                            Divider()
                             Button("隐藏的设备", systemImage: "eye.slash") { managingHiddenDevices = true }
                                 .disabled(directory.hiddenDevices.isEmpty)
                             Button("身份验证") { editing = true }
                             Button("断开连接", role: .destructive) { unlinking = true }
                         } label: { Label("Tailscale", systemImage: "network") }
+                            .accessibilityIdentifier("tailnet.menu")
                     }
                 }
             }
@@ -69,13 +69,71 @@ struct TailnetView: View {
         .task { if directory.devices.isEmpty { await directory.refresh() } }
         .sheet(isPresented: $editing) { TailnetLogin(directory: directory) }
         .sheet(item: $portsEditor) { TailnetPortsEditor(request: $0, directory: directory) }
+        .sheet(item: $folderEditor) { TailnetFolderEditor(request: $0, directory: directory) }
         .sheet(isPresented: $managingHiddenDevices) { hiddenDeviceList }
+        .alert("删除文件夹", isPresented: Binding(
+            get: { deletingFolder != nil },
+            set: { if !$0 { deletingFolder = nil } }
+        ), presenting: deletingFolder) { folder in
+            Button("取消", role: .cancel) {}
+            Button("删除", role: .destructive) { directory.removeFolder(folder.id) }
+        } message: { _ in
+            Text("文件夹中的设备仍可在「所有设备」查看。")
+        }
         .alert("断开连接", isPresented: $unlinking) {
             Button("取消", role: .cancel) {}
             Button("确认", role: .destructive) {
                 do { try directory.unlink() } catch { directory.error = error.localizedDescription }
             }
         } message: { Text(verbatim: directory.account?.tailnet ?? "") }
+    }
+
+    private var folderPicker: some View {
+        Picker("文件夹", selection: Binding(get: { directory.selectedFolder?.id }, set: directory.selectFolder)) {
+            Text("所有设备").tag(nil as UUID?)
+            ForEach(directory.folders) { folder in
+                Text(verbatim: folder.name).tag(folder.id as UUID?)
+            }
+        }
+        .pickerStyle(.menu)
+        .accessibilityIdentifier("tailnet.folder.selection")
+    }
+
+    private func deviceRow(_ device: TailnetDevice, computer: Computer) -> some View {
+        let id = directory.directoryID(for: device)
+        let ports = id.flatMap { directory.ports(for: $0) }
+        let membership = directory.folderID(for: device)
+        let folderName = directory.folders.first { $0.id == membership }?.name
+        return Button { select(computer, ports?.ssh) } label: {
+            Label {
+                VStack(alignment: .leading) {
+                    Text(computer.displayName)
+                    Text([computer.endpoint.address, device.os, folderName].compactMap { $0 }.joined(separator: " · "))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            } icon: { Image(systemName: "desktopcomputer") }
+        }
+        .accessibilityIdentifier("tailnet.device." + device.id)
+        .contextMenu {
+            Button("保存到连接库") { save(computer, ports?.ssh) }
+            if let id {
+                let destinations = directory.folders.filter { $0.id != membership }
+                if !destinations.isEmpty {
+                    Menu("移到文件夹", systemImage: "folder") {
+                        ForEach(destinations) { folder in
+                            Button { directory.moveDevice(id, to: folder.id) } label: { Text(verbatim: folder.name) }
+                        }
+                    }
+                }
+                if membership != nil {
+                    Button("移出文件夹", systemImage: "folder.badge.minus") { directory.moveDevice(id, to: nil) }
+                }
+                Button("端口设置", systemImage: "network") {
+                    portsEditor = .init(id: id, name: computer.displayName, ports: ports)
+                }
+                Button("隐藏设备", systemImage: "eye.slash") { directory.setHidden(true, device: device) }
+            }
+        }
     }
 
     private var hiddenDeviceList: some View {
@@ -108,6 +166,47 @@ struct TailnetView: View {
         search.isEmpty || item.hostname.localizedCaseInsensitiveContains(search) || item.name.localizedCaseInsensitiveContains(search)
             || item.addresses.contains(where: { $0.localizedCaseInsensitiveContains(search) })
             || directory.computer(for: item)?.endpoint.address.localizedCaseInsensitiveContains(search) == true
+    }
+}
+
+private struct TailnetFolderEditor: View {
+    struct Request: Identifiable {
+        let id = UUID()
+        let folder: TailnetFolder?
+    }
+
+    let request: Request
+    let directory: TailnetDirectory
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String
+
+    init(request: Request, directory: TailnetDirectory) {
+        self.request = request
+        self.directory = directory
+        _name = State(initialValue: request.folder?.name ?? "")
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("文件夹名称", text: $name)
+                    .accessibilityIdentifier("tailnet.folder.name")
+            }
+            .navigationTitle(request.folder == nil ? "新建文件夹" : "重命名文件夹")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") {
+                        if let folder = request.folder { directory.renameFolder(folder.id, to: name) }
+                        else { directory.addFolder(name) }
+                        dismiss()
+                    }
+                    .disabled(!directory.canNameFolder(name, excluding: request.folder?.id))
+                    .accessibilityIdentifier("tailnet.folder.save")
+                }
+            }
+        }
     }
 }
 

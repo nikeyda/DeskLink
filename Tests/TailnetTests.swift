@@ -111,6 +111,64 @@ final class TailnetTests: XCTestCase {
         XCTAssertNil(defaults.data(forKey: "tailnet.account"))
     }
 
+    @MainActor func testFoldersAndSelectionFollowDeviceIdentityWithinTheirTailnet() async throws {
+        let domain = "TelescopeTailnetFolders." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let service = DirectoryFixture()
+        let account = try TailnetAccount(tailnet: "fixture.example", clientID: "first")
+        let directory = TailnetDirectory(defaults: defaults) { try await service.reply(to: $0) }
+        try await directory.link(account, secret: "fixture-only", remember: false)
+        let device = try XCTUnwrap(directory.visibleDevices.first)
+        let id = try XCTUnwrap(directory.directoryID(for: device))
+        directory.addFolder("   ")
+        XCTAssertTrue(directory.folders.isEmpty)
+        directory.addFolder("  Studio  ")
+        let studio = try XCTUnwrap(directory.selectedFolder)
+        XCTAssertEqual(studio.name, "Studio")
+        directory.addFolder("studio")
+        XCTAssertEqual(directory.folders, [studio])
+        XCTAssertTrue(directory.devicesInSelectedFolder.isEmpty)
+
+        directory.moveDevice(id, to: studio.id)
+        XCTAssertEqual(directory.devicesInSelectedFolder.map(\.id), ["a"])
+        directory.setHidden(true, device: device)
+        XCTAssertTrue(directory.devicesInSelectedFolder.isEmpty)
+        directory.setHidden(false, device: device)
+        XCTAssertEqual(directory.folderID(for: device), studio.id)
+        directory.addFolder("Home")
+        XCTAssertEqual(directory.selectedFolder?.name, "Home")
+        directory.selectFolder(studio.id)
+        directory.renameFolder(studio.id, to: "Archive")
+        XCTAssertEqual(directory.selectedFolder?.name, "Archive")
+
+        let reopened = TailnetDirectory(defaults: defaults) { try await service.reply(to: $0) }
+        await service.changeListing(to: #"{"devices":[{"id":"a","hostname":"Renamed","name":"renamed.fixture","addresses":["100.64.8.9"],"os":"linux"}]}"#)
+        let otherAccount = try TailnetAccount(tailnet: "other.fixture", clientID: "second")
+        try await reopened.link(otherAccount, secret: "fixture-only", remember: false)
+        XCTAssertTrue(reopened.folders.isEmpty)
+        XCTAssertNil(reopened.selectedFolder)
+        XCTAssertEqual(reopened.devicesInSelectedFolder.map(\.id), ["a"])
+        reopened.addFolder("Other")
+
+        let sameTailnet = try TailnetAccount(tailnet: "fixture.example", clientID: "third")
+        try await reopened.link(sameTailnet, secret: "fixture-only", remember: false)
+        XCTAssertEqual(reopened.selectedFolder?.id, studio.id)
+        XCTAssertEqual(reopened.selectedFolder?.name, "Archive")
+        let restored = try XCTUnwrap(reopened.devicesInSelectedFolder.first)
+        XCTAssertEqual(restored.hostname, "Renamed")
+        XCTAssertEqual(reopened.computer(for: restored)?.endpoint.host, "100.64.8.9")
+        reopened.moveDevice(id, to: UUID())
+        XCTAssertEqual(reopened.folderID(for: restored), studio.id)
+        reopened.removeFolder(studio.id)
+        XCTAssertNil(reopened.selectedFolder)
+        XCTAssertNil(reopened.folderID(for: restored))
+        XCTAssertEqual(reopened.devicesInSelectedFolder.map(\.id), ["a"])
+
+        try await reopened.link(otherAccount, secret: "fixture-only", remember: false)
+        XCTAssertEqual(reopened.selectedFolder?.name, "Other")
+    }
+
     func testPortOverridesValidateEachFieldAndTreatBlankAsDefault() throws {
         let ports = try TailnetDevicePorts(vnc: " 65535 ", ssh: "1")
         XCTAssertEqual(ports.vnc, 65535)

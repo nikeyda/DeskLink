@@ -559,12 +559,14 @@ struct LibraryWindow: View {
             Button { downloads = true } label: { Label("文件传输", systemImage: "arrow.up.arrow.down") }
                 .accessibilityIdentifier("library.transfers")
             Menu {
-                Button {
-                    editingFolderScope = page?.folderScope ?? .custom
-                    renamingFolder = nil
-                    folderName = ""
-                    showFolder = true
-                } label: { Label("新建文件夹", systemImage: "folder.badge.plus") }
+                if page != .tailscale {
+                    Button {
+                        editingFolderScope = page?.folderScope ?? .custom
+                        renamingFolder = nil
+                        folderName = ""
+                        showFolder = true
+                    } label: { Label("新建文件夹", systemImage: "folder.badge.plus") }
+                }
                 Button { listLayout.toggle() } label: { Label(listLayout ? "网格" : "列表", systemImage: listLayout ? "square.grid.2x2" : "list.bullet") }
                 if page != .nearby, page != .tailscale {
                     Menu("排序") {

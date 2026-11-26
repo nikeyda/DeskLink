@@ -91,6 +91,11 @@ struct TailnetDevicePorts: Codable, Equatable, Sendable {
     }
 }
 
+struct TailnetFolder: Codable, Equatable, Identifiable {
+    var id = UUID()
+    var name: String
+}
+
 private final class FixedServiceDelegate: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
@@ -107,8 +112,14 @@ final class TailnetDirectory {
         let account: TailnetAccount
         let computers: [ComputerEntity]
     }
+    private struct Folders: Codable {
+        var entries = [TailnetFolder]()
+        var assignments = [UUID: UUID]()
+        var selection: UUID?
+    }
     private static let hiddenDevicesKey = "tailnet.hiddenDevices"
     private static let devicePortsKey = "tailnet.devicePorts"
+    private static let foldersKey = "tailnet.folders"
     private static let session = URLSession(configuration: .ephemeral, delegate: FixedServiceDelegate(), delegateQueue: nil)
 
     private let defaults: UserDefaults
@@ -117,6 +128,7 @@ final class TailnetDirectory {
     private var attempt = UUID()
     private var hiddenIDs: Set<UUID>
     private var devicePorts: [UUID: TailnetDevicePorts]
+    private var foldersByTailnet: [String: Folders]
     private var widgetCandidates = [ComputerEntity]()
     private(set) var account: TailnetAccount?
     private(set) var devices = [TailnetDevice]()
@@ -125,6 +137,21 @@ final class TailnetDirectory {
 
     var visibleDevices: [TailnetDevice] { devices.filter { !isHidden($0) } }
     var hiddenDevices: [TailnetDevice] { devices.filter { isHidden($0) } }
+    var folders: [TailnetFolder] { activeFolders.entries }
+    var selectedFolder: TailnetFolder? {
+        guard let selection = activeFolders.selection else { return nil }
+        return folders.first { $0.id == selection }
+    }
+    var devicesInSelectedFolder: [TailnetDevice] {
+        guard let selection = selectedFolder?.id else { return visibleDevices }
+        return visibleDevices.filter { folderID(for: $0) == selection }
+    }
+
+    private var activeFolders: Folders {
+        guard let key = account?.tailnet.lowercased() else { return Folders() }
+        return foldersByTailnet[key] ?? Folders()
+    }
+
     var widgetComputers: [ComputerEntity] {
         widgetCandidates.filter { !hiddenIDs.contains($0.id) }.map { item in
             guard devicePorts[item.id]?.vnc != nil, let endpoint = try? Endpoint(address: item.address) else { return item }
@@ -138,6 +165,8 @@ final class TailnetDirectory {
         hiddenIDs = Set((defaults.stringArray(forKey: Self.hiddenDevicesKey) ?? []).compactMap(UUID.init(uuidString:)))
         devicePorts = defaults.data(forKey: Self.devicePortsKey)
             .flatMap { try? JSONDecoder().decode([UUID: TailnetDevicePorts].self, from: $0) } ?? [:]
+        foldersByTailnet = defaults.data(forKey: Self.foldersKey)
+            .flatMap { try? JSONDecoder().decode([String: Folders].self, from: $0) } ?? [:]
         self.transport = transport ?? { request in
             let (data, response) = try await Self.session.data(for: request)
             guard let response = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
@@ -219,6 +248,64 @@ final class TailnetDirectory {
 
     func directoryID(for device: TailnetDevice) -> UUID? {
         account.flatMap { device.directoryID(in: $0) }
+    }
+
+    func folderID(for device: TailnetDevice) -> UUID? {
+        guard let id = directoryID(for: device) else { return nil }
+        return activeFolders.assignments[id]
+    }
+
+    func selectFolder(_ id: UUID?) {
+        guard id == nil || folders.contains(where: { $0.id == id }),
+              id != selectedFolder?.id else { return }
+        changeFolders { $0.selection = id }
+    }
+
+    func canNameFolder(_ input: String, excluding id: UUID? = nil) -> Bool {
+        let name = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        return account != nil && !name.isEmpty && !folders.contains {
+            $0.id != id && $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame
+        }
+    }
+
+    func addFolder(_ input: String) {
+        guard canNameFolder(input) else { return }
+        let folder = TailnetFolder(name: input.trimmingCharacters(in: .whitespacesAndNewlines))
+        changeFolders {
+            $0.entries.append(folder)
+            $0.selection = folder.id
+        }
+    }
+
+    func renameFolder(_ id: UUID, to input: String) {
+        guard canNameFolder(input, excluding: id), let index = folders.firstIndex(where: { $0.id == id }) else { return }
+        changeFolders { $0.entries[index].name = input.trimmingCharacters(in: .whitespacesAndNewlines) }
+    }
+
+    func removeFolder(_ id: UUID) {
+        guard folders.contains(where: { $0.id == id }) else { return }
+        changeFolders {
+            $0.entries.removeAll { $0.id == id }
+            $0.assignments = $0.assignments.filter { $0.value != id }
+            if $0.selection == id { $0.selection = nil }
+        }
+    }
+
+    func moveDevice(_ id: UUID, to folder: UUID?) {
+        guard devices.contains(where: { directoryID(for: $0) == id }),
+              folder == nil || folders.contains(where: { $0.id == folder }),
+              activeFolders.assignments[id] != folder else { return }
+        changeFolders { $0.assignments[id] = folder }
+    }
+
+    private func changeFolders(_ update: (inout Folders) -> Void) {
+        guard let key = account?.tailnet.lowercased() else { return }
+        var updated = foldersByTailnet
+        update(&updated[key, default: Folders()])
+        if updated[key]?.entries.isEmpty == true { updated[key] = nil }
+        guard let data = try? JSONEncoder().encode(updated) else { return }
+        defaults.set(data, forKey: Self.foldersKey)
+        foldersByTailnet = updated
     }
 
     func ports(for id: UUID) -> TailnetDevicePorts? { devicePorts[id] }
