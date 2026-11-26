@@ -35,7 +35,8 @@ final class PortableCodecUITests: XCTestCase {
         }
         XCTAssertGreaterThan(peer.frameCount, 0)
         let advertised = Set(peer.advertisedEncodings)
-        XCTAssertTrue(advertised.isDisjoint(with: [7, 16, -239, -240, 0, -28]))
+        XCTAssertTrue(advertised.isDisjoint(with: [7, 16, -239, -240, 0]))
+        XCTAssertTrue(advertised.isDisjoint(with: Int32(-32)...Int32(-23)))
         XCTAssertTrue(advertised.isSuperset(of: [-224, 6, 1, -223, -308]))
         XCTAssertNil(peer.failure)
         let presentationDeadline = ContinuousClock.now + .seconds(10)

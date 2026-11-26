@@ -28,14 +28,24 @@ public struct FramebufferQuality: Codable, Equatable, Sendable {
 
     public var adaptive: Scope
     public var compression: Scope
+    public var tightJPEGQuality: Int?
 
-    public init(adaptive: Scope = .always, compression: Scope = .never) {
+    public init(adaptive: Scope = .always, compression: Scope = .never, tightJPEGQuality: Int? = nil) {
         self.adaptive = adaptive
         self.compression = compression
+        self.tightJPEGQuality = tightJPEGQuality
     }
 
-    /// TightVNC JPEG quality 4 is pseudo-encoding -32 + 4.
-    static let tightJPEGLevelFour = Encoding.unknown(-28)
+    public static let tightJPEGQualityRange = 0...9
+    public static let defaultTightJPEGQuality = 3
+
+    public var resolvedTightJPEGQuality: Int {
+        let range = Self.tightJPEGQualityRange
+        return min(range.upperBound, max(range.lowerBound, tightJPEGQuality ?? Self.defaultTightJPEGQuality))
+    }
+
+    /// Conventional TightVNC quality levels use pseudo-encodings -32 through -23.
+    var tightJPEGEncoding: Encoding { .unknown(Int32(-32 + resolvedTightJPEGQuality)) }
 }
 
 /// Apple Standard screen sharing expresses pointer input in native desktop pixels,

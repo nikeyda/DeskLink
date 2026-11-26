@@ -2082,9 +2082,9 @@ public actor TransportSession {
                 preferTight: requestedAppleMediaStream || stateMachine.preferredEncodings.contains(.tight),
                 serverRendersCursor: serverRendersCursor,
                 disabled: disabledPortableCodecs)
-            if let scope = framebufferQuality?.compression, stateMachine.preferredEncodings.contains(.tight),
-               await appliesFramebufferQuality(scope) {
-                stateMachine.preferredEncodings.append(FramebufferQuality.tightJPEGLevelFour)
+            if let framebufferQuality, stateMachine.preferredEncodings.contains(.tight),
+               await appliesFramebufferQuality(framebufferQuality.compression) {
+                stateMachine.preferredEncodings.append(framebufferQuality.tightJPEGEncoding)
             }
             if requestedAppleMediaStream { log.info("Conventional RFB server detected; using portable Standard mode") }
         } else if !requestAppleMediaStream, let losslessFallbackEncodings, let scope = framebufferQuality?.adaptive,

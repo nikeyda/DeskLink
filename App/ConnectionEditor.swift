@@ -511,6 +511,9 @@ struct ConnectionEditor: View {
                         .accessibilityIdentifier("connection.adaptiveQuality")
                     imagePolicy("图像压缩", selection: $framebuffer.compression)
                         .accessibilityIdentifier("connection.tightCompression")
+                    tightJPEGQualitySlider
+                        .disabled(framebuffer.compression == .never
+                                  || disabledVNCCodecs.contains(PortableFramebufferCodec.tight.rawValue))
                 }
                 DisclosureGroup("VNC 编码") {
                     ForEach(PortableFramebufferCodec.allCases, id: \.rawValue) { codec in
@@ -653,6 +656,26 @@ struct ConnectionEditor: View {
             Text("始终启用").tag(FramebufferQuality.Scope.always)
             Text("仅远程连接时启用").tag(FramebufferQuality.Scope.remoteOnly)
             Text("永不启用").tag(FramebufferQuality.Scope.never)
+        }
+    }
+
+    private var tightJPEGQualitySlider: some View {
+        let quality = framebuffer.resolvedTightJPEGQuality
+        let levels = FramebufferQuality.tightJPEGQualityRange
+        let value = Binding(
+            get: { Double(framebuffer.resolvedTightJPEGQuality) },
+            set: { value in
+                let level = Int(value.rounded())
+                framebuffer.tightJPEGQuality = level == FramebufferQuality.defaultTightJPEGQuality ? nil : level
+            }
+        )
+        return VStack(alignment: .leading) {
+            LabeledContent("TightVNC JPEG 画质", value: quality.formatted())
+            Slider(value: value, in: Double(levels.lowerBound)...Double(levels.upperBound), step: 1) {
+                Text("TightVNC JPEG 画质")
+            }
+            .accessibilityValue(quality.formatted())
+            .accessibilityIdentifier("connection.tightJPEGQuality")
         }
     }
 

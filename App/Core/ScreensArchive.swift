@@ -1,5 +1,25 @@
 import Foundation
+import RFBTransport
 import rootshellVNC
+
+private extension FramebufferQuality.Scope {
+    init?(screensCompressionMode: Int) {
+        switch screensCompressionMode {
+        case 0: self = .never
+        case 1: self = .remoteOnly
+        case 2: self = .always
+        default: return nil
+        }
+    }
+
+    var screensCompressionMode: Int {
+        switch self {
+        case .never: 0
+        case .remoteOnly: 1
+        case .always: 2
+        }
+    }
+}
 
 private extension VNCDisconnectAction {
     var screensArchiveValue: Int {
@@ -56,6 +76,8 @@ struct ScreensArchive: Decodable {
         let showLocalCursor: Bool?
         let useFallbackCursor: Bool?
         let disabledCodecs: [Int32]?
+        let imageCompressionMode: Int?
+        let tightVncJPEGEncodingQuality: Int?
         let turnOffZooming: Bool?
         let onScreenDragDelay: TimeInterval?
         let pcScrollSpeed: Int?
@@ -99,6 +121,15 @@ struct ScreensArchive: Decodable {
             if let disabledCodecs, !disabledCodecs.isEmpty {
                 result.disabledVNCCodecs = Set(disabledCodecs).sorted()
             }
+            var framebuffer = FramebufferQuality()
+            if let mode = imageCompressionMode, let compression = FramebufferQuality.Scope(screensCompressionMode: mode) {
+                framebuffer.compression = compression
+            }
+            if let quality = tightVncJPEGEncodingQuality, FramebufferQuality.tightJPEGQualityRange.contains(quality),
+               quality != FramebufferQuality.defaultTightJPEGQuality {
+                framebuffer.tightJPEGQuality = quality
+            }
+            result.framebufferQuality = framebuffer == FramebufferQuality() ? nil : framebuffer
             result.allowsViewportZoom = turnOffZooming == true ? false : nil
             result.touchHoldDuration = onScreenDragDelay
             if let pcScrollSpeed {
@@ -238,6 +269,9 @@ extension ScreensArchive {
             record["showLocalCursor"] = computer.showsLocalCursor ?? (preferences.object(forKey: "connection.clientCursor") as? Bool ?? true)
             record["useFallbackCursor"] = computer.usesFallbackCursor == true
             record["disabledCodecs"] = computer.disabledVNCCodecs ?? []
+            let framebuffer = computer.framebufferQuality ?? FramebufferQuality()
+            record["imageCompressionMode"] = framebuffer.compression.screensCompressionMode
+            record["tightVncJPEGEncodingQuality"] = framebuffer.resolvedTightJPEGQuality
             record["turnOffZooming"] = computer.allowsViewportZoom == false
             record["onScreenDragDelay"] = computer.touchHoldDuration ?? (preferences.object(forKey: "gesture.holdDuration") as? Double
                 ?? RemoteTouchGestureConfiguration.defaultHoldDuration)

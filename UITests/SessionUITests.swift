@@ -664,11 +664,17 @@ final class SessionUITests: XCTestCase {
             XCTAssertTrue(compression.isHittable)
             compression.tap()
             app.buttons[choice].firstMatch.tap()
+            if compressed {
+                let slider = app.sliders["connection.tightJPEGQuality"].firstMatch
+                for _ in 0..<3 where !slider.isHittable { app.swipeUp() }
+                XCTAssertTrue(slider.isEnabled)
+                slider.adjust(toNormalizedSliderPosition: 1)
+            }
             app.buttons["connection.submit"].tap()
             try await waitUntil { desktop.frameCount > 0 }
             XCTAssertTrue(desktop.advertisedEncodings.contains(7))
-            XCTAssertEqual(desktop.advertisedEncodings.contains(-28), compressed)
-            XCTAssertFalse(desktop.advertisedEncodings.contains(-23))
+            let qualityEncodings = desktop.advertisedEncodings.filter { (-32 ... -23).contains($0) }
+            XCTAssertEqual(qualityEncodings, compressed ? [-23] : [])
             try await waitUntil { Self.hasColorChart(app.screenshot().image) }
             app.buttons["session.close"].tap()
         }

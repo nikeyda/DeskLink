@@ -120,6 +120,24 @@ final class ScreensArchiveTests: XCTestCase {
         XCTAssertEqual(screens.computers[0].configuration.cursorRendering, .server)
     }
 
+    func testTightJPEGQualityAndCompressionScopeRoundTripThroughBothArchiveFormats() throws {
+        var archive = try ScreensArchive.convert(fixture("screens-tight-jpeg"))
+        let original = try XCTUnwrap(archive.computers.first?.framebufferQuality)
+        XCTAssertEqual(original.compression, .always)
+        XCTAssertEqual(original.resolvedTightJPEGQuality, 9)
+        for scope in FramebufferQuality.Scope.allCases {
+            for level in FramebufferQuality.tightJPEGQualityRange {
+                archive.computers[0].framebufferQuality = FramebufferQuality(compression: scope, tightJPEGQuality: level)
+                let native = try LibraryArchive.read(archive.encoded())
+                XCTAssertEqual(native.computers[0].framebufferQuality, archive.computers[0].framebufferQuality)
+                let screens = try ScreensArchive.convert(ScreensArchive.export(native, knownMacs: [], sharedClipboard: true))
+                let restored = try XCTUnwrap(screens.computers.first).configuration.framebufferQuality
+                XCTAssertEqual(restored?.compression, scope)
+                XCTAssertEqual(restored?.resolvedTightJPEGQuality, level)
+            }
+        }
+    }
+
     func testExportSavedProfilesAndPreserveSSHWithoutIncludingSecretsOrRecents() throws {
         var source = try ScreensArchive.convert(fixture("screens-group-ssh"))
         let generic = try XCTUnwrap(ScreensArchive.convert(fixture("screens-generic")).computers.first)

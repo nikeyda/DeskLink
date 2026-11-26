@@ -163,7 +163,8 @@ final class LocalTestDisplay {
                     let height = Int(request[7]) * 256 + Int(request[8])
                     requestedFramebufferSize = CGSize(width: width, height: height)
                     let fullAppleDesktop = appleScalingCapability != nil && !halfResolutionRequested
-                    let frame = servesJPEG && advertisedEncodings.contains(-28) ? try jpegFrame() :
+                    let requestsJPEG = advertisedEncodings.contains { (-32 ... -23).contains($0) }
+                    let frame = servesJPEG && requestsJPEG ? try jpegFrame() :
                         try makeFrame(format, width: fullAppleDesktop ? 320 : 160, height: fullAppleDesktop ? 192 : 96)
                     try await send(frame, to: connection)
                     frameCount += 1

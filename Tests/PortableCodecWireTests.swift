@@ -6,19 +6,38 @@ import rootshellVNC
 
 @MainActor
 final class PortableCodecWireTests: XCTestCase {
+    private let qualityEncodings = Set(Int32(-32)...Int32(-23))
+
     func testStandardHandshakeHonorsDisabledCodecsAndJPEGDependency() async throws {
         let baseline = try await advertised(disabling: [])
-        XCTAssertTrue(baseline.isSuperset(of: [7, 16, -239, -240, 0, -28]))
+        XCTAssertTrue(baseline.isSuperset(of: [7, 16, -239, -240, 0]))
+        XCTAssertEqual(baseline.intersection(qualityEncodings), [-29])
 
         let filtered = try await advertised(disabling: [7, 16, -239, 0])
-        XCTAssertTrue(filtered.isDisjoint(with: [7, 16, -239, -240, 0, -28]))
+        XCTAssertTrue(filtered.isDisjoint(with: [7, 16, -239, -240, 0]))
+        XCTAssertTrue(filtered.isDisjoint(with: qualityEncodings))
         XCTAssertTrue(filtered.isSuperset(of: [-224, 6, 1, -223, -308]))
     }
 
-    private func advertised(disabling codes: [Int32]) async throws -> Set<Int32> {
-        let peer = CodecHandshakePeer()
+    func testTightJPEGQualityAdvertisesEachLevelAndHonorsCompressionScope() async throws {
+        for level in 0...9 {
+            let encodings = try await advertised(quality: FramebufferQuality(compression: .always, tightJPEGQuality: level))
+            XCTAssertEqual(encodings.intersection(qualityEncodings), [Int32(-32 + level)])
+        }
+        let remoteOnly = FramebufferQuality(compression: .remoteOnly, tightJPEGQuality: 9)
+        let local = try await advertised(quality: remoteOnly, local: true)
+        XCTAssertTrue(local.isDisjoint(with: qualityEncodings))
+        let remote = try await advertised(quality: remoteOnly, local: false)
+        XCTAssertEqual(remote.intersection(qualityEncodings), [-23])
+        let disabled = try await advertised(quality: FramebufferQuality(compression: .never, tightJPEGQuality: 9))
+        XCTAssertTrue(disabled.isDisjoint(with: qualityEncodings))
+    }
+
+    private func advertised(disabling codes: [Int32] = [], quality: FramebufferQuality = FramebufferQuality(compression: .always),
+                            local: Bool = false) async throws -> Set<Int32> {
+        let peer = CodecHandshakePeer(local: local)
         var computer = Computer(endpoint: try Endpoint(address: "codec-wire.fixture.invalid"))
-        computer.framebufferQuality = FramebufferQuality(compression: .always)
+        computer.framebufferQuality = quality
         computer.disabledVNCCodecs = codes
         var config = computer.configuration
         config.transportProvider = { _, _ in peer }
@@ -32,6 +51,8 @@ final class PortableCodecWireTests: XCTestCase {
 }
 
 private actor CodecHandshakePeer: RFBConnection {
+    let local: Bool
+
     private var input = Data("RFB 003.008\n".utf8) + Data([
         1, 1, 0, 0, 0, 0, // None authentication with a successful result.
         0, 160, 0, 96, // Framebuffer geometry.
@@ -39,6 +60,10 @@ private actor CodecHandshakePeer: RFBConnection {
         0, 0, 0, 4, 84, 101, 115, 116 // Server name: Test.
     ])
     private(set) var encodings = Set<Int32>()
+
+    init(local: Bool) { self.local = local }
+
+    func isOnLocalNetwork() async -> Bool { local }
 
     func connect() async throws {}
 
