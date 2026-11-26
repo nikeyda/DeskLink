@@ -37,6 +37,7 @@ final class VNCClipboardRemoteWrites {
 @MainActor
 protocol VNCClipboardProviding: AnyObject {
     var changeCount: Int { get }
+    var allowsAutomaticRead: Bool { get }
     var remoteWrites: VNCClipboardRemoteWrites { get }
 
     func hasTransferableContent(for support: VNCClipboardContentSupport) -> Bool
@@ -77,6 +78,15 @@ final class VNCSystemClipboard: VNCClipboardProviding {
     init(pasteboard: UIPasteboard = .general) { self.pasteboard = pasteboard }
 
     var changeCount: Int { pasteboard.changeCount }
+    var allowsAutomaticRead: Bool {
+        #if os(iOS) && !targetEnvironment(macCatalyst)
+        // iOS can present a paste permission alert each time an automatic
+        // read encounters content copied by another app.
+        pasteboard.name != .general
+        #else
+        true
+        #endif
+    }
     var remoteWrites: VNCClipboardRemoteWrites { .system }
 
     // Type and has* queries do not trigger the paste permission prompt.
@@ -143,6 +153,7 @@ private final class VNCSystemClipboard: VNCClipboardProviding {
     init(pasteboard: NSPasteboard = .general) { self.pasteboard = pasteboard }
 
     var changeCount: Int { pasteboard.changeCount }
+    var allowsAutomaticRead: Bool { true }
     var remoteWrites: VNCClipboardRemoteWrites { .system }
 
     func hasTransferableContent(for support: VNCClipboardContentSupport) -> Bool {
@@ -212,7 +223,8 @@ private final class VNCSystemClipboard: VNCClipboardProviding {
 @MainActor
 @Observable
 public final class VNCClipboardSynchronizer {
-    /// Whether subsequent clipboard changes automatically flow both ways.
+    /// Whether remote changes are applied automatically and local changes are
+    /// sent automatically where the pasteboard allows it.
     public var sharedClipboardEnabled = false {
         didSet {
             guard oldValue != sharedClipboardEnabled else { return }
@@ -221,7 +233,7 @@ public final class VNCClipboardSynchronizer {
             cancelRemoteCopy()
             cancelAutomaticApply()
             establishBaseline()
-            if sharedClipboardEnabled, automaticallyMonitors {
+            if sharedClipboardEnabled, automaticallyMonitors, clipboard.allowsAutomaticRead {
                 startMonitoring()
                 startClipboardObservation()
             } else {
@@ -707,7 +719,9 @@ public final class VNCClipboardSynchronizer {
                 pendingManualGet = false
                 return
             }
-            if changeNotice, localUploadPending || (isEligible && clipboard.changeCount != observedLocalChangeCount) {
+            let localChangeWillUpload = clipboard.allowsAutomaticRead && isEligible
+                && clipboard.changeCount != observedLocalChangeCount
+            if changeNotice, localUploadPending || localChangeWillUpload {
                 // This notice precedes the local upload. Its reply cannot own the pasteboard,
                 // even if the upload finishes before the reply arrives.
                 ordinaryRequest = nil
@@ -926,8 +940,9 @@ public final class VNCClipboardSynchronizer {
     /// Shared-mode send of the device clipboard, remembered with the support
     /// it was read under so retryAutomaticFlush can resend it.
     private func flushLocalClipboard() {
-        let support = contentSupport()
         observedLocalChangeCount = clipboard.changeCount
+        guard clipboard.allowsAutomaticRead else { return }
+        let support = contentSupport()
         guard let content = readAutomaticClipboard(for: support) else { return }
         syncedLocalContent = (content, clipboard.changeCount)
         transmit(content)

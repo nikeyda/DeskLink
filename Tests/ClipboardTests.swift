@@ -8,9 +8,11 @@ import RFBProtocol
 @MainActor final class ClipboardTests: XCTestCase {
     private final class PermissionClipboard: VNCClipboardProviding {
         var changeCount = 0
+        var allowsAutomaticRead = true
         let remoteWrites = VNCClipboardRemoteWrites()
         var offeredType = ClipboardType.utf8PlainText
         var permittedContent: ClipboardContent?
+        var writtenContent: ClipboardContent?
         var reads = 0
 
         func hasTransferableContent(for support: ClipboardContentSupport) -> Bool {
@@ -23,8 +25,52 @@ import RFBProtocol
         }
 
         func write(_ content: ClipboardContent) {
-            XCTFail("Sending a local copy should not replace the local clipboard")
+            writtenContent = content
+            changeCount += 1
         }
+    }
+
+    func testGeneralPasteboardRequiresManualSendOnMobile() {
+        #if os(iOS) && !targetEnvironment(macCatalyst)
+        XCTAssertFalse(VNCSystemClipboard().allowsAutomaticRead)
+        #else
+        XCTAssertTrue(VNCSystemClipboard().allowsAutomaticRead)
+        #endif
+        let board = UIPasteboard.withUniqueName()
+        defer { UIPasteboard.remove(withName: board.name) }
+        XCTAssertTrue(VNCSystemClipboard(pasteboard: board).allowsAutomaticRead)
+    }
+
+    func testManualOnlyPasteboardDoesNotReadAfterDenialOrForegrounding() {
+        let board = PermissionClipboard()
+        board.allowsAutomaticRead = false
+        var support = ClipboardContentSupport.plainText
+        var sent: [ClipboardContent] = []
+        let controller = VNCClipboardSynchronizer(clipboard: board, canSend: { true },
+            send: { sent.append($0) }, contentSupport: { support },
+            observesApplicationLifecycle: false, automaticallyMonitors: true)
+        defer { controller.invalidate() }
+        controller.sharedClipboardEnabled = true
+
+        board.changeCount += 1
+        controller.sendClipboard() // Simulate a denied paste permission request.
+        XCTAssertEqual(board.reads, 1)
+        board.changeCount += 1
+        controller.localClipboardDidChange()
+        controller.applicationWillResignActive()
+        board.changeCount += 1
+        controller.applicationDidBecomeActive()
+        support = .all
+        controller.clipboardCapabilitiesDidChange()
+        XCTAssertEqual(board.reads, 1)
+        XCTAssertTrue(sent.isEmpty)
+
+        controller.receiveRemoteClipboardContent(.text("remote copy"))
+        XCTAssertEqual(board.writtenContent, .text("remote copy"))
+        board.permittedContent = .text("manual copy")
+        controller.sendClipboard()
+        XCTAssertEqual(board.reads, 2)
+        XCTAssertEqual(sent, [.text("manual copy")])
     }
 
     func testDeclinedAutomaticReadIsNotRepeatedWhenServerAddsFormats() {
@@ -52,6 +98,7 @@ import RFBProtocol
         board.permittedContent = .text("next copy")
         controller.localClipboardDidChange()
         XCTAssertEqual(sent.last, .text("next copy"))
+        XCTAssertNil(board.writtenContent)
     }
 
     func testRichOnlyCopyIsReadWhenServerCanReceiveIt() {
