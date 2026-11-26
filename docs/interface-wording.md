@@ -145,3 +145,7 @@ RSA-AES 连接使用「认证方式」「自动协商」「Raspberry Pi · RSA-A
 连接编辑器的「显示器 → VNC 编码」可设置 Tight、Tight LastRect、ZRLE、Zlib、CopyRect、Cursor 和 Raw。说明为「允许远端使用所选编码。某些编码取决于远端服务和颜色深度。」英文标题为 “VNC Encodings”。
 
 「显示器」中的「TightVNC JPEG 画质」可从 0 调到 9。在标准全色画面下开启图像压缩且允许 Tight 时可调。英文标题为 “TightVNC JPEG Quality”。
+
+## 后台文件传输
+
+系统进度的标题为「文件传输」，按方向显示「正在从 Mac 下载」或「正在上传到 Mac」。英文副标题为 “Downloading from the Mac” 和 “Uploading to the Mac”。

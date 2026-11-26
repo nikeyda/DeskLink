@@ -37,6 +37,56 @@ final class FileTransferTests: XCTestCase {
     }
 
     #if os(iOS) && !targetEnvironment(macCatalyst)
+    private final class BackgroundRuntime: VNCFileTransferBackgroundRuntime {
+        let cancel: @MainActor () -> Void
+        var progress: Double?
+        var completions: [Bool] = []
+
+        init(cancel: @escaping @MainActor () -> Void) { self.cancel = cancel }
+
+        func updateProgress(_ fraction: Double?) { progress = fraction }
+        func finish(success: Bool) { completions.append(success) }
+    }
+
+    func testBackgroundTransferReportsProgressAndCancelsOnlyItsOwnFile() async throws {
+        let store = VNCDownloadStore(root: try temporaryFolder())
+        let controller = VNCFileTransferController(downloadStore: store)
+        var runtimes: [UUID: BackgroundRuntime] = [:]
+        controller.makeBackgroundRuntime = { transfer, cancel in
+            let runtime = BackgroundRuntime(cancel: cancel)
+            runtimes[transfer.id] = runtime
+            return runtime
+        }
+
+        let first = controller.startDownload(paths: ["/Fixture/payload.txt"], dragImage: nil)
+        let firstRuntime = try XCTUnwrap(runtimes[first])
+        let second = controller.startDownload(paths: ["/Fixture/retry.txt"], dragImage: nil)
+        let secondRuntime = try XCTUnwrap(runtimes[second])
+        XCTAssertTrue(controller.hasTransfersInProgress)
+
+        receive([.summary(session: 1, .init(totalBytes: 4, fileCount: 1, folderCount: 0)),
+                 .item(session: 1, .init(kind: .file, name: "payload.txt", level: 0, dataSize: 4))], in: controller)
+        try await waitUntil { firstRuntime.progress == 0 }
+        // The download writer coalesces progress reports within 100 ms.
+        try await Task.sleep(for: .milliseconds(125))
+        receive([.fileData(session: 1, Data([1, 2]))], in: controller)
+        try await waitUntil { firstRuntime.progress == 0.5 }
+        firstRuntime.cancel()
+        XCTAssertEqual(controller.transfers.first?.state, .cancelled)
+        XCTAssertEqual(firstRuntime.completions, [false])
+        XCTAssertTrue(controller.hasTransfersInProgress)
+
+        let expected = Data([11, 22, 33, 44])
+        receive([.item(session: 2, .init(kind: .file, name: "retry.txt", level: 0, dataSize: 4)),
+                 .fileData(session: 2, expected), .end(session: 2, status: 0)], in: controller)
+        try await waitUntil { secondRuntime.completions == [true] }
+        XCTAssertFalse(controller.hasTransfersInProgress)
+        let file = try XCTUnwrap(controller.transfers.last?.localURLs.first)
+        XCTAssertEqual(try Data(contentsOf: file), expected)
+        firstRuntime.cancel()
+        XCTAssertEqual(firstRuntime.completions, [false])
+    }
+
     func testReceiveArchiveForSystemFiles() async throws {
         guard let raw = ProcessInfo.processInfo.environment["DESKLINK_FILES_FIXTURE"], let id = UUID(uuidString: raw) else {
             throw XCTSkip("Requires a matching archive identifier for the system Files check.")

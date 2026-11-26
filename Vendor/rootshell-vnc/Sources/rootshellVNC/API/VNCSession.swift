@@ -795,7 +795,15 @@ public final class VNCSession {
     }
 
     /// Drag-and-drop file transfer with a Mac.
-    public let fileTransfers = VNCFileTransferController()
+    public let fileTransfers: VNCFileTransferController = {
+        let controller = VNCFileTransferController()
+        #if os(iOS) && !targetEnvironment(macCatalyst)
+        if #available(iOS 26.0, *) {
+            controller.makeBackgroundRuntime = VNCFileTransferBackgroundTask.init(transfer:cancel:)
+        }
+        #endif
+        return controller
+    }()
 
     /// The last protocol error that occurred, if any.
     public var lastError: VNCProtocolError?
@@ -4520,7 +4528,12 @@ public final class VNCSession {
     #endif
 
     #if !targetEnvironment(macCatalyst)
-    private func scheduleBackgroundVirtualDisplayExit() {
+    func fileTransfersDidFinishWhileBackgrounded() {
+        guard #available(iOS 26.0, *), mediaWasBackgrounded, backgroundVirtualDisplayExitTask == nil else { return }
+        scheduleBackgroundVirtualDisplayExit(after: .zero)
+    }
+
+    private func scheduleBackgroundVirtualDisplayExit(after delay: Duration = VNCSession.backgroundVirtualDisplayGrace) {
         backgroundVirtualDisplayExitTask?.cancel()
         backgroundVirtualDisplayExitTask = nil
         guard configuration.displaySizingMode == .matchClient,
@@ -4531,8 +4544,10 @@ public final class VNCSession {
 
         backgroundVirtualDisplayExitTask = Task { @MainActor [weak self] in
             defer { assertion.end() }
-            try? await Task.sleep(for: Self.backgroundVirtualDisplayGrace)
+            try? await Task.sleep(for: delay)
             guard !Task.isCancelled, let self, self.mediaWasBackgrounded else { return }
+            self.backgroundVirtualDisplayExitTask = nil
+            if #available(iOS 26.0, *), self.fileTransfers.hasTransfersInProgress { return }
             await self.leaveStandardVirtualDisplayForSuspension()
         }
     }

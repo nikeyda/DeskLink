@@ -3,6 +3,8 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleAllowMixedLocalizations</key><true/>
+    <key>BGTaskSchedulerPermittedIdentifiers</key>
+    <array><string>$(PRODUCT_BUNDLE_IDENTIFIER).file-transfer.*</string></array>
     <key>DeskLinkWidgetGroup</key><string>$(AppIdentifierPrefix)local.nikey.desklink.widget-index</string>
     <key>CFBundleURLTypes</key>
     <array>

@@ -9398,6 +9398,12 @@
         }
       }
     },
+    "Downloading from the Mac" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在从 Mac 下载" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在從 Mac 下載" } }
+      }
+    },
     "Downloaded · %@" : {
       "localizations" : {
         "ar" : {
@@ -32868,6 +32874,12 @@
             "value" : "不支援的功能：%@"
           }
         }
+      }
+    },
+    "Uploading to the Mac" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在上传到 Mac" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在上傳到 Mac" } }
       }
     },
     "Use one remote display for the lowest bandwidth and decoding load." : {

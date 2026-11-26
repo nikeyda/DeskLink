@@ -47,6 +47,8 @@ public struct VNCFileTransfer: Identifiable, Equatable, Sendable {
         guard totalBytes > 0 else { return state == .completed ? 1 : nil }
         return min(1, Double(completedBytes) / Double(totalBytes))
     }
+
+    var isInProgress: Bool { state == .preparing || state == .transferring }
 }
 
 /// Drag-and-drop file transfer with a Mac. Uploads follow a drop on the
@@ -114,6 +116,10 @@ public final class VNCFileTransferController {
 
     @ObservationIgnored private let downloadStore: VNCDownloadStore
     @ObservationIgnored private var discardingFolders: Set<String> = []
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+    @ObservationIgnored private var backgroundTasks: [UUID: any VNCFileTransferBackgroundRuntime] = [:]
+    @ObservationIgnored var makeBackgroundRuntime: VNCFileTransferBackgroundRuntimeFactory?
+    #endif
 
     init(downloadStore: VNCDownloadStore = .shared) {
         self.downloadStore = downloadStore
@@ -121,6 +127,8 @@ public final class VNCFileTransferController {
     }
 
     public var hasActiveTransfers: Bool { transfers.contains(where: \.isActive) }
+
+    var hasTransfersInProgress: Bool { transfers.contains(where: \.isInProgress) }
 
     // MARK: - Host actions
 
@@ -429,6 +437,7 @@ public final class VNCFileTransferController {
         session?.sendPointerEvent(buttonMask: TouchInputHandler.leftButton, x: x, y: y)
         session?.sendPointerEvent(buttonMask: 0, x: x, y: y)
         update(id) { $0.state = .preparing }
+        beginBackgroundTask(for: id)
 
         let staging = Self.temporaryFolder("Screen Sharing Uploads")
         job.stagingFolder = staging
@@ -467,6 +476,7 @@ public final class VNCFileTransferController {
         job.staged = urls
         job.destination = destination
         uploads[transfer.id] = job
+        beginBackgroundTask(for: transfer.id)
         startUploadIfReady(job)
     }
 
@@ -668,6 +678,7 @@ public final class VNCFileTransferController {
         }
         let job = DownloadJob(id: id, folder: folder, writer: writer)
         downloads[id] = job
+        beginBackgroundTask(for: id)
         for path in paths {
             let session = makeSessionID()
             owners[session] = id
@@ -757,7 +768,31 @@ public final class VNCFileTransferController {
 
     private func update(_ id: UUID, _ change: (inout VNCFileTransfer) -> Void) {
         guard let index = index(of: id) else { return }
+        #if os(iOS) && !targetEnvironment(macCatalyst)
+        let wasInProgress = transfers[index].isInProgress
+        #endif
         change(&transfers[index])
+        #if os(iOS) && !targetEnvironment(macCatalyst)
+        let transfer = transfers[index]
+        if wasInProgress, !transfer.isActive, !hasTransfersInProgress {
+            session?.fileTransfersDidFinishWhileBackgrounded()
+        }
+        if let task = backgroundTasks[id] {
+            if transfer.isActive {
+                task.updateProgress(transfer.fractionCompleted)
+            } else {
+                backgroundTasks[id] = nil
+                task.finish(success: transfer.state == .completed)
+            }
+        }
+        #endif
+    }
+
+    private func beginBackgroundTask(for id: UUID) {
+        #if os(iOS) && !targetEnvironment(macCatalyst)
+        guard let makeBackgroundRuntime, let index = index(of: id) else { return }
+        backgroundTasks[id] = makeBackgroundRuntime(transfers[index]) { [weak self] in self?.cancel(id) }
+        #endif
     }
 
     static func displayName(_ names: [String]) -> String {

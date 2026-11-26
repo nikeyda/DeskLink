@@ -18,13 +18,18 @@ final class LocalTestDisplay {
     private let servesJPEG: Bool
     private let appleScalingCapability: Bool?
     private let offersDraggedFile: Bool
+    private let completesDraggedFile: Bool
     private(set) var downloadRequests = 0
+    private(set) var startedFileStreams = 0
+    private(set) var finishedFileStreams = 0
+    var maySendRemainingFileBytes = false
     private let colors: [(UInt32, UInt32, UInt32)] = [(31,89,165),(241,183,69),(52,174,146),(223,102,88)]
     private(set) var advertisedEncodings: [Int32] = []
     private(set) var halfResolutionRequested = false
     private(set) var requestedFramebufferSize: CGSize?
     private(set) var frameCount = 0
     private(set) var acceptedConnections = 0
+    var withholdFramesAfterConnection: Int?
     private(set) var overlappingConnections = 0
     private(set) var closedConnections = 0
     private(set) var clicks = 0
@@ -43,11 +48,12 @@ final class LocalTestDisplay {
     private(set) var failure: String?
 
     init(hasTwoMonitors: Bool = false, servesJPEG: Bool = false,
-         appleScalingCapability: Bool? = nil, offersDraggedFile: Bool = false) {
+         appleScalingCapability: Bool? = nil, offersDraggedFile: Bool = false, completesDraggedFile: Bool = false) {
         self.hasTwoMonitors = hasTwoMonitors
         self.servesJPEG = servesJPEG
         self.appleScalingCapability = appleScalingCapability
         self.offersDraggedFile = offersDraggedFile
+        self.completesDraggedFile = completesDraggedFile
     }
 
     func start() async throws -> UInt16 {
@@ -169,7 +175,7 @@ final class LocalTestDisplay {
                     try await send(frame, to: connection)
                     frameCount += 1
                     if offersDraggedFile {
-                        try await serveFileDrag(on: connection)
+                        try await serveFileDrag(on: connection, completes: completesDraggedFile)
                         return
                     }
                     if appleScalingCapability == nil {
@@ -267,7 +273,7 @@ final class LocalTestDisplay {
 
     // XCTest's synchronous drag occupies the runner's main actor. The peer
     // must announce the file while the finger is down, before the release.
-    nonisolated private func serveFileDrag(on connection: NWConnection) async throws {
+    nonisolated private func serveFileDrag(on connection: NWConnection, completes: Bool) async throws {
         // An independent zlib-encoded public.file-url for file:///Fixture/Gesture.txt.
         let packet = "IAAAAAAAAAMAAABaAAAAUnicY2BgYGRgYOAvKE3KyUzWS8vMSdUtLcphgACQlEByfq5eYkFBTqpefnFJZUEqUIwlDaJGGqTeSl9f3y2zoqS0KFXfPbUYROuVVJQAAKlKGAI="
         let announcement = Array(Data(base64Encoded: packet)!)
@@ -292,9 +298,51 @@ final class LocalTestDisplay {
             case 14:
                 _ = try await read(7, from: connection)
                 Task { @MainActor in self.downloadRequests += 1 }
+                if completes { try await send(announcement, to: connection) }
+            case 0x22 where completes:
+                let length = try await read(5, from: connection).suffix(4).reduce(0) { $0 * 256 + Int($1) }
+                guard (8...2048).contains(length) else { throw URLError(.badServerResponse) }
+                let request = try await read(length, from: connection)
+                if request[2...3].elementsEqual([0, 1]) {
+                    try await sendDraggedFile(session: Array(request[4...7]), to: connection)
+                }
             default: throw UnexpectedMessage(type: type)
             }
         }
+    }
+
+    nonisolated private func sendDraggedFile(session: [UInt8], to connection: NWConnection) async throws {
+        func packet(_ command: UInt8, body: [UInt8]) -> [UInt8] {
+            let length = body.count + 8
+            return [0x22, 0, 0, 0, UInt8(length >> 8), UInt8(truncatingIfNeeded: length), 0, 1, 0, command]
+                + session + body
+        }
+        let name = Array("Gesture.txt".utf8)
+        let chunk = Array(repeating: UInt8(ascii: "T"), count: 32_768)
+        let chunkCount = 64
+        let size = chunk.count * chunkCount
+        let sizeBytes = [UInt8(size >> 16), UInt8(truncatingIfNeeded: size >> 8), UInt8(truncatingIfNeeded: size)]
+        var summary = [UInt8](repeating: 0, count: 48)
+        summary.replaceSubrange(13...15, with: sizeBytes)
+        summary[31] = 1
+        try await send(packet(0x64, body: summary), to: connection)
+        var item = [UInt8](repeating: 0, count: 104)
+        item[0] = 1
+        item.replaceSubrange(47...49, with: sizeBytes)
+        item[94...95] = [0x81, 0xa4]
+        item[101] = UInt8(name.count)
+        try await send(packet(0x65, body: item + name + [0]), to: connection)
+        let data = packet(0x66, body: [0, 0, 0x80, 0] + chunk)
+        try await send(data, to: connection)
+        await MainActor.run { self.startedFileStreams += 1 }
+        let deadline = ContinuousClock.now + .seconds(35)
+        while await !maySendRemainingFileBytes {
+            guard ContinuousClock.now < deadline else { throw URLError(.timedOut) }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        for _ in 1..<chunkCount { try await send(data, to: connection) }
+        try await send(packet(0x68, body: []), to: connection)
+        await MainActor.run { self.finishedFileStreams += 1 }
     }
 
     nonisolated private func read(_ count: Int, from connection: NWConnection) async throws -> [UInt8] {

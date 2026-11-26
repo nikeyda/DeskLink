@@ -757,6 +757,30 @@ final class SessionUITests: XCTestCase {
         XCTAssertEqual(desktop.downloadRequests, 1)
     }
 
+    func testDraggedDownloadContinuesAfterLeavingTheApp() async throws {
+        let desktop = LocalTestDisplay(appleScalingCapability: false, offersDraggedFile: true, completesDraggedFile: true)
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        openChart(app, port: port)
+        try await waitUntil { desktop.frameCount > 0 && app.buttons["session.mode"].exists }
+        let file = app.coordinate(withNormalizedOffset: CGVector(dx: 0.48, dy: 0.57))
+        let target = file.withOffset(CGVector(dx: 78, dy: -44))
+        file.press(forDuration: 1.2, thenDragTo: target, withVelocity: .slow, thenHoldForDuration: 0.4)
+        try await waitUntil { desktop.startedFileStreams == 1 || desktop.failure != nil }
+        XCTAssertNil(desktop.failure)
+        XCTAssertEqual(desktop.startedFileStreams, 1)
+
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5))
+        try await Task.sleep(for: .seconds(9))
+        desktop.maySendRemainingFileBytes = true
+        try await waitUntil { desktop.finishedFileStreams == 1 || desktop.failure != nil }
+        XCTAssertNil(desktop.failure)
+        XCTAssertEqual(desktop.finishedFileStreams, 1)
+        XCTAssertEqual(app.state, .runningBackground)
+    }
+
     func testConnectionDragDelayOverridesTheApplicationDefault() async throws {
         for shortDelay in [true, false] {
             let desktop = LocalTestDisplay()
