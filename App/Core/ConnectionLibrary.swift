@@ -64,6 +64,16 @@ struct DesktopDisplayPreferences: Codable, Equatable, Sendable {
 
 enum LibraryFolderScope: CaseIterable, Sendable { case custom, links }
 
+enum CursorTrackingSpeed {
+    static let range = 0.5...2.0
+    static let choices = Array(stride(from: range.lowerBound, through: range.upperBound, by: 0.25))
+
+    static func validated(_ value: Double?) -> Double? {
+        guard let value, range.contains(value) else { return nil }
+        return value
+    }
+}
+
 struct Computer: Codable, Identifiable, Equatable, Sendable {
     var id = UUID()
     var name: String
@@ -92,6 +102,7 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
     var remoteAudio = true
     var deviceDisplays: [String: DesktopDisplayPreferences]?
     var trackpad = false
+    var cursorTrackingSpeed: Double?
     var allowsViewportZoom: Bool?
     var showsLocalCursor: Bool?
     var usesFallbackCursor: Bool?

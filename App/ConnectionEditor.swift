@@ -204,6 +204,7 @@ struct ConnectionEditor: View {
     @State private var smoothVideo: Bool
     @State private var audio: Bool
     @State private var trackpad: Bool
+    @State private var cursorTrackingSpeed: Double?
     @State private var allowsViewportZoom: Bool
     @State private var showsLocalCursor: Bool?
     @State private var usesFallbackCursor: Bool
@@ -280,6 +281,7 @@ struct ConnectionEditor: View {
         _smoothVideo = State(initialValue: display.smoothVideo ?? true)
         _audio = State(initialValue: display.remoteAudio)
         _trackpad = State(initialValue: c?.trackpad ?? false)
+        _cursorTrackingSpeed = State(initialValue: CursorTrackingSpeed.validated(c?.cursorTrackingSpeed))
         _allowsViewportZoom = State(initialValue: c?.allowsViewportZoom != false)
         _showsLocalCursor = State(initialValue: c?.showsLocalCursor)
         _usesFallbackCursor = State(initialValue: c?.usesFallbackCursor == true)
@@ -591,6 +593,9 @@ struct ConnectionEditor: View {
                         .disabled(layout != .single)
                 }
                 Toggle("触控板", isOn: $trackpad)
+                    .accessibilityIdentifier("connection.trackpad")
+                CursorTrackingSpeedPicker(selection: $cursorTrackingSpeed)
+                    .accessibilityIdentifier("connection.cursorTrackingSpeed")
                 Picker("光标显示", selection: $showsLocalCursor) {
                     Text("跟随应用设置").tag(nil as Bool?)
                     Text("使用本地光标").tag(true as Bool?)
@@ -774,6 +779,7 @@ struct ConnectionEditor: View {
         }
         entry.setDisplay(display, for: .current)
         entry.trackpad = trackpad
+        entry.cursorTrackingSpeed = cursorTrackingSpeed
         entry.allowsViewportZoom = allowsViewportZoom ? nil : false
         entry.showsLocalCursor = showsLocalCursor
         entry.usesFallbackCursor = usesFallbackCursor ? true : nil

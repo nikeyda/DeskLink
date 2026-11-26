@@ -57,6 +57,7 @@ struct SessionScreen: View {
     @State private var hostTrust: HostTrust
     @AppStorage("connection.files") private var transfers = true
     @AppStorage("connection.reconnect") private var reconnect = true
+    @State private var cursorTrackingSpeed: Double?
     @AppStorage("pointer.speed") private var pointerSpeed = 1.0
     @AppStorage("gesture.upFingers") private var upFingers = RemoteSwipeFingers.three
     @AppStorage("gesture.downFingers") private var downFingers = RemoteSwipeFingers.three
@@ -78,6 +79,30 @@ struct SessionScreen: View {
         return result
     }
 
+    private var pointerMenuExtras: VNCHUDMenuExtras {
+        #if targetEnvironment(macCatalyst)
+        return VNCHUDMenuExtras()
+        #else
+        return VNCHUDMenuExtras(display: {
+            CursorTrackingSpeedPicker(selection: Binding(get: { cursorTrackingSpeed }, set: setCursorTrackingSpeed))
+                .accessibilityIdentifier("session.cursorTrackingSpeed")
+        })
+        #endif
+    }
+
+    #if !targetEnvironment(macCatalyst)
+    private func setCursorTrackingSpeed(_ speed: Double?) {
+        guard session.connectionState.isConnected, !observing, !privacy.locked else { return }
+        if var saved = library.existingComputer(matching: request.computer), saved.saved,
+           saved.id == request.computer.id, saved.hasSameDestination(as: request.computer),
+           saved.cursorTrackingSpeed != speed {
+            saved.cursorTrackingSpeed = speed
+            guard library.save(saved) else { return }
+        }
+        cursorTrackingSpeed = speed
+    }
+    #endif
+
     private var remoteDesktop: RemoteDesktopView {
         #if targetEnvironment(macCatalyst)
         let keyboard: VNCKeyboardCapture? = nil
@@ -89,8 +114,8 @@ struct SessionScreen: View {
         let desktop = RemoteDesktopView(session: session, keyboardCapture: keyboard, isFullScreen: fullscreen,
                                  toggleFullScreen: toggleFullScreen, clipboardSynchronizer: clipboard,
                                  initialPointerMode: request.computer.trackpad ? .trackpad : .direct,
-                                 pointerSpeed: pointerSpeed, touchGestures: gestures, onRemoteInput: remoteActivity,
-                                 onSharedClipboardUserChange: setClipboardSharing)
+                                 pointerSpeed: cursorTrackingSpeed ?? pointerSpeed, touchGestures: gestures, onRemoteInput: remoteActivity,
+                                 onSharedClipboardUserChange: setClipboardSharing, hudMenuExtras: pointerMenuExtras)
             .desktopControls(controls)
             .onMonitorShortcut(chooseMonitor)
             .onScreenshotShortcut(captureScreenshot)
@@ -123,6 +148,7 @@ struct SessionScreen: View {
         }
         _session = State(initialValue: VNCSession(configuration: configuration))
         _observing = State(initialValue: request.computer.viewOnly)
+        _cursorTrackingSpeed = State(initialValue: CursorTrackingSpeed.validated(request.computer.cursorTrackingSpeed))
     }
 
     var body: some View {

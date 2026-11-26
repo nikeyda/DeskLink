@@ -75,6 +75,7 @@ struct ScreensArchive: Decodable {
         let permuteCmdAndCtrlModifierKeys: Bool?
         let showLocalCursor: Bool?
         let useFallbackCursor: Bool?
+        let cursorTrackingSpeed: Double?
         let disabledCodecs: [Int32]?
         let imageCompressionMode: Int?
         let tightVncJPEGEncodingQuality: Int?
@@ -121,6 +122,7 @@ struct ScreensArchive: Decodable {
             result.swapsHardwareCommandAndControl = permuteCmdAndCtrlModifierKeys == true ? true : nil
             result.showsLocalCursor = showLocalCursor
             result.usesFallbackCursor = useFallbackCursor == true ? true : nil
+            result.cursorTrackingSpeed = CursorTrackingSpeed.validated(cursorTrackingSpeed)
             if let disabledCodecs, !disabledCodecs.isEmpty {
                 result.disabledVNCCodecs = Set(disabledCodecs).sorted()
             }
@@ -273,6 +275,7 @@ extension ScreensArchive {
             record["curtainModeMessage"] = computer.curtainMessage ?? ""
             record["showLocalCursor"] = computer.showsLocalCursor ?? (preferences.object(forKey: "connection.clientCursor") as? Bool ?? true)
             record["useFallbackCursor"] = computer.usesFallbackCursor == true
+            if let speed = CursorTrackingSpeed.validated(computer.cursorTrackingSpeed) { record["cursorTrackingSpeed"] = speed }
             record["disabledCodecs"] = computer.disabledVNCCodecs ?? []
             let framebuffer = computer.framebufferQuality ?? FramebufferQuality()
             record["imageCompressionMode"] = framebuffer.compression.screensCompressionMode

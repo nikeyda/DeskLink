@@ -352,4 +352,20 @@ final class ScreensArchiveTests: XCTestCase {
         }).computers.first)
         XCTAssertEqual(noMessage.configuration.automaticCurtainMessage, "")
     }
+
+    func testCursorTrackingSpeedSurvivesBothArchiveFormats() throws {
+        for speed in [0.5, 1, 1.37, 2] {
+            let source = try modified { $0["cursorTrackingSpeed"] = speed }
+            let archive = try ScreensArchive.convert(source)
+            let native = try LibraryArchive.read(archive.encoded())
+            XCTAssertEqual(native.computers.first?.cursorTrackingSpeed, speed)
+            let exported = try ScreensArchive.export(native, knownMacs: [], sharedClipboard: true)
+            XCTAssertEqual(try ScreensArchive.convert(exported).computers.first?.cursorTrackingSpeed, speed)
+        }
+
+        let older = try modified { $0.removeValue(forKey: "cursorTrackingSpeed") }
+        XCTAssertNil(try ScreensArchive.convert(older).computers.first?.cursorTrackingSpeed)
+        let invalid = try modified { $0["cursorTrackingSpeed"] = -1 }
+        XCTAssertNil(try ScreensArchive.convert(invalid).computers.first?.cursorTrackingSpeed)
+    }
 }
