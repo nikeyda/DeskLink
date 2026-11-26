@@ -281,6 +281,10 @@ public struct VNCConfiguration: Sendable {
     /// confirm the existing password-send dialog before any input is sent.
     public var promptForLoginPasswordAtLoginWindow: Bool
 
+    /// Enables curtain mode when an Apple server reports an eligible desktop.
+    /// An empty string requests the curtain with no display message.
+    public var automaticCurtainMessage: String? = nil
+
     /// Who draws the remote pointer. Changing this changes which encodings the
     /// session advertises, so it takes effect only on a new connection.
     public var cursorRendering: VNCCursorRendering

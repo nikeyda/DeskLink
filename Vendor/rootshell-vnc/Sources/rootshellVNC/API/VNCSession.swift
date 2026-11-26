@@ -859,6 +859,10 @@ public final class VNCSession {
     private var pendingCurtainRequest: Bool?
     @ObservationIgnored
     private var curtainConfirmationTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var curtainServerState: AppleRemoteSessionState?
+    @ObservationIgnored
+    private var didHandleAutomaticCurtain = false
 
     /// Content encryption negotiated by the active RFB transport. This excludes
     /// host-provided tunnels such as SSH and is nil while no transport is active.
@@ -1032,6 +1036,9 @@ public final class VNCSession {
         didSet {
             if configuration.allowsFileTransfers != oldValue.allowsFileTransfers {
                 fileTransfers.setAllowed(configuration.allowsFileTransfers)
+            }
+            if configuration.automaticCurtainMessage != oldValue.automaticCurtainMessage {
+                applyAutomaticCurtainIfReady()
             }
             if configuration.targetFrameRate != oldValue.targetFrameRate
                 || configuration.enableProtocolTrace != oldValue.enableProtocolTrace {
@@ -2118,6 +2125,23 @@ public final class VNCSession {
         guard connectionState.isConnected,
               transportSession != nil,
               supportsCurtainMode else { return }
+        didHandleAutomaticCurtain = true
+        sendCurtainRequest(enabled, message: message)
+    }
+
+    private func applyAutomaticCurtainIfReady() {
+        guard !didHandleAutomaticCurtain, let message = configuration.automaticCurtainMessage,
+              connectionState.isConnected, transportSession != nil,
+              let state = curtainServerState, !state.requiresLogin else { return }
+        if state.curtained {
+            didHandleAutomaticCurtain = true
+        } else if state.curtainToggleAvailable {
+            didHandleAutomaticCurtain = true
+            sendCurtainRequest(true, message: message)
+        }
+    }
+
+    private func sendCurtainRequest(_ enabled: Bool, message: String) {
         curtainChangeFailed = false
         // The server only re-announces DisplayInfo2 when something changes, so
         // a request that is already satisfied would never be confirmed and
@@ -2125,6 +2149,10 @@ public final class VNCSession {
         // curtained screen may differ.
         if isCurtained != enabled {
             startCurtainConfirmationWatchdog(expecting: enabled)
+        } else {
+            curtainConfirmationTask?.cancel()
+            curtainConfirmationTask = nil
+            pendingCurtainRequest = nil
         }
         enqueueInput(.curtain(enabled: enabled, message: message))
     }
@@ -2158,6 +2186,8 @@ public final class VNCSession {
         curtainConfirmationTask?.cancel()
         curtainConfirmationTask = nil
         pendingCurtainRequest = nil
+        curtainServerState = nil
+        didHandleAutomaticCurtain = false
         supportsCurtainMode = false
         isCurtained = false
         curtainChangeFailed = false
@@ -2630,6 +2660,7 @@ public final class VNCSession {
         hasEstablishedConnection = true
         lastError = nil
         connectionState = .connected
+        applyAutomaticCurtainIfReady()
     }
 
     /// A zero-sized ServerInit makes Apple's display layout authoritative for
@@ -3275,6 +3306,7 @@ public final class VNCSession {
     /// Adopt the server's authoritative curtain facts and settle any request
     /// waiting on them.
     private func applyCurtainState(_ state: AppleRemoteSessionState) {
+        curtainServerState = state
         if supportsCurtainMode != state.curtainToggleAvailable {
             supportsCurtainMode = state.curtainToggleAvailable
         }
@@ -3287,6 +3319,7 @@ public final class VNCSession {
             pendingCurtainRequest = nil
             curtainChangeFailed = false
         }
+        applyAutomaticCurtainIfReady()
     }
 
     private func handleAppleRemoteSessionState(

@@ -20,6 +20,10 @@
 "端口设置" = "Port Settings";
 "VNC 端口" = "VNC Port";
 "SSH 端口" = "SSH Port";
+"连接时开启屏幕帘幕" = "Enable Curtain Mode on Connect";
+"远端提示（可选）" = "Message on the Remote Mac (Optional)";
+"需要在远程 Mac 开启「远程管理」。" = "Remote Management must be turned on on the remote Mac.";
+"屏幕帘幕已开启" = "Curtain Mode Enabled";
 "留空使用默认端口。仅在启用安全连接时使用 SSH 端口。" = "Leave a port blank to use its default. The SSH port is used when Secure Connection is on.";
 "使用备用光标" = "Use Fallback Cursor";
 "VNC 编码" = "VNC Encodings";

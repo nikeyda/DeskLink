@@ -310,7 +310,6 @@ final class ScreensArchiveTests: XCTestCase {
 
     func testUnsupportedAccessModesAndInvalidRoutesDoNotImport() throws {
         for change: (inout [String: Any]) -> Void in [
-            { $0["useCurtainMode"] = true },
             { $0["authenticationMethod"] = 999 },
             { $0["onDisconnectAction"] = 99 },
             { $0["useSecureConnection"] = true; $0["sshPort"] = 0 },
@@ -320,5 +319,37 @@ final class ScreensArchiveTests: XCTestCase {
             let data = try modified(change)
             XCTAssertThrowsError(try ScreensArchive.convert(data))
         }
+    }
+
+    func testAutomaticCurtainAndMessageSurviveBothArchiveFormats() throws {
+        for enabled in [true, false] {
+            let message = "维护中 🔒\n请稍候"
+            let archive = try ScreensArchive.convert(try modified {
+                $0["useCurtainMode"] = enabled
+                $0["curtainModeMessage"] = message
+            })
+            let entry = try XCTUnwrap(LibraryArchive.read(archive.encoded()).computers.first)
+            XCTAssertEqual(entry.curtainsDisplayOnConnect == true, enabled)
+            XCTAssertEqual(entry.curtainMessage, message)
+            XCTAssertEqual(entry.configuration.automaticCurtainMessage, enabled ? message : nil)
+            var observe = entry
+            observe.viewOnly = true
+            XCTAssertNil(observe.configuration.automaticCurtainMessage)
+
+            let exported = try ScreensArchive.export(archive, knownMacs: [], sharedClipboard: true)
+            let roundTrip = try XCTUnwrap(ScreensArchive.convert(exported).computers.first)
+            XCTAssertEqual(roundTrip.curtainsDisplayOnConnect == true, enabled)
+            XCTAssertEqual(roundTrip.curtainMessage, message)
+        }
+        let legacy = try XCTUnwrap(ScreensArchive.convert(try modified {
+            $0.removeValue(forKey: "useCurtainMode")
+            $0.removeValue(forKey: "curtainModeMessage")
+        }).computers.first)
+        XCTAssertNil(legacy.configuration.automaticCurtainMessage)
+        let noMessage = try XCTUnwrap(ScreensArchive.convert(try modified {
+            $0["useCurtainMode"] = true
+            $0.removeValue(forKey: "curtainModeMessage")
+        }).computers.first)
+        XCTAssertEqual(noMessage.configuration.automaticCurtainMessage, "")
     }
 }

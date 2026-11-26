@@ -154,6 +154,7 @@ extension Computer {
             }
         }
         configuration.allowsFileTransfers = preferences.object(forKey: "connection.files") as? Bool ?? true
+        configuration.automaticCurtainMessage = viewOnly ? nil : automaticCurtainMessage
         if allowsRemoteBell != false { configuration.serverBellHandler = { RemoteBell.play() } }
         configuration.framebufferQuality = framebufferQuality ?? FramebufferQuality()
         configuration.disabledPortableCodecs = Set((disabledVNCCodecs ?? []).compactMap(PortableFramebufferCodec.init(rawValue:)))
@@ -194,6 +195,8 @@ struct ConnectionEditor: View {
     @State private var layout: DisplayLayout
     @State private var rememberMonitor: Bool
     @State private var observe: Bool
+    @State private var curtainsDisplayOnConnect: Bool
+    @State private var curtainMessage: String
     @State private var sizing: DesktopSizing
     @State private var customWidth: String
     @State private var customHeight: String
@@ -262,6 +265,8 @@ struct ConnectionEditor: View {
         _layout = State(initialValue: initialLayout)
         _rememberMonitor = State(initialValue: display.rememberMonitor != false)
         _observe = State(initialValue: link?.observe ?? c?.viewOnly ?? false)
+        _curtainsDisplayOnConnect = State(initialValue: c?.curtainsDisplayOnConnect == true)
+        _curtainMessage = State(initialValue: c?.curtainMessage ?? "")
         let dimensions = display.fixedDesktop ?? .standard
         let initialSizing: DesktopSizing
         if initialLayout == .combined { initialSizing = .physical }
@@ -335,6 +340,7 @@ struct ConnectionEditor: View {
                 addressSection
                 credentialSection
                 sshSection
+                if request.purpose != .quick { curtainSection }
                 displaySection
                 if let error { Text(error).foregroundStyle(.red) }
             }
@@ -457,6 +463,20 @@ struct ConnectionEditor: View {
                 .textContentType(.password)
                 .accessibilityIdentifier("connection.password")
             Toggle("记住密码", isOn: $remember).accessibilityIdentifier("connection.remember")
+        }
+    }
+
+    private var curtainSection: some View {
+        Section {
+            Toggle("连接时开启屏幕帘幕", isOn: $curtainsDisplayOnConnect)
+                .accessibilityIdentifier("connection.autoCurtain")
+            if curtainsDisplayOnConnect {
+                TextField("远端提示（可选）", text: $curtainMessage, axis: .vertical)
+                    .lineLimit(1...4)
+                    .accessibilityIdentifier("connection.curtainMessage")
+            }
+        } footer: {
+            Text("需要在远程 Mac 开启「远程管理」。")
         }
     }
 
@@ -738,6 +758,8 @@ struct ConnectionEditor: View {
         entry.username = username.trimmingCharacters(in: .whitespacesAndNewlines)
         entry.usesRaspberryPiRSAAES = usesRaspberryPiRSAAES
         entry.viewOnly = observe
+        entry.curtainsDisplayOnConnect = curtainsDisplayOnConnect ? true : nil
+        entry.curtainMessage = curtainMessage.isEmpty ? nil : curtainMessage
         entry.disconnectAction = disconnectAction
         entry.savesDisconnectScreenshot = savesDisconnectScreenshot ? true : nil
         var display = DesktopDisplayPreferences(

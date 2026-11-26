@@ -152,6 +152,11 @@ struct SessionScreen: View {
                         .accessibilityIdentifier("session.info")
                         Spacer()
                         if session.connectionState.isConnected {
+                            if session.isCurtained {
+                                Label("屏幕帘幕已开启", systemImage: "eye.slash.fill")
+                                    .labelStyle(.iconOnly)
+                                    .accessibilityIdentifier("session.curtainActive")
+                            }
                             Button { toggleObservation() } label: {
                                 Label(observing ? "仅观察" : "控制", systemImage: observing ? "eye" : "cursorarrow")
                             }
@@ -390,6 +395,7 @@ struct SessionScreen: View {
 
     private func syncTransferPermission() {
         session.configuration.allowsFileTransfers = transfers && !observing && !privacy.locked
+        session.configuration.automaticCurtainMessage = observing || privacy.locked ? nil : request.computer.automaticCurtainMessage
     }
 
     private func recordVideoFallback() {

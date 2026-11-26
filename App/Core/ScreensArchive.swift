@@ -82,7 +82,8 @@ struct ScreensArchive: Decodable {
         let onScreenDragDelay: TimeInterval?
         let pcScrollSpeed: Int?
         let startInObserveMode: Bool
-        let useCurtainMode: Bool
+        let useCurtainMode: Bool?
+        let curtainModeMessage: String?
         let onDisconnectAction: Int
         let grabScreenshot: Bool?
         let useSharedClipboard: Bool
@@ -97,13 +98,15 @@ struct ScreensArchive: Decodable {
 
         func computer() throws -> Computer {
             guard version == 6, clientProtocol == "vnc", ([1, 2].contains(authenticationMethod) || (authenticationMethod == 5 && operatingSystem == 5)),
-                  !useCurtainMode, users.count <= 1 else {
+                  users.count <= 1 else {
                 throw ImportError.unsupportedConnection
             }
             let host = try Endpoint.hostOnly(hostname)
             var result = Computer(name: name ?? "", endpoint: try Endpoint(address: host, defaultPort: port))
             result.id = id
             result.savesDisconnectScreenshot = grabScreenshot == true ? true : nil
+            result.curtainsDisplayOnConnect = useCurtainMode == true ? true : nil
+            result.curtainMessage = curtainModeMessage.flatMap { $0.isEmpty ? nil : $0 }
             if onDisconnectAction != 0 {
                 guard let action = VNCDisconnectAction.allCases.first(where: { $0.screensArchiveValue == onDisconnectAction }) else {
                     throw ImportError.unsupportedConnection
@@ -266,6 +269,8 @@ extension ScreensArchive {
             record["grabScreenshot"] = computer.savesDisconnectScreenshot == true
             record["pcScrollSpeed"] = (computer.pcScrollSpeed ?? .standard).screensPosition
             record["startInObserveMode"] = computer.viewOnly
+            record["useCurtainMode"] = computer.curtainsDisplayOnConnect == true
+            record["curtainModeMessage"] = computer.curtainMessage ?? ""
             record["showLocalCursor"] = computer.showsLocalCursor ?? (preferences.object(forKey: "connection.clientCursor") as? Bool ?? true)
             record["useFallbackCursor"] = computer.usesFallbackCursor == true
             record["disabledCodecs"] = computer.disabledVNCCodecs ?? []

@@ -78,6 +78,8 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
     var modifiedAt: Date?
     private(set) var connectionCounts: [String: UInt64]?
     var viewOnly = false
+    var curtainsDisplayOnConnect: Bool?
+    var curtainMessage: String?
     var quality = PictureQuality.standard
     var colorDepth: ColorDepth?
     var disconnectAction: VNCDisconnectAction?
@@ -127,6 +129,7 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
     }
 
     var displayName: String { name.isEmpty ? endpoint.host : name }
+    var automaticCurtainMessage: String? { curtainsDisplayOnConnect == true ? (curtainMessage ?? "") : nil }
     func scrollSpeed(forMac: Bool) -> RemoteScrollSpeed {
         forMac ? .standard : pcScrollSpeed ?? .standard
     }
