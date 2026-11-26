@@ -2,6 +2,62 @@ import XCTest
 
 @MainActor
 final class LibraryUITests: XCTestCase {
+    #if !targetEnvironment(macCatalyst)
+    func testSidebarVisibilitySurvivesRelaunchAndCanBeRestored() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString]
+        app.launch()
+        let favorites = app.descendants(matching: .any).matching(identifier: "library.favorites").firstMatch
+        let all = app.descendants(matching: .any).matching(identifier: "library.all").firstMatch
+        let emptyLibrary = app.buttons["library.empty.new"].firstMatch
+
+        func changeFavoritesVisibility() throws {
+            let more = app.buttons["library.more"].firstMatch
+            XCTAssertTrue(more.waitForExistence(timeout: 10))
+            more.tap()
+            app.buttons["设置"].firstMatch.tap()
+            let sidebar = app.buttons["preferences.sidebar"].firstMatch
+            XCTAssertTrue(sidebar.waitForExistence(timeout: 8))
+            sidebar.tap()
+            let toggle = app.switches["preferences.sidebar.favorites"].firstMatch
+            XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+            let previousValue = try XCTUnwrap(toggle.value as? String)
+            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.5)).tap()
+            let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value != %@", previousValue),
+                                                    object: toggle)
+            XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 5), .completed)
+            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            attachment.name = "Sidebar preferences"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            let close = app.buttons["关闭"].firstMatch
+            if close.isHittable {
+                close.tap()
+            } else {
+                app.navigationBars.buttons["设置"].firstMatch.tap()
+                close.tap()
+            }
+        }
+
+        XCTAssertTrue(favorites.waitForExistence(timeout: 10))
+        favorites.tap()
+        XCTAssertTrue(app.buttons["library.empty.all"].firstMatch.waitForExistence(timeout: 5))
+        try changeFavoritesVisibility()
+        XCTAssertTrue(emptyLibrary.waitForExistence(timeout: 5))
+        XCTAssertFalse(favorites.exists)
+        XCTAssertTrue(all.exists)
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(all.waitForExistence(timeout: 10))
+        XCTAssertFalse(favorites.exists)
+        try changeFavoritesVisibility()
+        XCTAssertTrue(favorites.waitForExistence(timeout: 5))
+        favorites.tap()
+        XCTAssertTrue(app.buttons["library.empty.all"].firstMatch.waitForExistence(timeout: 5))
+    }
+    #endif
+
     func testEmptyLibraryOpensTheSaveAndQuickConnectionEditors() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--test-library", UUID().uuidString]

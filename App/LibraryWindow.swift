@@ -3,18 +3,30 @@ import UniformTypeIdentifiers
 
 private let vncLocationType = UTType(filenameExtension: "vncloc") ?? UTType(importedAs: "com.apple.vnc-internet-location")
 
+struct HiddenSidebarItems: OptionSet {
+    static let preferenceKey = "library.hiddenSidebarItems"
+
+    let rawValue: Int
+    static let nearby = Self(rawValue: 1 << 0)
+    static let tailscale = Self(rawValue: 1 << 1)
+    static let links = Self(rawValue: 1 << 2)
+    static let recent = Self(rawValue: 1 << 3)
+    static let favorites = Self(rawValue: 1 << 4)
+    static let linkSection: Self = [.links, .recent, .favorites]
+}
+
 private enum CollectionPage: Hashable {
     case all, recent, links, favorites, nearby, tailscale, folder(String), linkFolder(String)
 
-    var title: String {
+    var title: Text {
         switch self {
-        case .all: "所有连接"
-        case .recent: "最近连接"
-        case .links: "所有链接"
-        case .favorites: "收藏"
-        case .nearby: "附近"
-        case .tailscale: "Tailscale"
-        case .folder(let name), .linkFolder(let name): name
+        case .all: Text("所有连接")
+        case .recent: Text("最近连接")
+        case .links: Text("所有链接")
+        case .favorites: Text("收藏")
+        case .nearby: Text("附近")
+        case .tailscale: Text("Tailscale")
+        case .folder(let name), .linkFolder(let name): Text(verbatim: name)
         }
     }
 
@@ -22,6 +34,17 @@ private enum CollectionPage: Hashable {
         switch self {
         case .links, .recent, .linkFolder: .links
         default: .custom
+        }
+    }
+
+    var sidebarItem: HiddenSidebarItems {
+        switch self {
+        case .nearby: .nearby
+        case .tailscale: .tailscale
+        case .links, .linkFolder: .links
+        case .recent: .recent
+        case .favorites: .favorites
+        case .all, .folder: []
         }
     }
 
@@ -104,6 +127,7 @@ struct LibraryWindow: View {
     @State private var deletion: Computer?
     @State private var ownError: String?
     @AppStorage("library.listLayout") private var listLayout = false
+    @AppStorage(HiddenSidebarItems.preferenceKey) private var hiddenSidebarItems = 0
     @AppStorage("library.savedOrder") private var savedOrder = ComputerOrder.manual
     @AppStorage("library.favoriteOrder") private var favoriteOrder = ComputerOrder.manual
     @AppStorage("library.recentOrder") private var recentOrder = ComputerOrder.lastConnected
@@ -115,6 +139,8 @@ struct LibraryWindow: View {
     @State private var downloads = false
     @State private var historicalReport: ConnectionReport?
     @State private var selectedPreview: SavedDesktopPreview?
+
+    private var hiddenItems: HiddenSidebarItems { HiddenSidebarItems(rawValue: hiddenSidebarItems) }
 
     private var order: Binding<ComputerOrder> {
         switch page {
@@ -158,14 +184,27 @@ struct LibraryWindow: View {
             } else {
                 NavigationSplitView {
                     List(selection: $page) {
-                        Label("附近", systemImage: "bonjour").tag(CollectionPage.nearby)
-                        Label("Tailscale", systemImage: "network").tag(CollectionPage.tailscale)
-                        Section("链接") {
-                            Label("所有链接", systemImage: "link").tag(CollectionPage.links)
-                                .accessibilityIdentifier("library.links")
-                            Label("最近连接", systemImage: "clock").tag(CollectionPage.recent)
-                            Label("收藏", systemImage: "star").tag(CollectionPage.favorites)
-                            folderRows(in: .links)
+                        if !hiddenItems.contains(.nearby) {
+                            Label("附近", systemImage: "bonjour").tag(CollectionPage.nearby)
+                        }
+                        if !hiddenItems.contains(.tailscale) {
+                            Label("Tailscale", systemImage: "network").tag(CollectionPage.tailscale)
+                        }
+                        if !hiddenItems.isSuperset(of: .linkSection) {
+                            Section("链接") {
+                                if !hiddenItems.contains(.links) {
+                                    Label("所有链接", systemImage: "link").tag(CollectionPage.links)
+                                        .accessibilityIdentifier("library.links")
+                                }
+                                if !hiddenItems.contains(.recent) {
+                                    Label("最近连接", systemImage: "clock").tag(CollectionPage.recent)
+                                }
+                                if !hiddenItems.contains(.favorites) {
+                                    Label("收藏", systemImage: "star").tag(CollectionPage.favorites)
+                                        .accessibilityIdentifier("library.favorites")
+                                }
+                                if !hiddenItems.contains(.links) { folderRows(in: .links) }
+                            }
                         }
                         Section("自定义连接") {
                             Label("所有连接", systemImage: "rectangle.on.rectangle").tag(CollectionPage.all)
@@ -180,6 +219,11 @@ struct LibraryWindow: View {
                         .navigationTitle((page ?? .all).title)
                         .searchable(text: $search, prompt: "搜索")
                         .toolbar { libraryToolbar }
+                }
+                .onChange(of: hiddenSidebarItems, initial: true) {
+                    if let page, !hiddenItems.isDisjoint(with: page.sidebarItem) {
+                        self.page = .all
+                    }
                 }
                 #if targetEnvironment(macCatalyst)
                 .focusedSceneValue(\.deskLinkLibrary, libraryMenu)

@@ -1,3 +1,13 @@
 "连接到电脑" = "Connect to Computer";
 "已存储的电脑" = "Saved Computer";
 "使用「远程随航」连接到${target}" = "Connect to ${target} with Telescope";
+"外观" = "Appearance";
+"侧栏" = "Sidebar";
+"显示在侧栏" = "Show in Sidebar";
+"附近" = "Nearby";
+"所有链接" = "All Links";
+"最近连接" = "Recent Connections";
+"收藏" = "Favorites";
+"链接" = "Links";
+"所有连接" = "All Connections";
+"自定义连接" = "Custom Connections";

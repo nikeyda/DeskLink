@@ -19,6 +19,10 @@ struct ApplicationPreferences: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("外观") {
+                    NavigationLink("侧栏") { LibrarySidebarPreferences() }
+                        .accessibilityIdentifier("preferences.sidebar")
+                }
                 Section("连接") {
                     Toggle("自动重新连接", isOn: $reconnect)
                     Toggle("允许文件传输", isOn: $transfers).accessibilityIdentifier("preferences.transfers")
@@ -88,6 +92,35 @@ struct ApplicationPreferences: View {
             Text("三指").tag(RemoteSwipeFingers.three)
             Text("四指").tag(RemoteSwipeFingers.four)
         }
+    }
+}
+
+private struct LibrarySidebarPreferences: View {
+    @AppStorage(HiddenSidebarItems.preferenceKey) private var hiddenSidebarItems = 0
+
+    var body: some View {
+        Form {
+            Section("显示在侧栏") {
+                option("附近", .nearby, id: "nearby")
+                option("Tailscale", .tailscale, id: "tailscale")
+                option("所有链接", .links, id: "links")
+                option("最近连接", .recent, id: "recent")
+                option("收藏", .favorites, id: "favorites")
+            }
+        }
+        .navigationTitle("侧栏")
+    }
+
+    private func option(_ title: LocalizedStringKey, _ item: HiddenSidebarItems, id: String) -> some View {
+        Toggle(title, isOn: Binding(
+            get: { !HiddenSidebarItems(rawValue: hiddenSidebarItems).contains(item) },
+            set: { visible in
+                var hidden = HiddenSidebarItems(rawValue: hiddenSidebarItems)
+                if visible { hidden.remove(item) } else { hidden.insert(item) }
+                hiddenSidebarItems = hidden.rawValue
+            }
+        ))
+        .accessibilityIdentifier("preferences.sidebar." + id)
     }
 }
 
