@@ -129,11 +129,11 @@ final class VNCSystemClipboard: VNCClipboardProviding {
     }
 
     private func transferableText() -> String? {
-        if let urls = pasteboard.urls, !urls.isEmpty {
+        if pasteboard.hasURLs, let urls = pasteboard.urls, !urls.isEmpty {
             return urls.map { $0.isFileURL ? $0.path : $0.absoluteString }
                 .joined(separator: " ")
         }
-        return pasteboard.string
+        return pasteboard.hasStrings ? pasteboard.string : nil
     }
 }
 #elseif canImport(AppKit)
@@ -928,8 +928,7 @@ public final class VNCClipboardSynchronizer {
     private func flushLocalClipboard() {
         let support = contentSupport()
         observedLocalChangeCount = clipboard.changeCount
-        automaticFlush = (clipboard.changeCount, support)
-        guard let content = clipboard.readContent(for: support) else { return }
+        guard let content = readAutomaticClipboard(for: support) else { return }
         syncedLocalContent = (content, clipboard.changeCount)
         transmit(content)
     }
@@ -942,10 +941,19 @@ public final class VNCClipboardSynchronizer {
               sharedClipboardEnabled, isEligible, canSend() else { return }
         let support = contentSupport()
         guard support != flush.support, support.acceptsRichContent else { return }
-        automaticFlush = (flush.changeCount, support)
-        guard let content = clipboard.readContent(for: support),
-              content.hasRichContent else { return }
+        guard let content = readAutomaticClipboard(for: support), content.hasRichContent else { return }
         transmit(content)
+    }
+
+    private func readAutomaticClipboard(for support: VNCClipboardContentSupport) -> VNCClipboardContent? {
+        automaticFlush = (clipboard.changeCount, support)
+        // A rich-only item may become transferable once the server advertises its formats.
+        guard clipboard.hasTransferableContent(for: support) else { return nil }
+        let content = clipboard.readContent(for: support)
+        // A failed read can mean the user declined the paste prompt. Only a new
+        // copy or an explicit Send should ask again, not another format announcement.
+        if content == nil { automaticFlush = nil }
+        return content
     }
 
     /// Items with only TIFF or BMP images get a PNG first, built off the main

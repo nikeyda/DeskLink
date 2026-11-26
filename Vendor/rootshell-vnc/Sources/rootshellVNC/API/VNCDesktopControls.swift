@@ -7,6 +7,9 @@
 
 import Foundation
 import Observation
+#if os(iOS) && !targetEnvironment(macCatalyst)
+import UIKit
+#endif
 
 /// Requests from the host app to `RemoteDesktopView`. The view watches the counters: each increase is one request.
 /// Pass one object to the view and keep it in the host.
@@ -27,6 +30,16 @@ public final class VNCDesktopControls {
     public private(set) var passwordPromptRequests = 0
 
     public init() {}
+
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+    @ObservationIgnored weak var inputSurface: RemoteInputUIView?
+
+    /// An upward swipe on the software keyboard's shortcut strip reaches the remote Dock.
+    public func movePointerToBottomEdge(at point: CGPoint, in toolbar: UIView) {
+        guard let surface = inputSurface, let window = surface.window, toolbar.window === window else { return }
+        surface.jumpFromKeyboardToolbar(at: surface.convert(point, from: toolbar))
+    }
+    #endif
 
     #if canImport(UIKit)
     public func toggleFileTransfers() { fileTransfersToggleRequests &+= 1 }

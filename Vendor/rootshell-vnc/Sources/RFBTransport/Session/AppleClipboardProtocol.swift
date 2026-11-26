@@ -179,12 +179,20 @@ enum AppleClipboardProtocol {
             | UInt32(data[index + 3])
     }
 
-    /// Text flavors become UTF-8; other bridged types pass through.
+    /// Text and recognized URL representations use UTF-8 inside the client.
     private static func normalized(
         type: String,
         data: Data
     ) -> ClipboardContent.Representation? {
         switch type {
+        case ClipboardType.url where data.starts(with: "bplist00".utf8):
+            // Screen Sharing can send an absolute URL and an empty base
+            // under public.url. UIKit expects the URL object or its UTF-8 bytes.
+            if let parts = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String],
+               parts.count == 2, parts[1].isEmpty, let url = URL(string: parts[0]), url.scheme != nil {
+                return .init(type: type, data: Data(url.absoluteString.utf8))
+            }
+            return .init(type: type, data: data)
         case ClipboardType.utf16PlainText:
             let text: String?
             if data.starts(with: [0xFE, 0xFF]) || data.starts(with: [0xFF, 0xFE]) {

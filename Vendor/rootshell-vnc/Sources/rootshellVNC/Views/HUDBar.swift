@@ -39,6 +39,7 @@ struct HUDAccessory {
     var docksToBottom: Bool
     /// The host's buttons include one that shows and hides the keyboard.
     var providesKeyboardButton: Bool
+    var onUpwardSwipe: ((CGPoint, UIView) -> Void)?
     var buttonStyle: (CGFloat) -> VNCHUDButtonStyle
     var behind: (CGFloat) -> AnyView
     var beside: (VNCHUDButtonStyle) -> AnyView

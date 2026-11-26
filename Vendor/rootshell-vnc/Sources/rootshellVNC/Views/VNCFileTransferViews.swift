@@ -7,8 +7,21 @@ import UniformTypeIdentifiers
 struct VNCDragOutTargetView: View {
     let names: [String]
     let isTargeted: Bool
+    let width: CGFloat
 
     static let size = CGSize(width: 260, height: 56)
+
+    static func targetFrame(in visible: CGRect, near anchor: CGPoint?) -> CGRect? {
+        guard !visible.isNull, visible.width > 32, visible.height > size.height * 3 else { return nil }
+        let width = min(size.width, visible.width - 16)
+        let x = min(max((anchor?.x ?? visible.midX) - width / 2, visible.minX + 8), visible.maxX - width - 8)
+        var y = visible.minY + 16
+        if let anchor {
+            let above = anchor.y - size.height - 16
+            y = above >= visible.minY + 8 ? above : min(anchor.y + 16, visible.maxY - size.height - 8)
+        }
+        return CGRect(x: x, y: y, width: width, height: size.height)
+    }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -28,7 +41,7 @@ struct VNCDragOutTargetView: View {
         }
             .foregroundStyle(isTargeted ? Color.white : Color.primary)
             .padding(.horizontal, 18)
-            .frame(width: Self.size.width, height: Self.size.height)
+            .frame(width: width, height: Self.size.height)
             .background {
                 Capsule()
                     .fill(isTargeted ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.regularMaterial))
@@ -100,9 +113,8 @@ struct VNCFileTransfersPanel: View {
                 localized: "Drop files on the screen to copy them to the Mac. Drag files on the Mac out of the window to download them.",
                 bundle: .module)
             #else
-            return String(
-                localized: "Drop files on the screen to copy them to the Mac. Drag files on the Mac to the top of the screen to download them.",
-                bundle: .module)
+            return String(localized: "Drop files on the screen to copy them to the Mac.", bundle: .module)
+                + " " + String(localized: "To download, drag a file to the download target next to it.", bundle: .module)
             #endif
         case (true, false):
             return String(localized: "Drop files on the screen to copy them to the Mac.", bundle: .module)
@@ -113,7 +125,7 @@ struct VNCFileTransfersPanel: View {
                 bundle: .module)
             #else
             return String(
-                localized: "Drag files on the Mac to the top of the screen to download them.",
+                localized: "To download, drag a file to the download target next to it.",
                 bundle: .module)
             #endif
         case (false, false):

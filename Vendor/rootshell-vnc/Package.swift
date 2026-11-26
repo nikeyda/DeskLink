@@ -17,6 +17,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/attaswift/BigInt.git", from: "5.3.0"),
+        .package(url: "https://github.com/apple/swift-crypto.git", exact: "5.2.0"),
         // Already used and resolved by the host application. RFBTransport
         // consumes these products directly for VeNCrypt STARTTLS rather than
         // introducing a second TLS/crypto implementation.
@@ -38,6 +39,8 @@ let package = Package(
             name: "RFBTransport",
             dependencies: [
                 "RFBProtocol",
+                .product(name: "Crypto", package: "swift-crypto"),
+                .product(name: "CryptoExtras", package: "swift-crypto"),
                 .product(name: "BigInt", package: "BigInt"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOTLS", package: "swift-nio"),

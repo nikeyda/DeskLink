@@ -118,15 +118,18 @@ public struct KeyboardInputHandler {
         sendKeyEvent: @escaping KeyEventHandler,
         usesAppleModifierConvention: @escaping @MainActor () -> Bool = { false },
         sendPhysicalKeyEvent: PhysicalKeyEventHandler? = nil,
-        commandPlatform: (@MainActor () -> RemoteCommandPlatform)? = nil
+        commandPlatform: (@MainActor () -> RemoteCommandPlatform)? = nil,
+        physicalKeySupported: (@MainActor (UInt32) -> Bool)? = nil
     ) {
         self.sendKeyEvent = sendKeyEvent
         self.usesAppleModifierConvention = usesAppleModifierConvention
         self.sendPhysicalKeyEvent = sendPhysicalKeyEvent
         self.commandPlatformOverride = commandPlatform
+        self.physicalKeySupported = physicalKeySupported
     }
 
     private let sendPhysicalKeyEvent: PhysicalKeyEventHandler?
+    private let physicalKeySupported: (@MainActor (UInt32) -> Bool)?
 
     /// A copy that calls `onKeyDown` before every key press it sends.
     func notifyingKeyDown(_ onKeyDown: @escaping @MainActor () -> Void) -> KeyboardInputHandler {
@@ -144,16 +147,18 @@ public struct KeyboardInputHandler {
             },
             usesAppleModifierConvention: usesAppleModifierConvention,
             sendPhysicalKeyEvent: physical,
-            commandPlatform: commandPlatformOverride)
+            commandPlatform: commandPlatformOverride, physicalKeySupported: physicalKeySupported)
     }
 
-    var forwardsPhysicalKeys: Bool { sendPhysicalKeyEvent != nil }
+    func forwardsPhysicalKey(usage: UInt32) -> Bool {
+        sendPhysicalKeyEvent != nil && physicalKeySupported?(usage) != false
+    }
 
     /// A hardware key transition whose HID usage is known.
     func handlePhysicalKey(downFlag: Bool, usage: UInt32, keysym: UInt32) {
-        if let sendPhysicalKeyEvent {
+        if forwardsPhysicalKey(usage: usage), let sendPhysicalKeyEvent {
             sendPhysicalKeyEvent(downFlag, usage, keysym)
-        } else {
+        } else if keysym != 0 {
             handleKeysym(downFlag: downFlag, keysym: keysym)
         }
     }

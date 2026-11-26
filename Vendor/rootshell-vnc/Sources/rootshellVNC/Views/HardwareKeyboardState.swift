@@ -18,8 +18,8 @@ struct HardwareKeyboardState: Sendable {
     }
 
     @discardableResult
-    mutating func press(usage: UInt32, keysym: UInt32) -> HardwareKeyboardTransition? {
-        guard usage != 0, keysym != 0, pressedKeysyms[usage] == nil else { return nil }
+    mutating func press(usage: UInt32, keysym: UInt32, allowEmptyKeysym: Bool = false) -> HardwareKeyboardTransition? {
+        guard usage != 0, keysym != 0 || allowEmptyKeysym, pressedKeysyms[usage] == nil else { return nil }
         pressedKeysyms[usage] = keysym
         pressOrder.append(usage)
         return HardwareKeyboardTransition(downFlag: true, keysym: keysym)
@@ -234,6 +234,18 @@ struct UniversalCommandKeyState {
 /// Multiple physical Command keys and the translated chord share one remote
 /// Command, so releasing one source cannot release another source's modifier.
 struct CommandModifierState: Sendable {
+    var swapsCommandAndControl = false
+
+    func swappedModifier(for usage: UInt32) -> (usage: UInt32, keysym: UInt32)? {
+        guard swapsCommandAndControl else { return nil }
+        switch usage {
+        case 0xE0: return (0xE3, KeyboardInputHandler.keysymSuperL)
+        case 0xE4: return (0xE7, KeyboardInputHandler.keysymSuperR)
+        case 0xE3: return (0xE0, KeyboardInputHandler.keysymControlL)
+        case 0xE7: return (0xE4, KeyboardInputHandler.keysymControlR)
+        default: return nil
+        }
+    }
     private(set) var physical: [UInt32: UInt32] = [:]
     private var inferredUsages: Set<UInt32> = []
     private var emitted: [UInt32] = []
@@ -334,8 +346,9 @@ struct CommandModifierState: Sendable {
         var desired: [UInt32] = []
         for usage in physical.keys.sorted() {
             if translated && [0xE0, 0xE4, 0xE2, 0xE6].contains(usage) { continue }
-            let keysym = (usage == 0xE3 || usage == 0xE7)
+            let original = (usage == 0xE3 || usage == 0xE7)
                 ? KeyboardInputHandler.keysymSuperL : physical[usage]!
+            let keysym = sendsChordAsItself ? original : (swappedModifier(for: usage)?.keysym ?? original)
             if !desired.contains(keysym) { desired.append(keysym) }
         }
         if translated && !desired.contains(KeyboardInputHandler.keysymSuperL) {
@@ -360,6 +373,14 @@ final class HardwareKeyboardController {
     private let keyboardHandler: KeyboardInputHandler
     private var state = HardwareKeyboardState()
     private var commandModifiers = CommandModifierState()
+    var swapsCommandAndControl: Bool {
+        get { commandModifiers.swapsCommandAndControl }
+        set {
+            guard newValue != commandModifiers.swapsCommandAndControl else { return }
+            releaseAll()
+            commandModifiers.swapsCommandAndControl = newValue
+        }
+    }
     var keyRepeat = VNCKeyRepeat() {
         didSet { if keyRepeat != oldValue { stopRepeat() } }
     }
@@ -400,14 +421,16 @@ final class HardwareKeyboardController {
             commandModifiers.press(usage: usage, keysym: keysym).forEach(sendModifier)
             return true
         }
-        guard let transition = state.press(usage: usage, keysym: keysym) else {
+        // Dead keys and some JIS keys produce no local character before composition.
+        let positionOnly = keysym == 0 && keyboardHandler.forwardsPhysicalKey(usage: usage)
+        guard let transition = state.press(usage: usage, keysym: keysym, allowEmptyKeysym: positionOnly) else {
             // UIKit and UIKeyCommand can both report OS repeat callbacks. The
             // controller owns repeat timing, so duplicate begins are consumed.
             return state.contains(usage)
         }
         send(transition, usage: usage)
         // A physical-key host is a USB keyboard; the remote OS repeats held keys.
-        if keyRepeat.enabled, Self.isRepeatable(usage), !keyboardHandler.forwardsPhysicalKeys {
+        if keyRepeat.enabled, Self.isRepeatable(usage), !keyboardHandler.forwardsPhysicalKey(usage: usage) {
             startRepeat(for: usage)
         }
         return true
@@ -551,14 +574,17 @@ final class HardwareKeyboardController {
     }
 
     private func send(_ transition: HardwareKeyboardTransition, usage: UInt32) {
+        let swapped = commandModifiers.swappedModifier(for: usage)
+        let remoteUsage = swapped?.usage ?? usage
+        let remoteKey = HardwareKeyboardTransition(downFlag: transition.downFlag, keysym: swapped?.keysym ?? transition.keysym)
         if let routeModifier, (0xE0...0xE7).contains(usage) {
-            routeModifier(transition, usage)
+            routeModifier(remoteKey, remoteUsage)
             return
         }
         keyboardHandler.handlePhysicalKey(
-            downFlag: transition.downFlag,
-            usage: usage,
-            keysym: transition.keysym)
+            downFlag: remoteKey.downFlag,
+            usage: remoteUsage,
+            keysym: remoteKey.keysym)
     }
 
     private static func isRepeatable(_ usage: UInt32) -> Bool {

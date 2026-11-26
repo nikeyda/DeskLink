@@ -396,6 +396,7 @@ func selectedAppleMediaDisplayCount(
 /// A basic key or pointer message eligible for single-write batching.
 public enum ClientInputEvent: Sendable, Equatable {
     case key(downFlag: Bool, key: UInt32)
+    case macKeyPosition(down: Bool, keysym: UInt32, code: UInt16)
     case pointer(buttonMask: UInt8, x: UInt16, y: UInt16)
 }
 
@@ -417,7 +418,8 @@ public actor TransportSession {
 
     // MARK: - Properties
 
-    private let tcp: any RFBConnection
+    private let baseConnection: any RFBConnection
+    private var tcp: any RFBConnection
     /// Whether the connection was injected by the host instead of the default
     /// direct TCP path. Apple's High Performance media mode needs UDP
     /// reachability and is refused over a custom transport without a datagram path.
@@ -444,6 +446,7 @@ public actor TransportSession {
     /// conventional one-picture profile is retried with its native compound
     /// capability without changing the application-wide negotiation policy.
     private let appleMediaTilesPerFrameOverride: UInt64?
+    private let rsaHostValidationHandler: VNCRSAHostValidationHandler?
     private let certificateValidationHandler: VNCCertificateValidationHandler?
     /// Environment-backed diagnostics and experiment switches are launch-time
     /// configuration. Materializing ProcessInfo.environment copies and bridges
@@ -770,7 +773,8 @@ public actor TransportSession {
     private var appleMediaConsecutiveLossyWindows = 0
     private var reportedAppleMediaUnavailable = false
     private var appleRCTLTotalPacketsReceived: UInt32 = 0
-    private var appleRCTLAudioPacketsReceived: UInt32 = 0
+    /// Audio packets accepted during this connection, across media stream restarts.
+    private var receivedAudioMediaPackets: UInt64 = 0
     private var appleRCTLTotalBytesReceived: UInt64 = 0
     /// RTCP APP "RCTL" rate-control feedback (drives the server's adaptive
     /// encoder bitrate). This profile sends it at approximately 20 Hz; without
@@ -890,6 +894,7 @@ public actor TransportSession {
     /// wheel-button input.
     private var appleServerCapabilities: AppleServerCapabilities?
     private var lastPointerMessageNanos: UInt64 = 0
+    private var lastKeyboardMessageNanos: UInt64 = 0
     /// Key for encrypted input events: the session key, then the High
     /// Performance stream key once ComCryption starts.
     private var appleInputEncryptionKey: Data?
@@ -1023,7 +1028,8 @@ public actor TransportSession {
         connection: (any RFBConnection)? = nil,
         datagramProvider: AppleMediaDatagramProvider? = nil,
         securityPolicy: VNCSecurityPolicy = .automatic,
-        certificateValidationHandler: VNCCertificateValidationHandler? = nil
+        certificateValidationHandler: VNCCertificateValidationHandler? = nil,
+        rsaHostValidationHandler: VNCRSAHostValidationHandler? = nil
     ) {
         let environment = ProcessInfo.processInfo.environment
         self.runtimeEnvironment = environment
@@ -1050,7 +1056,9 @@ public actor TransportSession {
             && environment["ROOTSHELL_VNC_DISABLE_RATE_CONTROL"] != "1"
         self.usesCustomTransport = connection != nil
         self.datagramProvider = datagramProvider
-        self.tcp = connection ?? TCPConnection(host: host, port: port)
+        let base = connection ?? TCPConnection(host: host, port: port)
+        self.baseConnection = base
+        self.tcp = base
         // Suppress the cursor shape encodings once, here, before anything is
         // derived from the list. `preferredEncodings` is caller-supplied and
         // the default list carries the portable shapes, so a host that builds
@@ -1085,6 +1093,7 @@ public actor TransportSession {
         self.port = port
         self.password = password
         self.username = username
+        self.rsaHostValidationHandler = rsaHostValidationHandler
         self.certificateValidationHandler = certificateValidationHandler
         self.requestedDisplayCount = min(2, max(1, displayCount))
         self.requestedFrameRate = max(1, min(120, targetFrameRate))
@@ -1112,6 +1121,7 @@ public actor TransportSession {
     /// processes incoming server messages and emits events.
     public func connect() async throws {
         log.info("Starting connection")
+        tcp = baseConnection
 
         isDisconnecting = false
         terminalDisconnectHandled = false
@@ -1274,10 +1284,15 @@ public actor TransportSession {
 
     /// Mac servers that take command 0x10 get keystrokes encrypted; the Mac
     /// maps the keysym exactly as for an RFB KeyEvent.
-    private func keyMessage(downFlag: Bool, keysym: UInt32) -> Data {
-        if let cipher = cachedAppleInputCipher(),
-           let message = cipher.keyMessage(down: downFlag, keysym: keysym) {
-            return message
+    private func keyMessage(downFlag: Bool, keysym: UInt32, macKeyCode: UInt16? = nil) -> Data {
+        if let cipher = cachedAppleInputCipher() {
+            let now = DispatchTime.now().uptimeNanoseconds
+            let elapsed = lastKeyboardMessageNanos == 0 ? 0 : (now - lastKeyboardMessageNanos) / 1_000
+            lastKeyboardMessageNanos = now
+            if let macKeyCode, let message = cipher.keyPositionMessage(
+                down: downFlag, keysym: keysym, keyCode: macKeyCode, microseconds: UInt32(clamping: elapsed)
+            ) { return message }
+            if let message = cipher.keyMessage(down: downFlag, keysym: keysym) { return message }
         }
         return ClientMessage.keyEvent(downFlag: downFlag, key: keysym).serialize()
     }
@@ -1297,6 +1312,8 @@ public actor TransportSession {
                 switch event {
                 case .key(let downFlag, let key):
                     payload.append(keyMessage(downFlag: downFlag, keysym: key))
+                case .macKeyPosition(let down, let keysym, let code):
+                    payload.append(keyMessage(downFlag: down, keysym: keysym, macKeyCode: code))
                 case .pointer(let buttonMask, let x, let y):
                     payload.append(pointerMessage(buttonMask: buttonMask, x: x, y: y))
                 }
@@ -1306,7 +1323,7 @@ public actor TransportSession {
         for event in events {
             switch event {
             case .pointer: pointerEventsSent &+= 1
-            case .key: keyEventsSent &+= 1
+            case .key, .macKeyPosition: keyEventsSent &+= 1
             }
         }
     }
@@ -1609,7 +1626,9 @@ public actor TransportSession {
     /// EncryptionInfo record and ComCryption channel arrive.
     public var handshakeInfo: TransportHandshakeInfo {
         let contentEncryption: VNCContentEncryption
-        if stateMachine.selectedSecurityType == .vencrypt {
+        if tcp is RSAAESConnection {
+            contentEncryption = .rsaAES(bits: stateMachine.selectedSecurityType == .rsaAES256 ? 256 : 128)
+        } else if stateMachine.selectedSecurityType == .vencrypt {
             contentEncryption = .tlsX509
         } else if standardStreamChannel != nil {
             contentEncryption = .appleComCryption(
@@ -1628,7 +1647,8 @@ public actor TransportSession {
             offeredSecurityTypes: stateMachine.offeredSecurityTypes,
             selectedSecurityType: stateMachine.selectedSecurityType,
             contentEncryption: contentEncryption,
-            appleServerCapabilities: appleServerCapabilities)
+            appleServerCapabilities: appleServerCapabilities,
+            supportsAppleKeyPositions: appleEncryptedInputKey != nil)
     }
 
     /// Live traffic statistics. The recent-rate window spans the time since
@@ -1682,10 +1702,11 @@ public actor TransportSession {
             .sorted { $0.bytes > $1.bytes }
 
         return TransportStatistics(
+            handshake: handshakeInfo,
             isHighPerformanceMode: acceptedAppleMediaStream,
             mediaBytesReceived: appleRCTLTotalBytesReceived,
             mediaPacketsReceived: mediaPackets,
-            audioPacketsReceived: UInt64(appleRCTLAudioPacketsReceived),
+            audioPacketsReceived: receivedAudioMediaPackets,
             packetsLostCumulative: lostCumulative,
             bandwidthEstimateKbps: controller.map { Double($0.bandwidthEstimateBps) / 1_000 },
             throughputKbps: controller.map { $0.throughputBps(now: nowSeconds) / 1_000 },
@@ -2234,6 +2255,11 @@ public actor TransportSession {
         let authenticator: Authenticator
 
         switch securityType {
+        case .rsaAES, .rsaAES256:
+            tcp = try await RSAAESAuthenticator(use256: securityType == .rsaAES256,
+                host: tlsIdentityHost, port: port, validate: rsaHostValidationHandler,
+                username: username, password: password).authenticate(connection: baseConnection)
+            return
         case .vncAuthentication:
             authenticator = VNCAuthenticator(password: password)
         case .apple30:
@@ -6807,7 +6833,6 @@ public actor TransportSession {
         appleMediaQualityWindowLost = 0
         appleMediaConsecutiveLossyWindows = 0
         appleRCTLTotalPacketsReceived = 0
-        appleRCTLAudioPacketsReceived = 0
         appleRCTLTotalBytesReceived = 0
         appleRCTLPacketsInterval = 0
         appleRCTLLostInterval = 0
@@ -7217,7 +7242,6 @@ public actor TransportSession {
         appleMediaQualityWindowLost = 0
         appleMediaConsecutiveLossyWindows = 0
         appleRCTLTotalPacketsReceived = 0
-        appleRCTLAudioPacketsReceived = 0
         appleRCTLTotalBytesReceived = 0
         appleMediaVideoSSRCChannels.removeAll()
         appleMediaSentBootstrapVideoReceiverReport = false
@@ -7713,7 +7737,7 @@ public actor TransportSession {
             if updateAppleMediaReceptionStats(
                 ssrc: header.ssrc,
                 sequence: header.sequenceNumber) {
-                appleRCTLAudioPacketsReceived &+= 1
+                receivedAudioMediaPackets &+= 1
                 appleRCTLTotalBytesReceived &+= UInt64(max(0, wireByteCount))
                 startAppleMediaAudioRTCPFeedbackLoop()
             }

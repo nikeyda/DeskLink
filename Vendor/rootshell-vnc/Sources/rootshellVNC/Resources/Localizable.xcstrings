@@ -24512,6 +24512,22 @@
         }
       }
     },
+    "Save Screenshot" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存屏幕快照"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "儲存螢幕快照"
+          }
+        }
+      }
+    },
     "Save to Files" : {
       "localizations" : {
         "ar" : {
@@ -30538,6 +30554,160 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "此電腦不支援檔案傳輸。"
+          }
+        }
+      }
+    },
+    "To download, drag a file to the download target next to it." : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "للتنزيل، اسحب الملف إلى هدف التنزيل الذي يظهر بجانبه."
+          }
+        },
+        "ca" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Per baixar un fitxer, arrossega’l a la zona de baixada que apareix al seu costat."
+          }
+        },
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Soubor stáhnete přetažením do oblasti pro stažení, která se zobrazí vedle něj."
+          }
+        },
+        "da" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Træk en fil hen på det downloadfelt, der vises ved siden af den, for at hente den."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ziehe eine Datei zum Laden auf das Downloadziel, das neben ihr erscheint."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Para descargar un archivo, arrástralo a la zona de descarga que aparece a su lado."
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lataa tiedosto vetämällä se sen viereen ilmestyvälle latausalueelle."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pour télécharger un fichier, faites-le glisser vers la zone de téléchargement qui apparaît à côté."
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "כדי להוריד קובץ, יש לגרור אותו אל אזור ההורדה שמופיע לצדו."
+          }
+        },
+        "hu" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A letöltéshez húzza a fájlt a mellette megjelenő letöltési területre."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Per scaricare un file, trascinalo nell’area di download che appare accanto."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ファイルをダウンロードするには、その横に表示されるダウンロード領域にドラッグします。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일을 다운로드하려면 파일 옆에 나타나는 다운로드 영역으로 드래그하세요."
+          }
+        },
+        "nb" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "For å laste ned en fil drar du den til nedlastingsområdet som vises ved siden av den."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sleep een bestand naar het downloadvak dat ernaast verschijnt om het te downloaden."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aby pobrać plik, przeciągnij go do obszaru pobierania, który pojawi się obok niego."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Para baixar um arquivo, arraste-o para a área de download que aparece ao lado dele."
+          }
+        },
+        "pt-PT" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Para descarregar um ficheiro, arraste-o para a área de descarga que aparece ao lado."
+          }
+        },
+        "ro" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pentru a descărca un fișier, trageți-l în zona de descărcare care apare lângă el."
+          }
+        },
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Datoteko prenesete tako, da jo povlečete na območje za prenos, ki se prikaže poleg nje."
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hämta en fil genom att dra den till hämtningsytan som visas bredvid den."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Щоб завантажити файл, перетягніть його в область завантаження, що з’явиться поруч."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Để tải tệp xuống, hãy kéo tệp vào vùng tải xuống xuất hiện bên cạnh."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将文件拖到旁边出现的下载区域，松开即可下载。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將檔案拖到旁邊出現的下載區域，放開即可下載。"
           }
         }
       }

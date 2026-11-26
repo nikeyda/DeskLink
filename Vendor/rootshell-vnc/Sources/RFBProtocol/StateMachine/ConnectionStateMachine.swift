@@ -269,13 +269,10 @@ public struct ConnectionStateMachine: Sendable {
     // MARK: - Security type selection
 
     private func selectBestSecurityType(from types: [SecurityType]) -> SecurityType? {
-        // A diagnostic override must never downgrade an explicitly encrypted
-        // session. Handle this policy before consulting process state.
-        if securityPolicy == .requireEncryption {
-            return types.contains(.vencrypt) ? .vencrypt : nil
-        }
-
-        if let forced = ProcessInfo.processInfo.environment["ROOTSHELL_VNC_SECURITY_TYPE"] {
+        let rsa = [SecurityType.rsaAES256, .rsaAES].first(where: types.contains)
+        // An encrypted-only policy always takes precedence over diagnostics.
+        if securityPolicy != .requireEncryption, securityPolicy != .rsaAES,
+           let forced = ProcessInfo.processInfo.environment["ROOTSHELL_VNC_SECURITY_TYPE"] {
             let selected: SecurityType? = {
                 switch forced.lowercased() {
                 case "none": return SecurityType.none
@@ -306,14 +303,21 @@ public struct ConnectionStateMachine: Sendable {
             return types.contains(.macAuthentication) ? .macAuthentication : nil
         case .appleSRP:
             return types.contains(.appleSRP) ? .appleSRP : nil
+        case .rsaAES:
+            return rsa
         case .requireEncryption:
-            // Handled before diagnostic overrides above.
-            return types.contains(.vencrypt) ? .vencrypt : nil
+            return rsa ?? (types.contains(.vencrypt) ? .vencrypt : nil)
         case .automatic:
             if negotiatedVersion?.isApple == true, hasUsername {
                 if types.contains(.macAuthentication) { return .macAuthentication }
                 if types.contains(.apple30) { return .apple30 }
                 if types.contains(.appleSRP) { return .appleSRP }
+            }
+            if let rsa {
+                // WayVNC advertises VeNCrypt first and can generate a temporary RSA
+                // key. Keep the server's preferred encrypted family in automatic mode.
+                let family = types.first { $0 == .vencrypt || $0 == .rsaAES || $0 == .rsaAES256 }
+                return family == .vencrypt ? .vencrypt : rsa
             }
             // TigerVNC commonly offers anonymous TLSVnc alongside VncAuth.
             // NIOSSL cannot negotiate anonymous cipher suites, so take the
@@ -340,7 +344,9 @@ public struct ConnectionStateMachine: Sendable {
     private func securityTypeIsAllowed(_ type: SecurityType) -> Bool {
         switch securityPolicy {
         case .requireEncryption:
-            return type == .vencrypt
+            return [.rsaAES256, .rsaAES, .vencrypt].contains(type)
+        case .rsaAES:
+            return [.rsaAES256, .rsaAES].contains(type)
         case .none:
             return type == .none
         case .vncAuthentication:
@@ -353,7 +359,7 @@ public struct ConnectionStateMachine: Sendable {
             return type == .appleSRP
         case .automatic:
             switch type {
-            case .none, .vncAuthentication, .vencrypt, .apple30, .macAuthentication, .appleSRP:
+            case .none, .vncAuthentication, .rsaAES, .rsaAES256, .vencrypt, .apple30, .macAuthentication, .appleSRP:
                 return true
             default:
                 return false

@@ -10,6 +10,8 @@ import RFBProtocol
 public enum VNCContentEncryption: Sendable, Equatable {
     /// VeNCrypt X.509 TLS wraps the entire RFB stream.
     case tlsX509
+    /// An authenticated AES-EAX record stream covering the entire desktop session.
+    case rsaAES(bits: Int)
     /// Apple ComCryption: the control channel is AES-CBC encrypted and, when
     /// `mediaSRTP` is true, the accelerated UDP media path is SRTP-protected.
     /// `cipherMode`/`keyLength` mirror the server's EncryptionInfo record
@@ -38,6 +40,7 @@ public struct TransportHandshakeInfo: Sendable, Equatable {
     /// Structured command support advertised by an Apple RFB 3.889 server;
     /// nil for regular RFB servers.
     public let appleServerCapabilities: AppleServerCapabilities?
+    public let supportsAppleKeyPositions: Bool
 }
 
 // MARK: - Live statistics
@@ -54,6 +57,8 @@ public struct EncodingUsage: Sendable, Equatable {
 /// `statisticsSnapshot()` call and are nil on the first call or when the
 /// window is too short to be meaningful.
 public struct TransportStatistics: Sendable, Equatable {
+    /// Handshake facts from the same transport generation as the traffic counters.
+    public let handshake: TransportHandshakeInfo
     /// Whether Apple's accelerated UDP media path is active.
     public let isHighPerformanceMode: Bool
 

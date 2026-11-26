@@ -84,6 +84,22 @@ public enum RemotePencilAction: String, CaseIterable, Sendable {
     case none, secondaryClick, middleClick, toggleToolbar, toggleExpandedToolbar
 }
 
+public enum RemoteScrollSpeed: Int, Codable, Sendable, CaseIterable {
+    case slow = 50
+    case moderatelySlow = 75
+    case standard = 100
+    case moderatelyFast = 150
+    case fast = 200
+
+    public var multiplier: CGFloat { CGFloat(rawValue) / 100 }
+}
+
+extension ScrollPointAccumulator {
+    mutating func consume(_ delta: CGPoint, speed: RemoteScrollSpeed) -> (x: Int32, y: Int32) {
+        consume(deltaX: delta.x * speed.multiplier, deltaY: delta.y * speed.multiplier)
+    }
+}
+
 /// Touch gesture options a host app can change: the hold delay, the
 /// three-finger swipe mappings, and the held-button label.
 public struct RemoteTouchGestureConfiguration: Equatable, Sendable {
@@ -103,6 +119,7 @@ public struct RemoteTouchGestureConfiguration: Equatable, Sendable {
     public var pencilSqueeze: RemotePencilAction = .none
     public var togglesToolbarWithTwoFingerDoubleTap = false
     public var allowsMomentumScrolling = true
+    public var scrollSpeed: RemoteScrollSpeed = .standard
     /// Labels the button a touch hold is pressing while it is down.
     public var showsButtonIndicator: Bool
 
@@ -126,7 +143,7 @@ public struct RemoteTouchGestureConfiguration: Equatable, Sendable {
 
     public static let standard = Self()
 
-    var resolvedHoldDuration: TimeInterval {
+    public var resolvedHoldDuration: TimeInterval {
         guard holdDuration.isFinite else { return Self.defaultHoldDuration }
         return min(
             Self.holdDurationRange.upperBound,

@@ -88,7 +88,7 @@ public struct RemoteDesktopView: View {
     #endif
 
     private let touchHandler: TouchInputHandler
-    private let keyboardHandler: KeyboardInputHandler
+    let keyboardHandler: KeyboardInputHandler
     private let isFullScreen: Bool
     private let toggleFullScreen: (() -> Void)?
     private let hudMenuExtras: VNCHUDMenuExtras
@@ -116,6 +116,7 @@ public struct RemoteDesktopView: View {
     private let cursorHeight: CGFloat
     private let touchGestures: RemoteTouchGestureConfiguration
     private var monitorShortcut: ((VNCMonitorSelection) -> Void)?
+    private var screenshotShortcut: (() -> Void)?
     private var windowMonitorRegion: CGRect?
     private var hostDictation: (() -> Void)?
 
@@ -185,7 +186,12 @@ public struct RemoteDesktopView: View {
             },
             usesAppleModifierConvention: { [session] in
                 session.serverUsesAppleModifierConvention
-            })
+            },
+            sendPhysicalKeyEvent: { [session] down, usage, keysym in
+                if down { onRemoteInput?() }
+                session.sendKeyEvent(downFlag: down, key: keysym, macKeyCode: session.macKeyCode(forHardwareUsage: usage))
+            },
+            physicalKeySupported: { [session] in session.macKeyCode(forHardwareUsage: $0) != nil })
     }
 
     /// Reads the server's reported state, never a local optimistic one, so the
@@ -216,6 +222,13 @@ public struct RemoteDesktopView: View {
     public func onMonitorShortcut(_ action: @escaping (VNCMonitorSelection) -> Void) -> Self {
         var copy = self
         copy.monitorShortcut = action
+        return copy
+    }
+
+    /// Uses the containing app's screenshot exporter for the iPad keyboard shortcut.
+    public func onScreenshotShortcut(_ action: @escaping () -> Void) -> Self {
+        var copy = self
+        copy.screenshotShortcut = action
         return copy
     }
 
@@ -268,6 +281,7 @@ public struct RemoteDesktopView: View {
         isEnabled: Bool = true,
         docksToBottom: Bool = false,
         providesKeyboardButton: Bool = false,
+        onUpwardSwipe: ((CGPoint, UIView) -> Void)? = nil,
         buttonStyle: @escaping (_ availableWidth: CGFloat) -> VNCHUDButtonStyle,
         @ViewBuilder behind: @escaping (_ availableWidth: CGFloat) -> Behind,
         @ViewBuilder beside: @escaping (_ buttonStyle: VNCHUDButtonStyle) -> Beside
@@ -277,6 +291,7 @@ public struct RemoteDesktopView: View {
         copy.hudAccessory = HUDAccessory(
             docksToBottom: docksToBottom,
             providesKeyboardButton: providesKeyboardButton,
+            onUpwardSwipe: onUpwardSwipe,
             buttonStyle: buttonStyle,
             behind: { AnyView(behind($0)) },
             beside: { AnyView(beside($0)) })
@@ -563,10 +578,14 @@ public struct RemoteDesktopView: View {
             // images so the responsive local pointer can adopt their shape.
             remoteCursor: session.remoteCursor,
             remoteCursorPresence: session.remoteCursorPresence,
+            swapsHardwareCommandAndControl: session.configuration.swapsHardwareCommandAndControl,
+            allowsViewportZoom: session.configuration.allowsViewportZoom,
+            desktopControls: desktopControls,
             fileTransfers: session.fileTransfers,
             pencilToolbarAction: pencilToolbarAction,
             monitorIDs: monitorShortcut == nil ? [] : session.selectableMonitorIDs,
-            monitorShortcut: monitorShortcut)
+            monitorShortcut: monitorShortcut,
+            screenshotShortcut: screenshotShortcut)
             .frame(width: viewSize.width, height: viewSize.height)
             .contentShape(Rectangle())
         #else
@@ -582,7 +601,7 @@ public struct RemoteDesktopView: View {
                 framebufferOrigin: framebufferOrigin))
             .simultaneousGesture(fallbackMagnificationGesture(
                 viewSize: viewSize,
-                framebufferSize: framebufferSize))
+                framebufferSize: framebufferSize), including: session.configuration.allowsViewportZoom ? .all : .none)
         #endif
     }
 
@@ -605,6 +624,7 @@ public struct RemoteDesktopView: View {
                     safeAreaEdges: hudSafeAreaEdges,
                     pinnedRowHeight: hudAccessory?.docksToBottom == true
                         ? hudAccessory?.buttonStyle(available).size.height : nil,
+                    onUpwardSwipe: hudAccessory?.onUpwardSwipe,
                     onReserveChange: { hudReserve = $0 },
                     onFrameChange: { [hudFrame] in hudFrame.frame = $0 }
                 ) {
@@ -641,6 +661,7 @@ public struct RemoteDesktopView: View {
         let framebufferSize: CGSize
         let framebufferOrigin: CGPoint
         let viewport: RemoteViewportState
+        let dragAnchor: CGPoint?
     }
 
     @ViewBuilder
@@ -654,14 +675,23 @@ public struct RemoteDesktopView: View {
             viewSize: viewSize,
             framebufferSize: framebufferSize,
             framebufferOrigin: framebufferOrigin,
-            viewport: viewport)
+            viewport: viewport,
+            dragAnchor: transfers.remoteDragAnchor)
         ZStack {
             if transfers.showsDragOutTarget, let target = dragOutTargetFrame(geometry) {
                 VNCDragOutTargetView(
                     names: transfers.remoteDraggedNames,
-                    isTargeted: transfers.remoteDragOverTarget)
-                    .position(x: target.midX, y: target.midY)
+                    isTargeted: transfers.remoteDragOverTarget,
+                    width: target.width)
+                    #if targetEnvironment(macCatalyst)
                     .allowsHitTesting(false)
+                    #else
+                    .contentShape(Capsule())
+                    .gesture(DragGesture(minimumDistance: 0).onEnded { _ in transfers.dismissDragOutTarget() })
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAction { transfers.dismissDragOutTarget() }
+                    #endif
+                    .position(x: target.midX, y: target.midY)
                     .transition(.opacity)
             }
             if showsFileTransfers {
@@ -684,20 +714,21 @@ public struct RemoteDesktopView: View {
         }
     }
 
-    /// Top center of the visible remote screen, where a Mac's menu bar sits.
     private func dragOutTargetFrame(_ geometry: DragOutTargetGeometry) -> CGRect? {
         guard let frame = geometry.viewport.displayedFrame(
             viewSize: geometry.viewSize,
             framebufferSize: geometry.framebufferSize) else { return nil }
         let visible = frame.intersection(CGRect(origin: .zero, size: geometry.viewSize))
-        let size = VNCDragOutTargetView.size
-        guard !visible.isNull, visible.height > size.height * 3 else { return nil }
-        let width = min(size.width, visible.width - 16)
-        return CGRect(
-            x: visible.midX - width / 2,
-            y: visible.minY + 16,
-            width: width,
-            height: size.height)
+        #if targetEnvironment(macCatalyst)
+        return VNCDragOutTargetView.targetFrame(in: visible, near: nil)
+        #else
+        guard let anchor = geometry.dragAnchor,
+              let point = geometry.viewport.viewPoint(forFramebufferPoint: CGPoint(
+                x: anchor.x - geometry.framebufferOrigin.x, y: anchor.y - geometry.framebufferOrigin.y),
+                viewSize: geometry.viewSize, framebufferSize: geometry.framebufferSize),
+              visible.contains(point) else { return nil }
+        return VNCDragOutTargetView.targetFrame(in: visible, near: point)
+        #endif
     }
 
     private func updateDragOutTarget(_ geometry: DragOutTargetGeometry) {

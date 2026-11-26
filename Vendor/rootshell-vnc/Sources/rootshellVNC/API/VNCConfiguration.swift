@@ -21,6 +21,9 @@ public typealias VNCDatagramProvider =
 /// All properties have sensible defaults.
 public struct VNCConfiguration: Sendable {
 
+    /// Invoked on the main actor for an RFB Bell message in this session.
+    public var serverBellHandler: (@MainActor @Sendable () -> Void)?
+
     public typealias SecurityPolicy = VNCSecurityPolicy
     public typealias CertificateValidationRequest = VNCCertificateValidationRequest
     public typealias CertificateValidationResult = VNCCertificateValidationResult
@@ -34,6 +37,8 @@ public struct VNCConfiguration: Sendable {
     /// certificate. Hosts can implement TOFU without weakening validation for
     /// publicly trusted certificates.
     public var certificateValidationHandler: VNCCertificateValidationHandler?
+    /// Approval is required before an RSA-AES peer can receive login credentials.
+    public var rsaHostValidationHandler: VNCRSAHostValidationHandler?
 
     /// Compatibility display-count choices. A value of `2` means Apple's
     /// "all displays combined" topology; use ``DisplayMode`` when the exact
@@ -280,6 +285,12 @@ public struct VNCConfiguration: Sendable {
     /// session advertises, so it takes effect only on a new connection.
     public var cursorRendering: VNCCursorRendering
 
+    /// Match physical keyboard positions to the input source on a compatible Mac.
+    public var usesMacHardwareKeyPositions = false
+    public var swapsHardwareCommandAndControl = false
+    /// Work around an Xvnc 1.15 keymap reset on the first Unicode key press.
+    public var preparesTigerVNCKeyboard = false
+
     /// The operating system behind the server, which decides how Option is sent.
     public var remoteSystem: RemoteSystem
 
@@ -336,6 +347,9 @@ public struct VNCConfiguration: Sendable {
 
     /// Allow the user to transfer files to and from compatible remote desktops.
     public var allowsFileTransfers = true
+
+    /// Allows the viewer to magnify the desktop locally with a pinch gesture.
+    public var allowsViewportZoom = true
 
     /// Preferred encodings in priority order.
     ///

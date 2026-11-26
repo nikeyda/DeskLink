@@ -4,6 +4,8 @@ import Foundation
 public enum SecurityType: Sendable, Equatable, Hashable {
     case none
     case vncAuthentication
+    case rsaAES
+    case rsaAES256
     case tight
     case vencrypt
     case apple30
@@ -19,6 +21,8 @@ public enum SecurityType: Sendable, Equatable, Hashable {
         switch self {
         case .none:                return 1
         case .vncAuthentication:   return 2
+        case .rsaAES:              return 5
+        case .rsaAES256:           return 129
         case .tight:               return 16
         case .vencrypt:            return 19
         case .apple30:             return 30
@@ -34,6 +38,8 @@ public enum SecurityType: Sendable, Equatable, Hashable {
         switch rawValue {
         case 1:  self = .none
         case 2:  self = .vncAuthentication
+        case 5: self = .rsaAES
+        case 129: self = .rsaAES256
         case 16: self = .tight
         case 19: self = .vencrypt
         case 30: self = .apple30
@@ -56,6 +62,8 @@ public enum SecurityType: Sendable, Equatable, Hashable {
         case .appleSRP:            return 2
         case .macAuthentication:   return 3
         case .vencrypt:            return 4
+        case .rsaAES:              return 5
+        case .rsaAES256:           return 6
         // Not yet implemented:
         case .srp:                 return nil
         case .tight:               return nil
@@ -68,11 +76,11 @@ public enum SecurityType: Sendable, Equatable, Hashable {
 ///
 /// `.automatic` is deliberately compatibility-first: Apple authentication is
 /// considered only for Apple servers with a username, while conventional
-/// servers use VNC Authentication when available and VeNCrypt when it is the
-/// server's only supported authenticated option.
+/// servers prefer RSA-AES when offered, then VNC Authentication and VeNCrypt.
 public enum VNCSecurityPolicy: String, Sendable, Equatable, Hashable, CaseIterable {
     case automatic
     case requireEncryption
+    case rsaAES
     case none
     case vncAuthentication
     case apple30

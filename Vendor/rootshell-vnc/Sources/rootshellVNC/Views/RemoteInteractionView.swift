@@ -40,11 +40,15 @@ struct RemoteInteractionView: UIViewRepresentable {
     let disconnect: () -> Void
     let remoteCursor: RemoteCursor?
     let remoteCursorPresence: RemoteCursorPresence
+    var swapsHardwareCommandAndControl = false
+    var allowsViewportZoom = true
+    var desktopControls: VNCDesktopControls? = nil
     /// Accepts file drops as uploads when set.
     var fileTransfers: VNCFileTransferController? = nil
     var pencilToolbarAction: ((RemotePencilAction, CGPoint) -> Void)? = nil
     var monitorIDs: [UInt32] = []
     var monitorShortcut: ((VNCMonitorSelection) -> Void)? = nil
+    var screenshotShortcut: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -59,6 +63,7 @@ struct RemoteInteractionView: UIViewRepresentable {
             requestDictation: requestDictation,
             toggleFullScreen: toggleFullScreen,
             disconnect: disconnect)
+        view.screenshotShortcut = screenshotShortcut
         view.onViewportChange = { [weak coordinator = context.coordinator] state in
             coordinator?.parent.viewport = state
         }
@@ -83,6 +88,11 @@ struct RemoteInteractionView: UIViewRepresentable {
         context.coordinator.parent = self
         uiView.pencilToolbarAction = pencilToolbarAction
         uiView.monitorShortcut = monitorShortcut
+        uiView.screenshotShortcut = screenshotShortcut
+        uiView.allowsViewportZoom = allowsViewportZoom
+        #if os(iOS) && !targetEnvironment(macCatalyst)
+        desktopControls?.inputSurface = uiView
+        #endif
         if uiView.monitorIDs != monitorIDs { uiView.monitorIDs = monitorIDs }
         if uiView.fileTransfers !== fileTransfers {
             uiView.fileTransfers = fileTransfers
@@ -102,6 +112,7 @@ struct RemoteInteractionView: UIViewRepresentable {
                 && !suspendsKeyboardCapture,
             inputViewsGeneration: keyboardCapture.inputViewsGeneration,
             controlOptionAsCommand: keyboardCapture.controlOptionAsCommand,
+            swapsHardwareCommandAndControl: swapsHardwareCommandAndControl,
             keyRepeat: keyboardCapture.keyRepeat,
             framebufferOrigin: framebufferOrigin,
             requestPasswordSend: requestPasswordSend,
@@ -176,6 +187,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         didSet { UIMenuSystem.main.setNeedsRebuild() }
     }
     var monitorShortcut: ((VNCMonitorSelection) -> Void)?
+    var screenshotShortcut: (() -> Void)?
     private var requestDictation: () -> Void
     private var toggleFullScreen: (() -> Void)?
     private var disconnect: () -> Void
@@ -353,6 +365,10 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
     private lazy var pinchRecognizer = UIPinchGestureRecognizer(
         target: self,
         action: #selector(handlePinch(_:)))
+    var allowsViewportZoom: Bool {
+        get { pinchRecognizer.isEnabled }
+        set { if pinchRecognizer.isEnabled != newValue { pinchRecognizer.isEnabled = newValue } }
+    }
     private lazy var viewportPanRecognizer = UIPanGestureRecognizer(
         target: self,
         action: #selector(handleViewportPan(_:)))
@@ -444,7 +460,10 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
 
     override var keyCommands: [UIKeyCommand]? {
         let monitorCommands = monitorIDs.count > 1 ? Array(monitorKeyCommands.prefix(min(10, monitorIDs.count + 1))) : []
-        let viewerCommands = viewerCommandKeyCommands + monitorCommands
+        var viewerCommands = viewerCommandKeyCommands + monitorCommands
+        #if os(iOS) && !targetEnvironment(macCatalyst)
+        if screenshotShortcut != nil { viewerCommands += iPadSessionKeyCommands }
+        #endif
         guard keyboardCapture.isCaptured else { return viewerCommands }
         #if targetEnvironment(macCatalyst)
         let commands = reservedHostKeyCommands
@@ -463,7 +482,10 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         #endif
         guard keyboardCapture.controlOptionAsCommand else { return commands }
         return universalCommandKeyCommands + commands.filter {
-            !Self.isControlOptionChord($0.modifierFlags)
+            #if os(iOS) && !targetEnvironment(macCatalyst)
+            if $0.action == #selector(handleIPadSessionKey(_:)) { return true }
+            #endif
+            return !Self.isControlOptionChord($0.modifierFlags)
         }
     }
 
@@ -491,7 +513,10 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
                 [.control, .alternate], [.control, .alternate, .shift],
                 [.control, .alternate, .command], [.control, .alternate, .command, .shift],
             ]
-            return variants.map { flags in
+            return variants.compactMap { flags -> UIKeyCommand? in
+                #if os(iOS) && !targetEnvironment(macCatalyst)
+                if screenshotShortcut != nil, IPadSessionShortcut.matching(input, flags: flags) != nil { return nil }
+                #endif
                 let command = UIKeyCommand(input: input, modifierFlags: flags,
                     action: #selector(handleUniversalCommandKey(_:)))
                 command.wantsPriorityOverSystemBehavior = true
@@ -696,6 +721,34 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         return command
     }
 
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+    private lazy var iPadSessionKeyCommands = IPadSessionShortcut.bindings.map { binding in
+        makeViewerCommand(title: binding.action.title, input: binding.input, modifiers: binding.modifiers,
+                          action: #selector(handleIPadSessionKey(_:)))
+    }
+
+    @objc private func handleIPadSessionKey(_ command: UIKeyCommand) {
+        guard let action = IPadSessionShortcut.matching(command.input, flags: command.modifierFlags) else { return }
+        performIPadShortcut(action)
+    }
+
+    private func performIPadShortcut(_ action: IPadSessionShortcut) {
+        releaseAllPressedKeys()
+        switch action {
+        case .screenshot: screenshotShortcut?()
+        case .disconnect: disconnect()
+        case .password:
+            guard keyboardCapture.isCaptured else { return }
+            discardTextDocument()
+            requestPasswordSend()
+        case .menu(let command):
+            if keyboardCapture.isCaptured { keyboardHandler.handleMenuShortcut(command) }
+        case .remote(let command):
+            if keyboardCapture.isCaptured { keyboardHandler.handleRemoteCommand(command) }
+        }
+    }
+    #endif
+
     private func monitorChoice(digit: Int) -> VNCMonitorSelection? {
         guard monitorIDs.count > 1 else { return nil }
         if digit == 0 { return .all }
@@ -814,6 +867,9 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
 
         for input in inputs {
             for modifiers in modifierVariants {
+                #if os(iOS)
+                if screenshotShortcut != nil, IPadSessionShortcut.matching(String(input), flags: modifiers) != nil { continue }
+                #endif
                 if Self.isReservedViewerShortcut(
                     input: String(input),
                     modifiers: modifiers)
@@ -1134,6 +1190,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         keyboardCaptured: Bool,
         inputViewsGeneration: UInt64,
         controlOptionAsCommand: Bool,
+        swapsHardwareCommandAndControl: Bool,
         keyRepeat: VNCKeyRepeat,
         framebufferOrigin: CGPoint,
         requestPasswordSend: @escaping () -> Void,
@@ -1143,10 +1200,12 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         remoteCursor: RemoteCursor?,
         remoteCursorPresence: RemoteCursorPresence
     ) {
-        if hardwareKeyboard.controlOptionAsCommand != controlOptionAsCommand {
+        if hardwareKeyboard.controlOptionAsCommand != controlOptionAsCommand
+            || hardwareKeyboard.swapsCommandAndControl != swapsHardwareCommandAndControl {
             releaseAllPressedKeys()
             consumedRemoteAliasUsages.removeAll()
             hardwareKeyboard.controlOptionAsCommand = controlOptionAsCommand
+            hardwareKeyboard.swapsCommandAndControl = swapsHardwareCommandAndControl
             UIMenuSystem.main.setNeedsRebuild()
         }
         hardwareKeyboard.keyRepeat = keyRepeat
@@ -1390,6 +1449,15 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
             }
             let usage = UInt32(key.keyCode.rawValue)
             let monitorModifiers = key.modifierFlags.intersection([.control, .shift, .alternate, .command])
+            #if os(iOS) && !targetEnvironment(macCatalyst)
+            if screenshotShortcut != nil {
+                let input = Self.universalSpecialInputs.first { $0.1 == usage }?.0 ?? key.charactersIgnoringModifiers
+                if let action = IPadSessionShortcut.matching(input, flags: monitorModifiers) {
+                    if consumedRemoteAliasUsages.insert(usage).inserted { performIPadShortcut(action) }
+                    continue
+                }
+            }
+            #endif
             if monitorModifiers == [.control, .shift], (0x1e...0x27).contains(usage),
                let choice = monitorChoice(digit: usage == 0x27 ? 0 : Int(usage - 0x1d)) {
                 releaseAllPressedKeys()
@@ -1444,7 +1512,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
                 usage,
                 characters: characters,
                 appleModifierConvention: keyboardHandler.usesAppleModifierMapping)
-            guard keysym != 0 else {
+            guard keysym != 0 || keyboardHandler.forwardsPhysicalKey(usage: usage) else {
                 unhandled.insert(press)
                 continue
             }
@@ -3205,9 +3273,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         scrollPhase: AppleScrollEvent.Phase,
         momentumPhase: AppleScrollEvent.MomentumPhase = .none
     ) {
-        let points = scrollPointAccumulator.consume(
-            deltaX: delta.x,
-            deltaY: delta.y)
+        let points = scrollPointAccumulator.consume(delta, speed: touchGestures.scrollSpeed)
         guard points.x != 0 || points.y != 0 else { return }
         sendScrollSample(
             pointDeltaX: points.x,
@@ -3973,6 +4039,13 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         touchHandler.handleMove(x: point.x, y: point.y)
     }
 
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+    func jumpFromKeyboardToolbar(at point: CGPoint) {
+        guard softwareKeyboardRequested else { return }
+        jumpPointer(to: .bottom, from: CGPoint(x: point.x, y: bounds.maxY))
+    }
+    #endif
+
     private func jumpPointer(to edges: RemoteTouchEdges, from start: CGPoint) {
         guard framebufferSize.width > 0, framebufferSize.height > 0 else { return }
         catchMomentumFlingIfActive()
@@ -4699,10 +4772,10 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
            !gestureRecognizer.buttonMask.isEmpty {
             return gestureRecognizer.buttonMask.contains(.primary)
         }
-        // Two fingers scroll in trackpad mode, so they cannot also drag the
-        // viewport; the cursor pulls the desktop along instead.
+        // A locked, fitted desktop stays in place during a two-finger gesture.
+        // In trackpad mode two fingers scroll the remote desktop.
         if gestureRecognizer === viewportPanRecognizer,
-           pointerMode == .trackpad {
+           pointerMode == .trackpad || !allowsViewportZoom {
             return false
         }
         // Fingers that stopped a fling never hold a button. Failing here,

@@ -218,6 +218,7 @@ struct DraggableHUDOverlay<Content: View>: UIViewRepresentable {
     /// Set to pin the HUD along the bottom instead of letting it float: the
     /// height of its bottom row, which is what the screen is kept clear of.
     var pinnedRowHeight: CGFloat?
+    var onUpwardSwipe: ((CGPoint, UIView) -> Void)?
     /// Height at the bottom that a pinned HUD occupies; 0 while it floats.
     var onReserveChange: ((CGFloat) -> Void)?
     /// The HUD's frame in the overlay, wherever it is put or dragged.
@@ -229,6 +230,7 @@ struct DraggableHUDOverlay<Content: View>: UIViewRepresentable {
         view.inset = inset
         view.safeAreaEdges = safeAreaEdges
         view.pinnedRowHeight = pinnedRowHeight
+        view.onUpwardSwipe = onUpwardSwipe
         view.onReserveChange = onReserveChange
         view.onFrameChange = onFrameChange
 
@@ -257,6 +259,7 @@ struct DraggableHUDOverlay<Content: View>: UIViewRepresentable {
         uiView.inset = inset
         uiView.safeAreaEdges = safeAreaEdges
         uiView.pinnedRowHeight = pinnedRowHeight
+        uiView.onUpwardSwipe = onUpwardSwipe
         uiView.onReserveChange = onReserveChange
         uiView.onFrameChange = onFrameChange
         uiView.setNeedsLayout()
@@ -311,6 +314,7 @@ extension DraggableHUDOverlayHostView: UIGestureRecognizerDelegate {
         _ gestureRecognizer: UIGestureRecognizer,
         shouldReceive touch: UITouch
     ) -> Bool {
+        if gestureRecognizer is UIPanGestureRecognizer, pinnedRowHeight != nil { return false }
         var view = touch.view
         while let current = view, current !== self {
             if current is VNCHUDInteractiveContent { return false }
@@ -329,6 +333,13 @@ final class DraggableHUDOverlayHostView: UIView {
     var inset: CGFloat = 12
     var safeAreaEdges: Edge.Set = .all
     var pinnedRowHeight: CGFloat?
+    var onUpwardSwipe: ((CGPoint, UIView) -> Void)? {
+        didSet {
+            let enabled = onUpwardSwipe != nil
+            if upwardSwipe.isEnabled != enabled { upwardSwipe.isEnabled = enabled }
+        }
+    }
+    private let upwardSwipe = UISwipeGestureRecognizer()
     var onReserveChange: ((CGFloat) -> Void)?
     private var reportedReserve: CGFloat = 0
     var onFrameChange: ((CGRect) -> Void)?
@@ -376,7 +387,18 @@ final class DraggableHUDOverlayHostView: UIView {
         pan.delaysTouchesBegan = false
         pan.delaysTouchesEnded = true
         pan.delegate = self
+        upwardSwipe.direction = .up
+        upwardSwipe.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        upwardSwipe.addTarget(self, action: #selector(handleUpwardSwipe(_:)))
+        upwardSwipe.isEnabled = onUpwardSwipe != nil
+        bar.addGestureRecognizer(upwardSwipe)
+        pan.require(toFail: upwardSwipe)
         bar.addGestureRecognizer(pan)
+    }
+
+    @objc private func handleUpwardSwipe(_ swipe: UISwipeGestureRecognizer) {
+        guard let bar = hostedView else { return }
+        onUpwardSwipe?(swipe.location(in: bar), bar)
     }
 
     @objc func handlePan(_ gesture: UIPanGestureRecognizer) {

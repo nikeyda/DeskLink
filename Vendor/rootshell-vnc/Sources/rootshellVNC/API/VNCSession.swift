@@ -800,6 +800,13 @@ public final class VNCSession {
     /// The last protocol error that occurred, if any.
     public var lastError: VNCProtocolError?
 
+    public enum ReconnectTrigger: String, Codable, Sendable {
+        case transportEnded, timedOut, appResumed, mediaRecovery, settingsChanged, manual
+    }
+
+    /// Why this viewer started its most recent redial, independent of the outcome of the attempt.
+    public private(set) var lastReconnectTrigger: ReconnectTrigger?
+
     /// Whether the server is using high-performance (HEVC/H.264) mode.
     public var isHighPerformanceMode: Bool = false
 
@@ -852,6 +859,7 @@ public final class VNCSession {
     /// Structured command support advertised by an Apple RFB 3.889 server;
     /// nil for regular RFB servers.
     public private(set) var serverCapabilities: AppleServerCapabilities?
+    private var supportsAppleKeyPositions = false
 
     /// Whether the negotiated server uses Apple's modifier-keysym convention,
     /// in which `Alt_L`/`Alt_R` mean Command and `Meta_L`/`Meta_R` mean Option
@@ -1223,6 +1231,8 @@ public final class VNCSession {
     @ObservationIgnored
     private var inputQueue = SessionInputQueue()
     @ObservationIgnored
+    private var hasSentKeyDown = false
+    @ObservationIgnored
     private var pendingClipboardUploads = 0
     private let diagnostics = ConnectionDiagnostics()
     private let logger = VNCLogger(category: "Session")
@@ -1532,6 +1542,7 @@ public final class VNCSession {
         consecutiveMediaStreamRestarts = 0
         automaticRecoveryDeclined = false
         highPerformanceFallbackReason = nil
+        lastReconnectTrigger = nil
         connectionState = .connecting
         connectionPhaseDescription = String(localized: "Opening connection…", bundle: .module)
         activeCredentials = credentials
@@ -1556,6 +1567,7 @@ public final class VNCSession {
         resetCurtainState()
         negotiatedContentEncryption = nil
         serverCapabilities = nil
+        supportsAppleKeyPositions = false
         setVideoDisplayCount(1)
         remoteDisplayRegions = []
         remoteDisplayRegionByID = [:]
@@ -1678,6 +1690,7 @@ public final class VNCSession {
         resetCurtainState()
         negotiatedContentEncryption = nil
         serverCapabilities = nil
+        supportsAppleKeyPositions = false
         setVideoDisplayCount(1)
         remoteDisplayRegions = []
         remoteDisplayRegionByID = [:]
@@ -1715,7 +1728,7 @@ public final class VNCSession {
         // The user asking for a retry is the resolution the declined states
         // were waiting for.
         automaticRecoveryDeclined = false
-        scheduleReconnect(immediate: true, minimumAttempts: 1)
+        scheduleReconnect(trigger: .manual, immediate: true, minimumAttempts: 1)
         return true
     }
 
@@ -1731,6 +1744,10 @@ public final class VNCSession {
     ///   connected, have retained credentials, and not already be reconnecting.
     @discardableResult
     public func reconnect(with configuration: VNCConfiguration) -> Bool {
+        reconnect(with: configuration, trigger: .settingsChanged)
+    }
+
+    private func reconnect(with configuration: VNCConfiguration, trigger: ReconnectTrigger) -> Bool {
         guard connectionState.isConnected,
               activeCredentials != nil,
               reconnectTask == nil else { return false }
@@ -1747,7 +1764,7 @@ public final class VNCSession {
         // transport while the reconnect task performs ordered cleanup and
         // establishes a fresh transport with the replacement configuration.
         retire(transportSession)
-        scheduleReconnect(immediate: true, minimumAttempts: 1)
+        scheduleReconnect(trigger: trigger, immediate: true, minimumAttempts: 1)
         return true
     }
 
@@ -1832,7 +1849,7 @@ public final class VNCSession {
                 pressingReturn: pressingReturn)
         for event in events {
             switch event {
-            case .key(let downFlag, let keysym):
+            case .key(let downFlag, let keysym, _):
                 sendKeyEvent(downFlag: downFlag, key: keysym)
             case .pause:
                 enqueueInput(event)
@@ -1927,7 +1944,32 @@ public final class VNCSession {
     ///   - downFlag: `true` for key press, `false` for key release.
     ///   - key: The X11 keysym value for the key.
     public func sendKeyEvent(downFlag: Bool, key: UInt32) {
+        sendKeyEvent(downFlag: downFlag, key: key, macKeyCode: nil)
+    }
+
+    func macKeyCode(forHardwareUsage usage: UInt32) -> UInt16? {
+        guard configuration.usesMacHardwareKeyPositions, supportsAppleKeyPositions else { return nil }
+        return MacKeyboardPosition.keyCode(for: usage)
+    }
+
+    func sendKeyEvent(downFlag: Bool, key: UInt32, macKeyCode: UInt16?) {
         guard connectionState.isConnected, transportSession != nil else { return }
+        if downFlag && !hasSentKeyDown {
+            hasSentKeyDown = true
+            // Xvnc 1.15 can discard its first dynamic keysym mapping when the
+            // virtual keyboard becomes active. A complete, already-mapped tap
+            // activates it before the first extended Unicode symbol is assigned.
+            if configuration.preparesTigerVNCKeyboard, diagnostics.clientVersion?.isApple == false,
+               (0x0100_0100...0x0110_FFFF).contains(key) {
+                let shift = KeyboardInputHandler.keysymShiftL
+                enqueueKeyEvent(downFlag: true, key: shift, macKeyCode: nil)
+                enqueueKeyEvent(downFlag: false, key: shift, macKeyCode: nil)
+            }
+        }
+        enqueueKeyEvent(downFlag: downFlag, key: key, macKeyCode: macKeyCode)
+    }
+
+    private func enqueueKeyEvent(downFlag: Bool, key: UInt32, macKeyCode: UInt16?) {
 
         if isTraceEnabled {
             diagnostics.protocolTrace.recordSent(
@@ -1941,12 +1983,12 @@ public final class VNCSession {
         if diagnostics.clientVersion?.isApple == true {
             // Queue a baseline before key-down and the resulting snapshot after key-up.
             if downFlag { notifyClipboardObservers(.key(down: true, keysym: key)) }
-            enqueueInput(.key(downFlag: downFlag, keysym: key))
+            enqueueInput(.key(downFlag: downFlag, keysym: key, macKeyCode: macKeyCode))
             if !downFlag { notifyClipboardObservers(.key(down: false, keysym: key)) }
             return
         }
         #endif
-        enqueueInput(.key(downFlag: downFlag, keysym: key))
+        enqueueInput(.key(downFlag: downFlag, keysym: key, macKeyCode: macKeyCode))
     }
 
     /// Send a pointer (mouse/touch) event to the VNC server.
@@ -2323,6 +2365,7 @@ public final class VNCSession {
             negotiatedContentEncryption = handshake.contentEncryption
         }
         serverCapabilities = handshake.appleServerCapabilities
+        supportsAppleKeyPositions = handshake.supportsAppleKeyPositions
         let usesAppleModifiers = configuration.remoteSystem.usesAppleModifiers(
             isAppleProtocol: handshake.negotiatedVersion?.isApple == true,
             offeredSecurityTypes: handshake.offeredSecurityTypes)
@@ -2409,6 +2452,7 @@ public final class VNCSession {
 
         case .bell:
             logger.debug("Server bell")
+            configuration.serverBellHandler?()
 
         case .error(let error):
             handleError(error)
@@ -3118,6 +3162,9 @@ public final class VNCSession {
 
     private func handleDisconnected() {
         logger.info("Disconnected")
+        // A Mac user can end sharing with Escape. The viewer can receive the same
+        // transport end as a dropped connection. Redialing would blank the Mac again.
+        let needsManualRestart = isHighPerformanceMode && lastError != .timeout
         cleanupTransport(clearCredentials: intentionallyDisconnected)
 
         // A manual configuration restart or media-bootstrap recovery already
@@ -3135,6 +3182,12 @@ public final class VNCSession {
             return
         }
 
+        if needsManualRestart {
+            automaticRecoveryDeclined = true
+            connectionState = .disconnected
+            return
+        }
+
         // A loss surfacing right after a foreground edge is the suspended
         // socket being noticed, not a network fault. Sleeping out the backoff
         // before redialing a server that was never unreachable just adds a
@@ -3146,6 +3199,7 @@ public final class VNCSession {
             // charging the redial to the recovery budget would spend it on a
             // failure the network had no part in.
             scheduleReconnect(
+                trigger: .appResumed,
                 immediate: true,
                 freeLeadingAttempt: true,
                 cause: "app resumed; the suspended session's socket was reclaimed")
@@ -3153,7 +3207,7 @@ public final class VNCSession {
         }
         #endif
 
-        scheduleReconnect()
+        scheduleReconnect(trigger: lastError == .timeout ? .timedOut : .transportEnded)
     }
 
     // MARK: - Private: Helpers
@@ -3188,6 +3242,7 @@ public final class VNCSession {
         resetCurtainState()
         negotiatedContentEncryption = nil
         serverCapabilities = nil
+        supportsAppleKeyPositions = false
         setVideoDisplayCount(1)
         remoteDisplayRegions = []
         remoteDisplayRegionByID = [:]
@@ -3777,7 +3832,7 @@ public final class VNCSession {
         }
         logger.error("Video bootstrap failed (\(reason)); reconnecting")
         retire(transport)
-        scheduleReconnect(immediate: true)
+        scheduleReconnect(trigger: .mediaRecovery, immediate: true)
     }
 
     /// Seconds a new stream may go without a video source: a Mac waking its
@@ -3809,7 +3864,7 @@ public final class VNCSession {
         guard configuration.highPerformanceBandwidth == .constrained else {
             var constrained = configuration
             constrained.highPerformanceBandwidth = .constrained
-            guard reconnect(with: constrained) else { return false }
+            guard reconnect(with: constrained, trigger: .mediaRecovery) else { return false }
             logger.warning("Continuing in low-bandwidth High Performance: \(reason)")
             return true
         }
@@ -3830,7 +3885,7 @@ public final class VNCSession {
               highPerformanceFallbackReason == nil else { return false }
         var standard = configuration
         standard.enableHighPerformanceMode = false
-        guard reconnect(with: standard) else { return false }
+        guard reconnect(with: standard, trigger: .mediaRecovery) else { return false }
         highPerformanceFallbackReason = reason
         logger.warning("Continuing in Standard: \(reason)")
         return true
@@ -3885,7 +3940,8 @@ public final class VNCSession {
             connection: customConnection,
             datagramProvider: configuration.datagramProvider,
             securityPolicy: configuration.securityPolicy,
-            certificateValidationHandler: configuration.certificateValidationHandler)
+            certificateValidationHandler: configuration.certificateValidationHandler,
+            rsaHostValidationHandler: configuration.rsaHostValidationHandler)
         negotiatedCursorRendering = cursorRendering
         transportSession = transport
         let centersPaddedPicture = configuration.highPerformanceBandwidth == .constrained
@@ -3927,6 +3983,7 @@ public final class VNCSession {
     ///   - cause: Overrides the reported reason when the transport error would
     ///     misattribute the drop.
     private func scheduleReconnect(
+        trigger: ReconnectTrigger,
         immediate: Bool = false,
         minimumAttempts: Int = 0,
         freeLeadingAttempt: Bool = false,
@@ -3943,6 +4000,7 @@ public final class VNCSession {
             return
         }
 
+        lastReconnectTrigger = trigger
         // Attempt 0 is the uncounted one; the policy's own budget is 1...max.
         let firstAttempt = freeLeadingAttempt ? 0 : 1
 
@@ -4296,7 +4354,8 @@ public final class VNCSession {
         _ event: SessionInputEvent
     ) -> ClientInputEvent? {
         switch event {
-        case .key(let downFlag, let keysym):
+        case .key(let downFlag, let keysym, let code):
+            if let code { return .macKeyPosition(down: downFlag, keysym: keysym, code: code) }
             return .key(downFlag: downFlag, key: keysym)
         case .pointer(let buttonMask, let x, let y):
             return .pointer(buttonMask: buttonMask, x: x, y: y)
@@ -4311,6 +4370,7 @@ public final class VNCSession {
         inputTask?.cancel()
         inputTask = nil
         inputQueue.removeAll()
+        hasSentKeyDown = false
         pendingClipboardUploads = 0
     }
 
@@ -4344,6 +4404,7 @@ public final class VNCSession {
         leftVirtualDisplayForSuspension = false
         if !intentionallyDisconnected {
             scheduleReconnect(
+                trigger: .appResumed,
                 immediate: true,
                 minimumAttempts: 1,
                 freeLeadingAttempt: true,
@@ -4536,6 +4597,7 @@ public final class VNCSession {
 
         _ = consumeSuspensionResumeWindow()
         scheduleReconnect(
+            trigger: .appResumed,
             immediate: true,
             freeLeadingAttempt: true,
             cause: "app resumed; the suspended session's socket was reclaimed")

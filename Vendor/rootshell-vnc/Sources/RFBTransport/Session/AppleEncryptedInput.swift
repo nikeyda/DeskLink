@@ -145,11 +145,25 @@ final class AppleEncryptedInputCipher: @unchecked Sendable {
         return encryptFramedBlock(&block)
     }
 
+    /// A Mac position event includes a character hint and a virtual key code.
+    func keyPositionMessage(down: Bool, keysym: UInt32, keyCode: UInt16, microseconds: UInt32) -> Data? {
+        let character = keysym >> 24 == 1 ? keysym & 0x00FF_FFFF : keysym
+        let fallback = UInt16(exactly: character) ?? 0
+        var block: (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
+                    UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8) = (
+            0xff, down ? 1 : 0, 0, 0, UInt8(fallback >> 8), UInt8(truncatingIfNeeded: fallback),
+            UInt8(microseconds >> 24), UInt8(truncatingIfNeeded: microseconds >> 16),
+            UInt8(truncatingIfNeeded: microseconds >> 8), UInt8(truncatingIfNeeded: microseconds),
+            0, 0, 0, 47, UInt8(keyCode >> 8), UInt8(truncatingIfNeeded: keyCode)
+        )
+        return encryptFramedBlock(&block, keyboardPosition: true)
+    }
+
     private func encryptFramedBlock(
         _ block: inout (
             UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
             UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8
-        )
+        ), keyboardPosition: Bool = false
     ) -> Data? {
         guard let cryptor else { return nil }
         var output = Data(count: 2 + kCCBlockSizeAES128)
@@ -159,7 +173,7 @@ final class AppleEncryptedInputCipher: @unchecked Sendable {
                 return CCCryptorStatus(kCCMemoryFailure)
             }
             outBase[0] = AppleEncryptedInput.messageType
-            outBase[1] = 0
+            outBase[1] = keyboardPosition ? 1 : 0
             return withUnsafeBytes(of: &block) { blockBytes in
                 CCCryptorUpdate(
                     cryptor,
