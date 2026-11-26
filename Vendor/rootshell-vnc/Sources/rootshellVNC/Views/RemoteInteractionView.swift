@@ -171,6 +171,9 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
     private var isTypingText = false
     private var localOption = LocalOptionKeyState()
     private var localOptionComposition = LocalOptionComposition()
+    #if targetEnvironment(macCatalyst)
+    private var catalystOptionInput = CatalystKeyboardLayout.LocalOptionInput()
+    #endif
     #if !targetEnvironment(macCatalyst)
     weak var inputDelegate: UITextInputDelegate?
     var markedTextStyle: [NSAttributedString.Key: Any]?
@@ -486,9 +489,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
             + viewerCommands
             + remoteCommandKeyCommands
         #endif
-        if localOption.usesLocalOption {
-            return commands.filter { !$0.modifierFlags.contains(.alternate) }
-        }
+        if localOption.usesLocalOption { return commands.filter(allowsLocalOptionShortcut) }
         guard keyboardCapture.controlOptionAsCommand else { return commands }
         return universalCommandKeyCommands + commands.filter {
             #if os(iOS) && !targetEnvironment(macCatalyst)
@@ -1447,6 +1448,26 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         if RemoteTextInputDocument.movesRemoteCaret(text) { discardTextDocument() }
     }
 
+    private func remoteModifierFlags(_ flags: UIKeyModifierFlags) -> UIKeyModifierFlags {
+        localOption.usesLocalOption ? flags.subtracting(.alternate) : flags
+    }
+
+    private func localOptionRoute(
+        for key: UIKey, usage: UInt32, remoteFlags: UIKeyModifierFlags
+    ) -> LocalOptionComposition.Route {
+        let usesLocalOption = localOption.usesLocalOption && key.modifierFlags.contains(.alternate)
+        let isRemoteShortcut = !remoteFlags.intersection([.control, .command, .alternate]).isEmpty
+        #if targetEnvironment(macCatalyst)
+        if let route = catalystOptionInput.route(
+            usage: usage, unmodified: key.charactersIgnoringModifiers, flags: key.modifierFlags,
+            localOption: usesLocalOption, remoteShortcut: isRemoteShortcut
+        ) { return route }
+        #endif
+        return localOptionComposition.route(
+            usage: usage, characters: key.characters, unmodified: key.charactersIgnoringModifiers,
+            localOption: usesLocalOption, remoteShortcut: isRemoteShortcut)
+    }
+
     private func typeLocalOptionText(_ text: String) {
         discardTextDocument()
         isTypingText = true
@@ -1488,13 +1509,8 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
                 unhandled.insert(press)
                 continue
             }
-            let remoteFlags = localOption.usesLocalOption
-                ? key.modifierFlags.subtracting(.alternate) : key.modifierFlags
-            switch localOptionComposition.route(
-                usage: usage, characters: key.characters, unmodified: key.charactersIgnoringModifiers,
-                localOption: localOption.usesLocalOption && key.modifierFlags.contains(.alternate),
-                remoteShortcut: !remoteFlags.intersection([.control, .command, .alternate]).isEmpty
-            ) {
+            let remoteFlags = remoteModifierFlags(key.modifierFlags)
+            switch localOptionRoute(for: key, usage: usage, remoteFlags: remoteFlags) {
             case .remote:
                 break
             case .native:
@@ -1553,7 +1569,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
                 continue
             }
             #else
-            if isCatalystWindowChord(usage: usage, flags: key.modifierFlags) {
+            if isCatalystWindowChord(usage: usage, flags: remoteFlags) {
                 catalystWindowChordClaims[usage] = CACurrentMediaTime()
             }
             #endif
@@ -1600,9 +1616,15 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         if action == #selector(toggleVNCKeyboardCapture(_:)) {
             return true
         }
-        if localOption.usesLocalOption, let command = sender as? UIKeyCommand,
-           command.modifierFlags.contains(.alternate) { return false }
+        if let command = sender as? UIKeyCommand, !allowsLocalOptionShortcut(command) { return false }
         return super.canPerformAction(action, withSender: sender)
+    }
+
+    private func allowsLocalOptionShortcut(_ command: UIKeyCommand) -> Bool {
+        #if targetEnvironment(macCatalyst)
+        if command.action == #selector(handleCatalystEditingKeyCommand(_:)) { return true }
+        #endif
+        return !localOption.usesLocalOption || !command.modifierFlags.contains(.alternate)
     }
 
     @objc private func handleReservedHostShortcut(_ command: UIKeyCommand) {
@@ -2042,7 +2064,8 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
     /// UIKit's press carries the keyboard layout, so it gets first claim; a
     /// second press of a held usage is dropped. This covers the presses
     /// AppKit keeps, as a held key so remote switchers stay open.
-    private func handleCatalystWindowChord(usage: UInt32, pressed: Bool, held: UIKeyModifierFlags) {
+    private func handleCatalystWindowChord(usage: UInt32, pressed: Bool, held physicalFlags: UIKeyModifierFlags) {
+        let held = remoteModifierFlags(physicalFlags)
         guard pressed else {
             pressPendingCatalystWindowChord(usage: usage)
             if catalystWindowChordUsages.remove(usage) != nil {
@@ -2134,7 +2157,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
             return
         }
         guard isFirstResponder, keyboardCapture.isCaptured,
-              !keyboardCapture.controlOptionAsCommand, isExactAlias else { return }
+              !keyboardCapture.controlOptionAsCommand, !localOption.usesLocalOption, isExactAlias else { return }
         releaseAllPressedKeys()
         if consumedRemoteAliasUsages.insert(usage).inserted {
             keyboardHandler.handleCommandTap(character)
@@ -2163,7 +2186,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
 
         var modifiers: VNCKeyboardModifiers = []
         if command { modifiers.insert(.command) }
-        if option { modifiers.insert(.option) }
+        if option && !localOption.usesLocalOption { modifiers.insert(.option) }
         if shift { modifiers.insert(.shift) }
 
         let keysym = KeyboardInputHandler.keysymForHIDUsage(usage, characters: "")
@@ -2171,8 +2194,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
 
         // A physical modifier that reached RFB via pressesBegan is cleared so
         // each atomic chord is self-contained; subsequent repeats then no-op.
-        releaseAllPressedKeys()
-        keyboardHandler.handleKeysymTap(keysym, supplementalModifiers: modifiers)
+        sendCatalystEditingKey(keysym, modifiers: modifiers)
         startCatalystArrowRepeat(usage: usage, keysym: keysym, modifiers: modifiers)
     }
 
@@ -2244,8 +2266,9 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
     @objc private func handleCatalystEditingKeyCommand(_ command: UIKeyCommand) {
         guard keyboardCapture.isCaptured else { return }
 
+        if localOption.usesLocalOption, catalystOptionInput.cancelPendingAccent() { return }
+        let flags = remoteModifierFlags(command.modifierFlags)
         var modifiers: VNCKeyboardModifiers = []
-        let flags = command.modifierFlags
         if flags.contains(.control) { modifiers.insert(.control) }
         if flags.contains(.alternate) { modifiers.insert(.option) }
         if flags.contains(.shift) { modifiers.insert(.shift) }
@@ -2253,10 +2276,14 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
 
         // Any physical modifier that reached RFB before UIKit delivered this
         // command is cleared so the atomic chord is the only thing in flight.
+        sendCatalystEditingKey(KeyboardInputHandler.keysymBackspace, modifiers: modifiers)
+    }
+
+    private func sendCatalystEditingKey(_ keysym: UInt32, modifiers: VNCKeyboardModifiers) {
+        let physicalOption = localOption
         releaseAllPressedKeys()
-        keyboardHandler.handleKeysymTap(
-            KeyboardInputHandler.keysymBackspace,
-            supplementalModifiers: modifiers)
+        localOption = physicalOption
+        keyboardHandler.handleKeysymTap(keysym, supplementalModifiers: modifiers)
     }
 
     @objc private func handleControlKeyCommand(_ command: UIKeyCommand) {
@@ -2287,7 +2314,8 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         _ = hardwareKeyboard.press(usage: usage, keysym: keysym)
     }
 
-    private func ensureModifierKeys(for flags: UIKeyModifierFlags) {
+    private func ensureModifierKeys(for physicalFlags: UIKeyModifierFlags) {
+        let flags = remoteModifierFlags(physicalFlags)
         let input = GCKeyboard.coalesced?.keyboardInput
         ensureModifier(
             enabled: flags.contains(.control),
@@ -2308,7 +2336,8 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
             enabled: flags.contains(.alternate),
             leftUsage: 0xE2,
             rightUsage: 0xE6,
-            rightPressed: input?.button(forKeyCode: .rightAlt)?.isPressed == true,
+            rightPressed: localOption.side == .left
+                || (localOption.side == .off && input?.button(forKeyCode: .rightAlt)?.isPressed == true),
             leftKeysym: KeyboardInputHandler.optionLeftKeysym(
                 appleModifierConvention: appleModifiers),
             rightKeysym: KeyboardInputHandler.optionRightKeysym(
@@ -2538,7 +2567,12 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         releasedModifierNames = []
         universalKeys.releaseAll()
         localOption.releaseAll()
-        if !keepingLocalComposition { localOptionComposition.reset() }
+        if !keepingLocalComposition {
+            localOptionComposition.reset()
+            #if targetEnvironment(macCatalyst)
+            catalystOptionInput.reset()
+            #endif
+        }
         hardwareKeyboard.releaseAll()
         releaseAllSupplementalModifiers()
         // A physical modifier the controller no longer knows would stay down on the server: end it too.

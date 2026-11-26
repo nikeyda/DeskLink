@@ -11,9 +11,7 @@ struct ApplicationPreferences: View {
     @AppStorage("connection.sharedClipboard") private var sharedClipboard = true
     @AppStorage("connection.clientCursor") private var clientCursor = true
     @AppStorage("pointer.speed") private var pointerSpeed = 1.0
-    #if !targetEnvironment(macCatalyst)
     @AppStorage("keyboard.localOptionKey") private var localOptionKey = VNCLocalOptionKey.off
-    #endif
     @AppStorage(SyncedPreference.pointerMode.rawValue) private var pointerMode = RemotePointerMode.direct
     @AppStorage("gesture.upFingers") private var upFingers = RemoteSwipeFingers.three
     @AppStorage("gesture.downFingers") private var downFingers = RemoteSwipeFingers.three
@@ -48,12 +46,6 @@ struct ApplicationPreferences: View {
                         Text("触控板").tag(RemotePointerMode.trackpad)
                     }
                     .accessibilityIdentifier("preferences.pointerMode")
-                    Picker("Option 输入特殊字符", selection: $localOptionKey) {
-                        Text("关闭").tag(VNCLocalOptionKey.off)
-                        Text("左侧 Option").tag(VNCLocalOptionKey.left)
-                        Text("右侧 Option").tag(VNCLocalOptionKey.right)
-                    }
-                    .accessibilityIdentifier("preferences.localOptionKey")
                     NavigationLink("互动工具栏") { ToolbarPreferences() }
                         .accessibilityIdentifier("preferences.toolbar")
                     NavigationLink("键盘重复") { KeyRepeatPreferences() }
@@ -65,6 +57,12 @@ struct ApplicationPreferences: View {
                         }.accessibilityValue(pointerSpeed.formatted(.number.precision(.fractionLength(0...2))))
                     }
                     #endif
+                    Picker("Option 输入特殊字符", selection: $localOptionKey) {
+                        Text("keyboard.local-option.off").tag(VNCLocalOptionKey.off)
+                        Text("左侧 Option").tag(VNCLocalOptionKey.left)
+                        Text("右侧 Option").tag(VNCLocalOptionKey.right)
+                    }
+                    .accessibilityIdentifier("preferences.localOptionKey")
                 }
                 #if !targetEnvironment(macCatalyst)
                 PencilPreferences()

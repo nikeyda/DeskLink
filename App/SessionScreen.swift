@@ -30,11 +30,13 @@ struct SessionScreen: View {
     @State private var screenshot = ScreenshotExport()
     @State private var controls = VNCDesktopControls()
     @State private var monitorError: String?
+    @AppStorage("keyboard.localOptionKey") private var localOptionKey = VNCLocalOptionKey.off
     private struct DisplayLayoutState: Equatable {
         let topology: VNCMonitorTopology
         let ids: [UInt32]
     }
     #if targetEnvironment(macCatalyst)
+    @State private var macKeyboard = VNCKeyboardCapture()
     @Environment(MacMonitorWindows.self) private var monitorWindows
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
@@ -50,7 +52,6 @@ struct SessionScreen: View {
     @AppStorage("pencil.squeeze") private var pencilSqueeze = RemotePencilAction.toggleToolbar
     @AppStorage("toolbar.twoFingerToggle") private var twoFingerToggle = true
     @AppStorage("gesture.holdDuration") private var holdDuration = RemoteTouchGestureConfiguration.defaultHoldDuration
-    @AppStorage("keyboard.localOptionKey") private var localOptionKey = VNCLocalOptionKey.off
     @AppStorage("keyboard.repeat") private var repeatKeys = true
     @AppStorage("keyboard.delay") private var keyDelay = VNCKeyRepeat().delay
     @AppStorage("keyboard.interval") private var keyInterval = VNCKeyRepeat().interval
@@ -105,17 +106,23 @@ struct SessionScreen: View {
     }
     #endif
 
+    private var sessionKeyboard: VNCKeyboardCapture {
+        #if targetEnvironment(macCatalyst)
+        macKeyboard
+        #else
+        toolbar.keyboard
+        #endif
+    }
+
     private var remoteDesktop: RemoteDesktopView {
         #if targetEnvironment(macCatalyst)
-        let keyboard: VNCKeyboardCapture? = nil
         let remoteActivity: (@MainActor () -> Void)? = nil
         let initialSizing = RemoteViewportSizing.fit
         #else
         let initialSizing = request.computer.initialViewportSizing ?? .fit
-        let keyboard: VNCKeyboardCapture? = toolbar.keyboard
         let remoteActivity: (@MainActor () -> Void)? = toolbarStyle == .carousel ? toolbar.noteRemoteActivity : nil
         #endif
-        let desktop = RemoteDesktopView(session: session, keyboardCapture: keyboard, isFullScreen: fullscreen,
+        let desktop = RemoteDesktopView(session: session, keyboardCapture: sessionKeyboard, isFullScreen: fullscreen,
                                  toggleFullScreen: toggleFullScreen, clipboardSynchronizer: clipboard,
                                  initialViewportSizing: initialSizing,
                                  pointerSpeed: cursorTrackingSpeed ?? pointerSpeed, touchGestures: gestures, onRemoteInput: remoteActivity,
@@ -317,9 +324,6 @@ struct SessionScreen: View {
         .onChange(of: VNCKeyRepeat(enabled: repeatKeys, delay: keyDelay, interval: keyInterval), initial: true) { _, value in
             toolbar.keyboard.keyRepeat = value
         }
-        .onChange(of: localOptionKey, initial: true) { _, value in
-            toolbar.keyboard.localOptionKey = value
-        }
         .background {
             if #available(iOS 27.0, *), session.connectionState.isConnected {
                 ExternalDisplayMirror(session: session, privacy: privacy, enabled: mirrorEnabled && !privacy.locked && phase == .active) {
@@ -330,6 +334,9 @@ struct SessionScreen: View {
             }
         }
         #endif
+        .onChange(of: localOptionKey, initial: true) { _, value in
+            sessionKeyboard.localOptionKey = value
+        }
         .onChange(of: session.connectionState) { _, state in
             if !state.isConnected {
                 if let liveReport { library.keepReport(liveReport, for: request.computer) }

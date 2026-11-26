@@ -93,7 +93,7 @@ final class PointerModeUITests: XCTestCase {
         app.launch()
 
         let preference = app.descendants(matching: .any).matching(identifier: "preferences.localOptionKey").firstMatch
-        func setOption(_ side: String) {
+        func setOption(_ side: String, localized: String) {
             let more = app.buttons["library.more"].firstMatch
             XCTAssertTrue(more.waitForExistence(timeout: 10))
             more.tap()
@@ -101,7 +101,7 @@ final class PointerModeUITests: XCTestCase {
             for _ in 0..<6 where !preference.isHittable { app.swipeUp() }
             XCTAssertTrue(preference.isHittable)
             preference.tap()
-            let choice = app.buttons[side].firstMatch
+            let choice = app.buttons.matching(NSPredicate(format: "label IN %@", [side, localized])).firstMatch
             XCTAssertTrue(choice.waitForExistence(timeout: 5))
             choice.tap()
             let selection = XCTAttachment(screenshot: app.screenshot())
@@ -125,7 +125,7 @@ final class PointerModeUITests: XCTestCase {
             input.tap()
         }
 
-        setOption("左侧 Option")
+        setOption("左侧 Option", localized: "Left Option")
         try await connect()
         var wire: [(Bool, UInt32)] = []
         desktop.onWireKey = { down, symbol in wire.append((down, symbol)) }
@@ -157,7 +157,7 @@ final class PointerModeUITests: XCTestCase {
 
         app.buttons["session.close"].firstMatch.tap()
         try await waitUntil { desktop.closedConnections == 1 }
-        setOption("右侧 Option")
+        setOption("右侧 Option", localized: "Right Option")
         try await connect()
         wire.removeAll()
         app.typeKey("a", modifierFlags: .option)

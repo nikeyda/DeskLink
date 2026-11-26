@@ -174,4 +174,4 @@ iPhone 与 iPad 的连接编辑器在「显示器」下提供「连接时缩放�
 
 ## 实体键盘 Option
 
-iPhone 与 iPad 的「设置 → 控制方式」提供「Option 输入特殊字符」，可选「关闭」「左侧 Option」「右侧 Option」。默认关闭。
+Mac、iPhone 与 iPad 的「设置 → 控制方式」提供「Option 输入特殊字符」，可选「关闭」「左侧 Option」「右侧 Option」。默认关闭。英文使用「Local Option for Special Characters」「Off」「Left Option」「Right Option」。

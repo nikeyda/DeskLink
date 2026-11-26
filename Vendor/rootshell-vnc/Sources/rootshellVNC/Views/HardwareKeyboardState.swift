@@ -310,6 +310,12 @@ struct LocalOptionComposition {
         accent = nil
     }
 
+    static func isTextKey(_ text: String) -> Bool {
+        !text.isEmpty && text.unicodeScalars.allSatisfy {
+            $0.properties.generalCategory != .privateUse && $0.properties.generalCategory != .control
+        }
+    }
+
     mutating func receiveMark(_ mark: String?) -> Bool {
         guard waitsForBase else { return false }
         if let mark, let reported = Accent(mark) { accent = reported }
@@ -330,9 +336,7 @@ struct LocalOptionComposition {
             return .text("")
         }
         guard localOption || waitsForBase else { return .remote }
-        guard !unmodified.isEmpty, unmodified.unicodeScalars.allSatisfy({
-            $0.properties.generalCategory != .privateUse && $0.properties.generalCategory != .control
-        }) else {
+        guard Self.isTextKey(unmodified) else {
             reset()
             return .remote
         }

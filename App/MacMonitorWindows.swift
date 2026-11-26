@@ -70,6 +70,8 @@ struct MacMonitorWindow: View {
     let privacy: AppLock
     @Environment(\.dismissWindow) private var dismissWindow
     @AppStorage("pointer.speed") private var pointerSpeed = 1.0
+    @AppStorage("keyboard.localOptionKey") private var localOptionKey = VNCLocalOptionKey.off
+    @State private var keyboard = VNCKeyboardCapture()
     @State private var controls = VNCDesktopControls()
     @State private var showsDictation = false
     @State private var screenshot = ScreenshotExport()
@@ -108,7 +110,7 @@ struct MacMonitorWindow: View {
     private func desktop(_ group: MacMonitorWindows.Group, region: CGRect) -> RemoteDesktopView {
         var gestures = RemoteTouchGestureConfiguration.standard
         gestures.scrollSpeed = group.computer.scrollSpeed(forMac: group.session.serverUsesAppleModifierConvention)
-        let view = RemoteDesktopView(session: group.session,
+        let view = RemoteDesktopView(session: group.session, keyboardCapture: keyboard,
                                      initialPointerMode: group.computer.pointerModeOverride ?? .direct,
                                      pointerSpeed: CursorTrackingSpeed.validated(group.computer.cursorTrackingSpeed) ?? pointerSpeed,
                                      touchGestures: gestures, hostOwnsRecoveryChrome: true)
@@ -140,6 +142,9 @@ struct MacMonitorWindow: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle(title)
         .modifier(ScreenshotExporter(export: screenshot))
+        .onChange(of: localOptionKey, initial: true) { _, value in
+            keyboard.localOptionKey = value
+        }
         .focusedSceneValue(\.deskLinkSession, menu)
         .focusedSceneValue(\.deskLinkClipboardSharing, menu?.clipboardSharing)
         .background { PrivacyCover(privacy: privacy).frame(width: 0, height: 0) }

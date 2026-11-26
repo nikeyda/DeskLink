@@ -29,6 +29,29 @@ import UIKit
     }
     #endif
 
+    #if targetEnvironment(macCatalyst)
+    func testMacLocalOptionUsesTheActualKeyboardLayoutAndIsolatesDeadKeys() throws {
+        var input = CatalystKeyboardLayout.LocalOptionInput()
+        func press(_ usage: UInt32, _ key: String, flags: UIKeyModifierFlags = [],
+                   local: Bool = false, shortcut: Bool = false) -> LocalOptionComposition.Route? {
+            input.route(usage: usage, unmodified: key, flags: flags, localOption: local, remoteShortcut: shortcut)
+        }
+        let a = press(0x04, "a", flags: .alternate, local: true)
+        try XCTSkipUnless(a == .text("å"), "This fixture uses the Mac ABC input source.")
+        XCTAssertEqual(press(0x08, "e", flags: .alternate, local: true), .text(""))
+        XCTAssertEqual(press(0x08, "e"), .text("é"))
+        XCTAssertEqual(press(0x1F, "2", flags: [.shift, .alternate], local: true), .text("€"))
+        XCTAssertEqual(press(0x11, "n", flags: .alternate, local: true), .text(""))
+        XCTAssertEqual(press(0x11, "n", flags: .shift), .text("Ñ"))
+        XCTAssertEqual(press(0x08, "e", flags: .alternate, local: true), .text(""))
+        XCTAssertEqual(press(0x29, UIKeyCommand.inputEscape), .text(""))
+        XCTAssertNil(press(0x08, "e"))
+        XCTAssertEqual(press(0x08, "e", flags: .alternate, local: true), .text(""))
+        XCTAssertEqual(press(0x06, "c", shortcut: true), .remote)
+        XCTAssertNil(press(0x08, "e"))
+    }
+    #endif
+
     func testLocalOptionChoosesOneSideAndPreservesTheOppositeModifier() {
         let chord: VNCKeyboardModifiers = [.option, .shift]
         var state = LocalOptionKeyState()
