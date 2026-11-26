@@ -81,6 +81,8 @@ struct ApplicationPreferences: View {
                 }
                 #endif
                 Section("隐私") {
+                    NavigationLink("连接诊断") { SupportDiagnosticsView() }
+                        .accessibilityIdentifier("preferences.diagnostics")
                     NavigationLink("SSH 密钥") { SSHKeyPreferences() }.accessibilityIdentifier("preferences.sshKeys")
                     NavigationLink("已信任的主机") { TrustedHostPreferences(preferences: preferences) }
                     Toggle("身份验证", isOn: Binding(get: { privacy.enabled }, set: { new in Task { await privacy.setEnabled(new) } }))

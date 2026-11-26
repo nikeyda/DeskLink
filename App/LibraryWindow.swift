@@ -142,6 +142,9 @@ struct LibraryWindow: View {
     @State private var downloads = false
     @State private var historicalReport: ConnectionReport?
     @State private var selectedPreview: SavedDesktopPreview?
+    #if targetEnvironment(macCatalyst)
+    @State private var showsDiagnostics = false
+    #endif
 
     private var hiddenItems: HiddenSidebarItems { HiddenSidebarItems(rawValue: hiddenSidebarItems) }
 
@@ -280,6 +283,19 @@ struct LibraryWindow: View {
         }
         .sheet(isPresented: $settings) { ApplicationPreferences(preferences: preferences) }
         .sheet(isPresented: $downloads) { DownloadsView() }
+        #if targetEnvironment(macCatalyst)
+        .sheet(isPresented: $showsDiagnostics) {
+            if !privacy.locked {
+                NavigationStack {
+                    SupportDiagnosticsView().toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("关闭") { showsDiagnostics = false }
+                        }
+                    }
+                }
+            }
+        }
+        #endif
         .sheet(item: $historicalReport) { report in
             if !privacy.locked { ConnectionDetails(report: report, historical: true) }
         }
@@ -297,7 +313,13 @@ struct LibraryWindow: View {
             }
         }
         .onChange(of: privacy.locked) { _, locked in
-            if locked { historicalReport = nil; selectedPreview = nil }
+            if locked {
+                historicalReport = nil
+                selectedPreview = nil
+                #if targetEnvironment(macCatalyst)
+                showsDiagnostics = false
+                #endif
+            }
         }
         .alert(renamingFolder == nil ? "新建文件夹" : "重命名文件夹", isPresented: $showFolder) {
             TextField("名称", text: $folderName)
@@ -705,10 +727,11 @@ struct LibraryWindow: View {
 
     #if targetEnvironment(macCatalyst)
     private var libraryMenu: MacLibraryMenuActions? {
-        guard !privacy.locked, editor == nil, !settings, !downloads, !importFile, !exportFile,
+        guard !privacy.locked, editor == nil, !settings, !downloads, !showsDiagnostics, !importFile, !exportFile,
               !showFolder, deletingFolder == nil, deletion == nil else { return nil }
         return MacLibraryMenuActions(quickConnect: { editor = EditorRequest(purpose: .quick) },
-                                     create: newEntry, settings: { settings = true }, transfers: { downloads = true })
+                                     create: newEntry, settings: { settings = true }, transfers: { downloads = true },
+                                     diagnostics: { showsDiagnostics = true })
     }
     #endif
 

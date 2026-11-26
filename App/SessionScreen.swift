@@ -25,6 +25,7 @@ struct SessionScreen: View {
     @State private var showsConnectionDetails = false
     @State private var reportStartedAt = Date()
     @State private var liveReport: ConnectionReport?
+    @State private var diagnosticAttemptID = UUID()
     @State private var lastReportWrite: Date?
     @State private var showsDictation = false
     @State private var screenshot = ScreenshotExport()
@@ -338,6 +339,14 @@ struct SessionScreen: View {
             sessionKeyboard.localOptionKey = value
         }
         .onChange(of: session.connectionState) { _, state in
+            if case .failed = state {
+                let diagnostics = session.getDiagnostics()
+                library.recordDiagnosticFailure(.init(id: diagnosticAttemptID, date: .now, reason: .init(session.lastError),
+                                                      usesSSH: request.computer.ssh != nil,
+                                                      requestsHighPerformance: session.configuration.enableHighPerformanceMode,
+                                                      version: diagnostics.clientVersion?.description,
+                                                      securityType: diagnostics.selectedSecurityType?.rawValue))
+            } else if state.isConnecting || state.isConnected { diagnosticAttemptID = UUID() }
             if !state.isConnected {
                 if let liveReport { library.keepReport(liveReport, for: request.computer) }
                 showsConnectionDetails = false

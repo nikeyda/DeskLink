@@ -523,6 +523,33 @@ final class ConnectionLibrary {
         try? data.write(to: file, options: .atomic)
     }
 
+    private var diagnosticFailuresFile: URL {
+        reportDirectory.appending(path: "diagnostic-failures.json")
+    }
+
+    private func diagnosticFailures() -> [SupportDiagnostics.Failure] {
+        guard let data = try? Data(contentsOf: diagnosticFailuresFile) else { return [] }
+        return (try? JSONDecoder().decode([SupportDiagnostics.Failure].self, from: data)) ?? []
+    }
+
+    func recordDiagnosticFailure(_ failure: SupportDiagnostics.Failure) {
+        var failures = diagnosticFailures()
+        if let previous = failures.first(where: { $0.id == failure.id }),
+           previous.reason != .unknown, failure.reason == .unknown { return }
+        failures.removeAll { $0.id == failure.id }
+        failures.insert(failure, at: 0)
+        let recent = Array(failures.prefix(SupportDiagnostics.recordLimit))
+        guard let data = try? JSONEncoder().encode(recent) else { return }
+        try? FileManager.default.createDirectory(at: reportDirectory, withIntermediateDirectories: true)
+        try? data.write(to: diagnosticFailuresFile, options: .atomic)
+    }
+
+    func supportDiagnostics(now: Date = .now) -> SupportDiagnostics {
+        let reports = archive.computers.compactMap { lastReport(for: $0.id) }.sorted { $0.capturedAt > $1.capturedAt }
+        return SupportDiagnostics(exportedAt: now, connections: Array(reports.prefix(SupportDiagnostics.recordLimit)),
+                                  failures: diagnosticFailures())
+    }
+
     private func installArchive(_ next: LibraryArchive) {
         let destinations = Dictionary(uniqueKeysWithValues: next.computers.map { ($0.id, $0) })
         let previousRetryCount = videoRetryDates.count

@@ -7,6 +7,7 @@ struct MacLibraryMenuActions {
     let create: () -> Void
     let settings: () -> Void
     let transfers: () -> Void
+    let diagnostics: () -> Void
 }
 
 struct MacSessionMenuActions {
@@ -46,6 +47,10 @@ struct MacMenus: Commands {
     @FocusedValue(\.deskLinkSession) private var desktop
 
     var body: some Commands {
+        CommandGroup(after: .help) {
+            Button("连接诊断…") { library?.diagnostics() }
+                .disabled(library == nil)
+        }
         CommandGroup(replacing: .appSettings) {
             Button("设置…") { library?.settings() }
                 .keyboardShortcut(",", modifiers: .command)
