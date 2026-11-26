@@ -175,3 +175,7 @@ iPhone 与 iPad 的连接编辑器在「显示器」下提供「连接时缩放�
 ## 实体键盘 Option
 
 Mac、iPhone 与 iPad 的「设置 → 控制方式」提供「Option 输入特殊字符」，可选「关闭」「左侧 Option」「右侧 Option」。默认关闭。英文使用「Local Option for Special Characters」「Off」「Left Option」「Right Option」。
+
+## 附近设备数量
+
+iPhone 的「设置 → 侧栏」提供「显示附近设备数量」，英文为 “Show Nearby Device Count”。已发现的设备数量显示在侧栏「附近」旁，数量为零时省略数字。iPhone 和 iPad 在本地网络权限被拒绝时提供「打开系统设置」，英文为 “Open System Settings”。

@@ -50,3 +50,5 @@
 "keyboard.local-option.off" = "Off";
 "左侧 Option" = "Left Option";
 "右侧 Option" = "Right Option";
+"显示附近设备数量" = "Show Nearby Device Count";
+"打开系统设置" = "Open System Settings";

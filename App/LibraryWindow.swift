@@ -106,6 +106,8 @@ struct LibraryWindow: View {
     var initialComputer: UUID?
     @State private var page: CollectionPage? = .all
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openURL) private var openURL
     @State private var nearby = NearbyComputers()
     @Environment(TailnetDirectory.self) private var tailnet
     @Environment(AppLock.self) private var privacy
@@ -128,6 +130,7 @@ struct LibraryWindow: View {
     @State private var ownError: String?
     @AppStorage("library.listLayout") private var listLayout = false
     @AppStorage(HiddenSidebarItems.preferenceKey) private var hiddenSidebarItems = 0
+    @AppStorage("library.showsNearbyCount") private var showsNearbyCount = true
     @AppStorage("library.savedOrder") private var savedOrder = ComputerOrder.manual
     @AppStorage("library.favoriteOrder") private var favoriteOrder = ComputerOrder.manual
     @AppStorage("library.recentOrder") private var recentOrder = ComputerOrder.lastConnected
@@ -141,6 +144,17 @@ struct LibraryWindow: View {
     @State private var selectedPreview: SavedDesktopPreview?
 
     private var hiddenItems: HiddenSidebarItems { HiddenSidebarItems(rawValue: hiddenSidebarItems) }
+
+    private var offersNearbyCount: Bool {
+        UIDevice.current.userInterfaceIdiom == .phone && showsNearbyCount
+    }
+
+    private var discoversNearbyComputers: Bool {
+        !privacy.locked && activeSession == nil && scenePhase != .background
+            && !hiddenItems.contains(.nearby) && (page == .nearby || offersNearbyCount)
+    }
+
+    private var nearbyCount: Int { offersNearbyCount ? nearby.entries.count : 0 }
 
     private var order: Binding<ComputerOrder> {
         switch page {
@@ -185,7 +199,11 @@ struct LibraryWindow: View {
                 NavigationSplitView {
                     List(selection: $page) {
                         if !hiddenItems.contains(.nearby) {
-                            Label("附近", systemImage: "bonjour").tag(CollectionPage.nearby)
+                            Label("附近", systemImage: "bonjour")
+                                .badge(nearbyCount)
+                                .accessibilityValue(nearbyCount == 0 ? "" : nearbyCount.formatted())
+                                .accessibilityIdentifier("library.nearby")
+                                .tag(CollectionPage.nearby)
                         }
                         if !hiddenItems.contains(.tailscale) {
                             Label("Tailscale", systemImage: "network").tag(CollectionPage.tailscale)
@@ -243,6 +261,11 @@ struct LibraryWindow: View {
                 }
             }
         }
+        .onChange(of: discoversNearbyComputers, initial: true) { _, browsing in
+            if browsing { nearby.start() }
+            else { nearby.stop() }
+        }
+        .onDisappear { nearby.stop() }
         .sheet(item: $editor) { request in
             ConnectionEditor(request: request, library: library, openLink: { value in
                 let route: ConnectionRoute
@@ -393,6 +416,13 @@ struct LibraryWindow: View {
                             Text(verbatim: error.localizedDescription)
                         }
                     } actions: {
+                        #if !targetEnvironment(macCatalyst)
+                        if nearby.needsLocalNetworkAccess,
+                           let settingsURL = URL(string: UIApplication.openSettingsURLString) {
+                            Button("打开系统设置") { openURL(settingsURL) }
+                                .accessibilityIdentifier("nearby.open-settings")
+                        }
+                        #endif
                         Button("重新查找") { nearby.retry() }
                             .accessibilityIdentifier("nearby.retry")
                     }
@@ -415,7 +445,7 @@ struct LibraryWindow: View {
                         }.padding(24)
                     }.background(Color(uiColor: .systemGroupedBackground))
                 }
-            }.onAppear { nearby.start() }.onDisappear { nearby.stop() }
+            }
         } else if entries.isEmpty {
             emptyCollection
         } else if listLayout {

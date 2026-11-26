@@ -110,6 +110,7 @@ struct ApplicationPreferences: View {
 
 private struct LibrarySidebarPreferences: View {
     @AppStorage(HiddenSidebarItems.preferenceKey) private var hiddenSidebarItems = 0
+    @AppStorage("library.showsNearbyCount") private var showsNearbyCount = true
 
     var body: some View {
         Form {
@@ -119,6 +120,13 @@ private struct LibrarySidebarPreferences: View {
                 option("所有链接", .links, id: "links")
                 option("最近连接", .recent, id: "recent")
                 option("收藏", .favorites, id: "favorites")
+            }
+            if UIDevice.current.userInterfaceIdiom == .phone {
+                Section {
+                    Toggle("显示附近设备数量", isOn: $showsNearbyCount)
+                        .disabled(HiddenSidebarItems(rawValue: hiddenSidebarItems).contains(.nearby))
+                        .accessibilityIdentifier("preferences.sidebar.nearbyCount")
+                }
             }
         }
         .navigationTitle("侧栏")

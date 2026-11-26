@@ -1,8 +1,120 @@
 import XCTest
+#if !targetEnvironment(macCatalyst)
+import UIKit
+#endif
 
 @MainActor
 final class LibraryUITests: XCTestCase {
     #if !targetEnvironment(macCatalyst)
+    func testNearbyBadgeCanBeHiddenIndependentlyOfDeviceDiscovery() async throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .phone, "The Nearby count is an iPhone sidebar feature.")
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString]
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let row = app.descendants(matching: .any).matching(identifier: "library.nearby").firstMatch
+
+        func waitFor(_ test: () -> Bool, file: StaticString = #filePath, line: UInt = #line) async throws {
+            let deadline = ContinuousClock.now + .seconds(12)
+            while !test() {
+                if ContinuousClock.now >= deadline {
+                    XCTFail("Nearby sidebar did not reach the expected state. Value: \(String(describing: row.value))", file: file, line: line)
+                    return
+                }
+                try await Task.sleep(for: .milliseconds(120))
+            }
+        }
+
+        func acceptDiscoveryPermission() {
+            let prompt = springboard.alerts.containing(
+                NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS %@", "local network", "本地网络")
+            ).firstMatch
+            if prompt.waitForExistence(timeout: 3) {
+                let allow = prompt.buttons.matching(NSPredicate(format: "label IN %@", ["Allow", "允许"])).firstMatch
+                if allow.exists { allow.tap() }
+            }
+        }
+
+        func showSidebar() {
+            if row.isHittable { return }
+            let button = app.buttons["ToggleSideBar"].firstMatch
+            if button.isHittable {
+                button.tap()
+            } else {
+                app.buttons["BackButton"].firstMatch.tap()
+            }
+            XCTAssertTrue(row.waitForExistence(timeout: 8))
+            XCTAssertTrue(row.isHittable)
+        }
+
+        func setCountVisible(_ visible: Bool) {
+            let more = app.buttons["library.more"].firstMatch
+            XCTAssertTrue(more.waitForExistence(timeout: 8))
+            more.tap()
+            app.buttons["设置"].firstMatch.tap()
+            let sidebar = app.buttons["preferences.sidebar"].firstMatch
+            XCTAssertTrue(sidebar.waitForExistence(timeout: 8))
+            sidebar.tap()
+            let toggle = app.switches["preferences.sidebar.nearbyCount"].firstMatch
+            XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+            let target = visible ? "1" : "0"
+            if toggle.value as? String != target {
+                toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.5)).tap()
+            }
+            XCTAssertEqual(toggle.value as? String, target)
+            let close = app.buttons["关闭"].firstMatch
+            if !close.isHittable { app.navigationBars.buttons["设置"].firstMatch.tap() }
+            close.tap()
+        }
+
+        func capture(_ name: String) {
+            let picture = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            picture.name = name
+            picture.lifetime = .keepAlways
+            add(picture)
+        }
+
+        func displayedCount() -> Int {
+            guard let value = row.value else { return 0 }
+            return Int(String(describing: value)) ?? 0
+        }
+
+        app.launch()
+        acceptDiscoveryPermission()
+        showSidebar()
+        row.tap()
+        XCTAssertTrue(app.navigationBars["附近"].waitForExistence(timeout: 8))
+        let discovered = app.scrollViews.firstMatch.buttons.firstMatch
+        try XCTSkipUnless(discovered.waitForExistence(timeout: 10), "Advertise a Bonjour screen-sharing service to run this UI integration test.")
+        let device = app.buttons[discovered.label].firstMatch
+        showSidebar()
+        try await waitFor { displayedCount() > 0 }
+        let advertised = displayedCount()
+        capture("Nearby device badge")
+
+        row.tap()
+        setCountVisible(false)
+        showSidebar()
+        XCTAssertEqual(displayedCount(), 0)
+        capture("Nearby badge hidden")
+        row.tap()
+        XCTAssertTrue(device.waitForExistence(timeout: 8))
+
+        app.terminate()
+        app.launch()
+        showSidebar()
+        XCTAssertEqual(displayedCount(), 0)
+        row.tap()
+        XCTAssertTrue(device.waitForExistence(timeout: 8))
+        setCountVisible(true)
+        showSidebar()
+        try await waitFor { displayedCount() > 0 }
+        let receipt = XCTAttachment(string: "Before hiding: \(advertised)\nHidden after relaunch: 0\nAfter restoring: \(displayedCount())")
+        receipt.name = "Nearby count observations"
+        receipt.lifetime = .keepAlways
+        add(receipt)
+    }
+
     func testSidebarVisibilitySurvivesRelaunchAndCanBeRestored() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--test-library", UUID().uuidString]
