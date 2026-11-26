@@ -1,0 +1,19 @@
+[Unit]
+Description=Disposable Wayland desktop login
+After=systemd-logind.service dbus.service systemd-user-sessions.service
+Wants=systemd-user-sessions.service
+Requires=systemd-logind.service dbus.service
+
+[Service]
+User=fixture
+PAMName=login
+Environment=XDG_SESSION_TYPE=wayland
+Environment=XDG_SESSION_CLASS=user
+Environment=WLR_BACKENDS=headless
+Environment=WLR_RENDERER=pixman
+Environment=WLR_HEADLESS_OUTPUTS=1
+Environment=HOME=/home/fixture
+WorkingDirectory=/home/fixture
+ExecStart=/var/lib/desklink-test/start-session
+StandardOutput=journal+console
+StandardError=journal+console

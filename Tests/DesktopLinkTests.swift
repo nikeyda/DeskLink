@@ -18,7 +18,7 @@ final class DesktopLinkTests: XCTestCase {
         XCTAssertEqual(try DesktopLink(text: "ssh://[fe80::1%25en0]").target, .address(try Endpoint(address: "[fe80::1%en0]")))
         XCTAssertEqual(try DesktopLink(text: "ssh://host").sshPort, 22)
         XCTAssertNil(try DesktopLink(text: "vnc://host/").observe)
-        for scheme in ["vnc", "screens", "ssh"] {
+        for scheme in DesktopLink.supportedSchemes {
             let observe = try DesktopLink(text: scheme + "://example.invalid?guest=0&observe=1")
             XCTAssertEqual(observe.observe, true)
             XCTAssertFalse(observe.requestsGuest)
@@ -26,6 +26,18 @@ final class DesktopLinkTests: XCTestCase {
             XCTAssertEqual(guest.observe, false)
             XCTAssertTrue(guest.requestsGuest)
         }
+    }
+
+    func testScreensSSHLinksUseTheSameTunnelAsSSHLinks() throws {
+        let suffix = "://test@[2001:db8::5]:2228?ssh-key=Fixture%20Key&observe=1"
+        let expected = try DesktopLink(text: "ssh" + suffix)
+        let url = try XCTUnwrap(URL(string: "ScReEnS-SsH" + suffix))
+        XCTAssertEqual(try ConnectionRoute(url: url), .desktopLink(expected))
+        let request = try EditorRequest.from(DesktopLink(text: url.absoluteString), in: LibraryArchive(), allowUnsavedHost: true)
+        XCTAssertEqual(request.initialSSHPort, 2228)
+        XCTAssertEqual(request.link?.keyName, "Fixture Key")
+        XCTAssertEqual(request.link?.observe, true)
+        XCTAssertThrowsError(try DesktopLink(text: "screens-ssh://test.invalid:bad"))
     }
 
     func testNamedLinksResolveOnlyAnUnambiguousSavedComputer() throws {
@@ -59,6 +71,26 @@ final class DesktopLinkTests: XCTestCase {
         }
     }
 
+    func testVNCLinkWithASavedDisplayNameUsesTheMacLibrary() throws {
+        let url = try XCTUnwrap(URL(string: "vnc://John%27s%20Studio%20Mac?observe=true"))
+        #if targetEnvironment(macCatalyst)
+        guard case .desktopLink(let link) = try ConnectionRoute(url: url) else { return XCTFail("Expected a desktop link") }
+        let computer = Computer(name: "John's Studio Mac", endpoint: try Endpoint(address: "studio.local:5915"))
+        var duplicate = computer
+        duplicate.id = UUID()
+        let archive = LibraryArchive(computers: [computer])
+        let request = try EditorRequest.from(link, in: archive, allowUnsavedHost: true)
+        XCTAssertEqual(request.computer?.id, computer.id)
+        XCTAssertEqual(request.computer?.endpoint.port, 5915)
+        XCTAssertEqual(request.link?.observe, true)
+        XCTAssertThrowsError(try EditorRequest.from(link, in: LibraryArchive(), allowUnsavedHost: true))
+        XCTAssertThrowsError(try EditorRequest.from(link, in: LibraryArchive(computers: [computer, duplicate]), allowUnsavedHost: true))
+        #else
+        XCTAssertThrowsError(try ConnectionRoute(url: url))
+        #endif
+        XCTAssertThrowsError(try DesktopLink(text: "vnc://studio.local:bad%20port"))
+    }
+
     func testNamedKeyRetainsExactCaseAndArchiveContainsOnlyItsName() throws {
         let name = "DeskLink fixture " + UUID().uuidString
         let key = P256.Signing.PrivateKey().pemRepresentation
@@ -77,5 +109,34 @@ final class DesktopLinkTests: XCTestCase {
         XCTAssertNil(try JSONDecoder().decode(SSHSettings.self, from: oldSettings).keyName)
         try PasswordStore.removeNamedKey(name, synchronize: false)
         XCTAssertTrue(try PasswordStore.namedKey(name, synchronize: false) == nil)
+    }
+
+    func testVNCAddressesAndShortNamesUseTheExpectedConnection() throws {
+        let computer = Computer(name: "Studio", endpoint: try Endpoint(address: "editing.local:5915"))
+        let decoy = Computer(name: "editing.local:5915", endpoint: try Endpoint(address: "other.invalid"))
+        let archive = LibraryArchive(computers: [decoy, computer])
+        let shortLink = try DesktopLink(text: "vnc://Studio?observe=true")
+        let exact = try DesktopLink(text: "vnc://editing.local:5915")
+        let ssh = try DesktopLink(text: "ssh://Studio:2222")
+        let tunneled = try EditorRequest.from(ssh, in: archive, allowUnsavedHost: true)
+        XCTAssertNil(tunneled.computer)
+        XCTAssertEqual(tunneled.initialSSHPort, 2222)
+        #if targetEnvironment(macCatalyst)
+        for link in [shortLink, try DesktopLink(text: "screens://Studio"), exact] {
+            XCTAssertEqual(try EditorRequest.from(link, in: archive, allowUnsavedHost: true).computer?.id, computer.id)
+        }
+        let missing = try EditorRequest.from(shortLink, in: LibraryArchive(), allowUnsavedHost: true)
+        XCTAssertEqual(missing.initialAddress, "studio")
+        let explicit = try DesktopLink(text: "vnc://Studio:5900")
+        let explicitRequest = try EditorRequest.from(explicit, in: archive, allowUnsavedHost: true)
+        XCTAssertNil(explicitRequest.computer)
+        XCTAssertEqual(explicitRequest.initialAddress, "studio")
+        #else
+        for link in [shortLink, exact] {
+            let request = try EditorRequest.from(link, in: archive, allowUnsavedHost: false)
+            XCTAssertNil(request.computer)
+            XCTAssertFalse(request.initialAddress.isEmpty)
+        }
+        #endif
     }
 }

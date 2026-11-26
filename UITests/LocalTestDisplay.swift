@@ -17,26 +17,37 @@ final class LocalTestDisplay {
     private let hasTwoMonitors: Bool
     private let servesJPEG: Bool
     private let appleScalingCapability: Bool?
+    private let offersDraggedFile: Bool
+    private(set) var downloadRequests = 0
     private let colors: [(UInt32, UInt32, UInt32)] = [(31,89,165),(241,183,69),(52,174,146),(223,102,88)]
     private(set) var advertisedEncodings: [Int32] = []
     private(set) var halfResolutionRequested = false
     private(set) var requestedFramebufferSize: CGSize?
     private(set) var frameCount = 0
+    private(set) var acceptedConnections = 0
+    private(set) var overlappingConnections = 0
+    private(set) var closedConnections = 0
     private(set) var clicks = 0
     private(set) var lastClickX: Int?
+    private(set) var primaryPresses: [Int] = []
     private(set) var latestPointer: CGPoint?
     private(set) var heldLeftX: Set<Int> = []
     private(set) var scrollTicks = 0
     private(set) var keys = 0
     private(set) var keyDowns: [UInt32] = []
+    var onWireKey: ((_ down: Bool, _ keysym: UInt32) -> Void)?
+    var onWirePointer: ((_ buttons: UInt8, _ point: CGPoint) -> Void)?
+    var expectsClientDisconnect = false
     private(set) var receivedClipboard = Data()
     private(set) var clipboardWrites = 0
     private(set) var failure: String?
 
-    init(hasTwoMonitors: Bool = false, servesJPEG: Bool = false, appleScalingCapability: Bool? = nil) {
+    init(hasTwoMonitors: Bool = false, servesJPEG: Bool = false,
+         appleScalingCapability: Bool? = nil, offersDraggedFile: Bool = false) {
         self.hasTwoMonitors = hasTwoMonitors
         self.servesJPEG = servesJPEG
         self.appleScalingCapability = appleScalingCapability
+        self.offersDraggedFile = offersDraggedFile
     }
 
     func start() async throws -> UInt16 {
@@ -65,18 +76,27 @@ final class LocalTestDisplay {
     }
 
     private func accept(_ incoming: NWConnection) {
-        guard peer == nil, listener != nil else { incoming.cancel(); return }
+        guard listener != nil else { incoming.cancel(); return }
+        guard peer == nil else {
+            overlappingConnections += 1
+            incoming.cancel()
+            return
+        }
+        acceptedConnections += 1
         peer = incoming
         incoming.start(queue: queue)
         worker = Task {
             do { try await serve(incoming) }
             catch {
-                if listener != nil, failure == nil, (error as? URLError)?.code != .networkConnectionLost {
+                // A client closing with unread framebuffer bytes can end TCP with RST.
+                let expectedReset = expectsClientDisconnect && (error as? NWError) == .posix(.ECONNRESET)
+                if listener != nil, failure == nil, !expectedReset, (error as? URLError)?.code != .networkConnectionLost {
                     failure = error.localizedDescription
                 }
             }
             incoming.cancel()
             if peer === incoming { peer = nil }
+            closedConnections += 1
         }
     }
 
@@ -97,6 +117,11 @@ final class LocalTestDisplay {
         try await send([3, 0, 0, 0, 0, 0, 0, UInt8(bytes.count)] + bytes, to: peer)
     }
 
+    func ringBell() async throws {
+        guard let peer else { throw URLError(.notConnectedToInternet) }
+        try await send([2], to: peer)
+    }
+
     private func serve(_ connection: NWConnection) async throws {
         let version = Array((appleScalingCapability == nil ? "RFB 003.008\n" : "RFB 003.889\n").utf8)
         try await send(version, to: connection)
@@ -111,6 +136,10 @@ final class LocalTestDisplay {
             var capabilities = [UInt8](repeating: 0, count: 22)
             if appleScalingCapability { capabilities[7] = 0x80 }
             capabilities[8] = 0x04 // Type 21, automatic pasteboard subscription.
+            if offersDraggedFile {
+                capabilities[7] |= 0x02 // Request a download (14).
+                capabilities[10] = 0xa0 // Announce a drag (32) and transfer files (34).
+            }
             name = capabilities + name
         }
         let header: [UInt8] = appleScalingCapability == nil ? [0,160,0,96] : [1,64,0,192]
@@ -138,6 +167,10 @@ final class LocalTestDisplay {
                         try makeFrame(format, width: fullAppleDesktop ? 320 : 160, height: fullAppleDesktop ? 192 : 96)
                     try await send(frame, to: connection)
                     frameCount += 1
+                    if offersDraggedFile {
+                        try await serveFileDrag(on: connection)
+                        return
+                    }
                     if appleScalingCapability == nil {
                         let sample = Array("DeskLink clipboard fixture".utf8)
                         try await send([3,0,0,0,0,0,0,UInt8(sample.count)] + sample, to: connection)
@@ -145,19 +178,26 @@ final class LocalTestDisplay {
                 }
             case 4:
                 let event = try await read(7, from: connection)
+                let keysym = event.suffix(4).reduce(UInt32.zero) { $0 << 8 | UInt32($1) }
+                onWireKey?(event[0] != 0, keysym)
                 if event[0] != 0 {
                     keys += 1
-                    keyDowns.append(event.suffix(4).reduce(0) { $0 << 8 | UInt32($1) })
+                    keyDowns.append(keysym)
                 }
             case 5:
                 let event = try await read(5, from: connection)
                 let x = Int(event[1]) * 256 + Int(event[2])
                 let y = Int(event[3]) * 256 + Int(event[4])
-                latestPointer = CGPoint(x: x, y: y)
+                let point = CGPoint(x: x, y: y)
+                onWirePointer?(event[0], point)
+                latestPointer = point
                 if event[0] != 0 {
                     clicks += 1
                     lastClickX = x
-                    if event[0] & 1 != 0 { heldLeftX.insert(x) }
+                    if event[0] & 1 != 0 {
+                        heldLeftX.insert(x)
+                        primaryPresses.append(x)
+                    }
                     if event[0] & 0x78 != 0 { scrollTicks += 1 }
                 }
             case 6:
@@ -224,7 +264,39 @@ final class LocalTestDisplay {
         return [0,0,0,1, 0,0,0,0,0,160,0,96, 0,0,0,7, 0x90] + length + Array(image)
     }
 
-    private func read(_ count: Int, from connection: NWConnection) async throws -> [UInt8] {
+    // XCTest's synchronous drag occupies the runner's main actor. The peer
+    // must announce the file while the finger is down, before the release.
+    nonisolated private func serveFileDrag(on connection: NWConnection) async throws {
+        // An independent zlib-encoded public.file-url for file:///Fixture/Gesture.txt.
+        let packet = "IAAAAAAAAAMAAABaAAAAUnicY2BgYGRgYOAvKE3KyUzWS8vMSdUtLcphgACQlEByfq5eYkFBTqpefnFJZUEqUIwlDaJGGqTeSl9f3y2zoqS0KFXfPbUYROuVVJQAAKlKGAI="
+        let announcement = Array(Data(base64Encoded: packet)!)
+        var announced = false
+        while !Task.isCancelled {
+            let type = try await read(1, from: connection)[0]
+            switch type {
+            case 3: _ = try await read(9, from: connection)
+            case 4, 21: _ = try await read(7, from: connection)
+            case 5:
+                let pointer = try await read(5, from: connection)
+                if pointer[0] & 1 == 0 {
+                    announced = false
+                } else {
+                    let x = Int(pointer[1]) * 256 + Int(pointer[2])
+                    Task { @MainActor in self.heldLeftX.insert(x) }
+                    if !announced {
+                        try await send(announcement, to: connection)
+                        announced = true
+                    }
+                }
+            case 14:
+                _ = try await read(7, from: connection)
+                Task { @MainActor in self.downloadRequests += 1 }
+            default: throw UnexpectedMessage(type: type)
+            }
+        }
+    }
+
+    nonisolated private func read(_ count: Int, from connection: NWConnection) async throws -> [UInt8] {
         var result = [UInt8]()
         while result.count < count {
             let length = count - result.count
@@ -239,7 +311,7 @@ final class LocalTestDisplay {
         return result
     }
 
-    private func send(_ bytes: [UInt8], to connection: NWConnection) async throws {
+    nonisolated private func send(_ bytes: [UInt8], to connection: NWConnection) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             connection.send(content: Data(bytes), completion: .contentProcessed { error in
                 if let error { continuation.resume(throwing: error) }

@@ -3,8 +3,10 @@ import Foundation
 
 let files = FileManager.default
 let work = URL(filePath: files.currentDirectoryPath)
-let source = work.appending(path: ".build/Xcode/Build/Products/Release-maccatalyst/DeskLink.app")
-let destination = files.homeDirectoryForCurrentUser.appending(path: "Applications/DeskLink.app")
+let source = work.appending(path: ".build/Xcode/Build/Products/Release-maccatalyst/Telescope.app")
+let applications = files.homeDirectoryForCurrentUser.appending(path: "Applications")
+let destination = applications.appending(path: "Telescope.app")
+let legacyDestination = applications.appending(path: "DeskLink.app")
 let expectedID = "local.nikey.desklink"
 
 func verify(_ bundle: URL) throws {
@@ -18,22 +20,23 @@ func verify(_ bundle: URL) throws {
 }
 
 try verify(source)
-let parent = destination.deletingLastPathComponent()
-try files.createDirectory(at: parent, withIntermediateDirectories: true)
-let staging = parent.appending(path: ".DeskLink-\(UUID().uuidString).app")
+try files.createDirectory(at: applications, withIntermediateDirectories: true)
+let staging = applications.appending(path: ".DeskLink-\(UUID().uuidString).app")
 try files.copyItem(at: source, to: staging)
 defer { if files.fileExists(atPath: staging.path) { try? files.removeItem(at: staging) } }
 try verify(staging)
-if files.fileExists(atPath: destination.path) {
-    try verify(destination)
+let installed = files.fileExists(atPath: destination.path) ? destination : legacyDestination
+if files.fileExists(atPath: installed.path) {
+    try verify(installed)
     for app in NSRunningApplication.runningApplications(withBundleIdentifier: expectedID)
-        where app.bundleURL?.standardizedFileURL.path == destination.standardizedFileURL.path {
+        where app.bundleURL?.standardizedFileURL.path == installed.standardizedFileURL.path {
         app.terminate()
         let deadline = Date().addingTimeInterval(5)
         while !app.isTerminated && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
         guard app.isTerminated else { throw CocoaError(.userCancelled) }
     }
-    _ = try files.replaceItemAt(destination, withItemAt: staging, options: .usingNewMetadataOnly)
+    _ = try files.replaceItemAt(installed, withItemAt: staging, options: .usingNewMetadataOnly)
+    if installed == legacyDestination { try files.moveItem(at: legacyDestination, to: destination) }
 } else {
     try files.moveItem(at: staging, to: destination)
 }

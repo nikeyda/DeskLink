@@ -1,0 +1,7 @@
+<labwc_config>
+  <keyboard>
+    <keybind key="Return">
+      <action name="Execute" command="/var/lib/desklink-test/received-return"/>
+    </keybind>
+  </keyboard>
+</labwc_config>

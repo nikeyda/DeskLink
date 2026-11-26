@@ -5,6 +5,27 @@ import XCTest
 @testable import DeskLink
 
 final class SSHAndRouteTests: XCTestCase {
+    func testRememberedConnectionWaitsForBothDesktopAndTunnelCredentials() throws {
+        var computer = Computer(endpoint: try Endpoint(address: UUID().uuidString.lowercased() + ".fixture.invalid"))
+        computer.username = "fixture-viewer"
+        computer.ssh = SSHSettings(port: 2234, username: "fixture-helper")
+        defer {
+            try? PasswordStore.write(nil, for: computer)
+            try? PasswordStore.write(nil, for: computer, kind: .sshPassword)
+        }
+        XCTAssertNil(try SessionRequest.remembered(for: computer, synchronize: false))
+        try PasswordStore.write("fixture-desktop", for: computer)
+        XCTAssertNil(try SessionRequest.remembered(for: computer, synchronize: false))
+        try PasswordStore.write("fixture-tunnel", for: computer, kind: .sshPassword)
+        let remembered = try XCTUnwrap(SessionRequest.remembered(for: computer, synchronize: false))
+        XCTAssertEqual(remembered.password, "fixture-desktop")
+        guard case let .password(proof) = remembered.sshProof else { return XCTFail("Expected the saved tunnel password") }
+        XCTAssertEqual(proof, "fixture-tunnel")
+        var different = computer
+        different.ssh?.server = "other-" + UUID().uuidString.lowercased() + ".fixture.invalid"
+        XCTAssertNil(try SessionRequest.remembered(for: different, synchronize: false))
+    }
+
     func testSeparateSSHServerRoundTripsWithoutReusingOtherDesktopCredentials() throws {
         let desktop = try Endpoint(address: "[::1]:5917")
         let link = try XCTUnwrap(ConnectionRoute.sharing(desktop, sshPort: 2223, server: "GATEWAY.fixture.invalid"))
@@ -72,6 +93,23 @@ final class SSHAndRouteTests: XCTestCase {
         restored.answer(false)
         let wasAccepted = await recheck.value
         XCTAssertFalse(wasAccepted)
+    }
+
+    @MainActor func testSavedIPv6HostShowsItsPortAndKeepsItsOriginalTrustKey() async throws {
+        let domain = "DeskLinkIPv6Trust." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let key = "ssh.trusted.2001:db8::2:2222"
+        defaults.set("SHA256:fixture", forKey: key)
+        let identity = try XCTUnwrap(HostTrust.saved(in: defaults).first)
+        XCTAssertEqual(identity.id, key)
+        XCTAssertEqual(identity.displayAddress, "[2001:db8::2]:2222")
+        let trust = HostTrust(defaults: defaults)
+        let known = await trust.verify(host: "2001:db8::2", port: 2222, fingerprint: "SHA256:fixture")
+        XCTAssertTrue(known)
+        XCTAssertNil(trust.prompt)
+        HostTrust.forget(identity, in: defaults)
+        XCTAssertNil(defaults.string(forKey: key))
     }
 
     func testPEMKeyImportReturnsMatchingPublicKey() throws {

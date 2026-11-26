@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 run=/run/desklink-wayland
-adduser -D -s /bin/sh deskpeer
+adduser -D -u 36657 -s /bin/sh deskpeer
 mkdir -p "$run"
 chown deskpeer:deskpeer "$run"
 chmod 700 "$run"
@@ -15,7 +15,11 @@ certificate_file=/test-tls/cert.pem
 EOF
 chown deskpeer:deskpeer "$run/server.conf"
 chmod 600 "$run/server.conf"
-cat > "$run/sway.conf" <<'EOF'
+: > /tmp/desklink-wayland.log
+if grep -qw 'desklink_raspios=1' /proc/cmdline; then
+    /bin/sh /start-raspios-wayland &
+else
+    cat > "$run/sway.conf" <<'EOF'
 xwayland disable
 output * mode --custom 800x480
 output * bg #1f59a5 solid_color
@@ -23,14 +27,14 @@ seat seat0 fallback true
 bindsym Return exec /run/desklink-wayland/received-return
 exec wayvnc -Linfo -C /run/desklink-wayland/server.conf 127.0.0.1 5903
 EOF
-cat > "$run/received-return" <<'EOF'
+    cat > "$run/received-return" <<'EOF'
 #!/bin/sh
 swaymsg 'output * bg #34ae92 solid_color'
 touch /run/desklink-wayland/input-received
 EOF
-chmod 755 "$run/received-return"
-: > /tmp/desklink-wayland.log
-su -s /bin/sh deskpeer -c 'XDG_RUNTIME_DIR=/run/desklink-wayland WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1 sway --config /run/desklink-wayland/sway.conf' > /tmp/desklink-wayland.log 2>&1 &
+    chmod 755 "$run/received-return"
+    su -s /bin/sh deskpeer -c 'XDG_RUNTIME_DIR=/run/desklink-wayland WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1 sway --config /run/desklink-wayland/sway.conf' >> /tmp/desklink-wayland.log 2>&1 &
+fi
 tail -n +1 -f /tmp/desklink-wayland.log &
 for attempt in $(seq 1 100); do
     if netstat -lnt | grep -q '127.0.0.1:5903 '; then

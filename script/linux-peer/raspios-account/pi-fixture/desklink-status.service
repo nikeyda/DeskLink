@@ -1,0 +1,8 @@
+[Unit]
+Description=Record the test desktop session and server status
+After=systemd-logind.service
+
+[Service]
+ExecStart=/var/lib/desklink-test/status
+StandardOutput=journal+console
+StandardError=journal+console

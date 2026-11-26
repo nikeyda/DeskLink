@@ -2,6 +2,32 @@ import XCTest
 @testable import DeskLink
 
 final class LibrarySyncTests: XCTestCase {
+    #if !targetEnvironment(macCatalyst)
+    @MainActor func testLocalDocumentsSelectionIsIdentifiedAfterSyncAndRelaunch() async throws {
+        let documents = URL.documentsDirectory
+        let selected = documents.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let state = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: selected, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: selected)
+            try? FileManager.default.removeItem(at: state)
+        }
+        XCTAssertEqual(ReplicaFolder.location(of: documents), .localDocuments)
+        XCTAssertNil(ReplicaFolder.location(of: state))
+        let settings = state.appending(path: "sync.json")
+        let suite = UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let sync = LibrarySync(settings: settings, defaults: defaults)
+        try sync.select(selected)
+        await sync.refresh(ConnectionLibrary(file: state.appending(path: "library.json")))
+        XCTAssertNil(sync.error)
+        XCTAssertEqual(sync.folderLocation, .localDocuments)
+        XCTAssertEqual(LibrarySync(settings: settings, defaults: defaults).folderLocation, .localDocuments)
+    }
+    #endif
+
     func testOfflineConnectionsAddOnceAndDoNotOverwriteAConcurrentRename() throws {
         let a = UUID(), b = UUID()
         let prototype = Computer(name: "Workspace", endpoint: try Endpoint(address: "sorting.fixture.invalid"))

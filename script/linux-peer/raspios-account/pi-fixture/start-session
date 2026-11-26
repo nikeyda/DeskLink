@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+dir=/var/lib/desklink-test
+echo "DESKLINK_PI_SESSION ${XDG_SESSION_ID:-missing} ${XDG_RUNTIME_DIR:-missing}"
+loginctl show-session "$XDG_SESSION_ID" -p Active -p Type -p Class -p Name -p Remote
+test "$(loginctl show-session "$XDG_SESSION_ID" -p Type --value)" = wayland
+test "$(loginctl show-session "$XDG_SESSION_ID" -p Active --value)" = yes
+exec /usr/bin/dbus-run-session -- /usr/bin/labwc -C "$dir/labwc"

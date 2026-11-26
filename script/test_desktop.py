@@ -19,7 +19,10 @@ def unpack(stream, fmt):
 
 
 def record(stream, kind, **fields):
-    print(json.dumps({"event": kind, **fields}), file=stream, flush=True)
+    if callable(stream):
+        stream(kind, fields)
+    else:
+        print(json.dumps({"event": kind, **fields}), file=stream, flush=True)
 
 
 def clipboard_fixture(connection, message):
@@ -42,18 +45,20 @@ def frame(width, height, pixel_format):
     return top * (height // 2) + bottom * (height - height // 2)
 
 
-def serve(connection, log, include_clipboard=True, two_monitors=False):
-    width, height = 320, 192
+def serve(connection, log, include_clipboard=True, two_monitors=False, bell_check=False, close_check=False,
+          *, size=(320, 192), apple_server=False, capture_test_keys=False):
+    width, height = size
     expected_chord = [(1, 0xffe3), (1, 0xffe9), (1, 0xffff), (0, 0xffff), (0, 0xffe9), (0, 0xffe3)]
     chord_progress = 0
     layout_sent = False
     supports_layout = False
     pixel_format = struct.pack(">4B3H3B3x", 32, 24, 0, 1, 255, 255, 255, 16, 8, 0)
-    label = b"DeskLink Test Display"
+    label = (bytes(22) if apple_server else b"") + b"DeskLink Test Display"
+    version = b"RFB 003.889\n" if apple_server else b"RFB 003.008\n"
     with connection, connection.makefile("rb") as stream:
         connection.settimeout(120)
-        connection.sendall(b"RFB 003.008\n")
-        if take(stream, 12) != b"RFB 003.008\n":
+        connection.sendall(version)
+        if take(stream, 12) != version:
             raise ValueError("unexpected RFB version")
         connection.sendall(b"\x01\x01")
         if take(stream, 1) != b"\x01":
@@ -89,8 +94,10 @@ def serve(connection, log, include_clipboard=True, two_monitors=False):
                         clipboard_fixture(connection, b"DeskLink clipboard fixture")
             elif kind == 4:
                 down, keysym = unpack(stream, ">B2xI")
-                # Record event direction only. The test does not collect typed text.
+                # Ordinary interoperability logs only retain the direction.
                 record(log, "key", down=bool(down))
+                if capture_test_keys:
+                    record(log, "fixtureKey", down=bool(down), keysym=keysym)
                 if keysym == 0xff63:
                     record(log, "fixtureInsert", down=bool(down))
                 if (down, keysym) == expected_chord[chord_progress]:
@@ -113,8 +120,17 @@ def serve(connection, log, include_clipboard=True, two_monitors=False):
                     raise ValueError("test clipboard length limit")
                 data = take(stream, length)
                 record(log, "clipboard", length=len(data), matchesTest=data == b"DeskLink clipboard fixture")
+                if close_check and data == b"DeskLink end sharing":
+                    record(log, "hostEndedSharing")
+                    return
                 if include_clipboard and data == b"DeskLink clipboard fixture":
                     clipboard_fixture(connection, b"DeskLink clipboard receipt")
+                if bell_check and data in (b"after audible bell", b"after muted bell"):
+                    connection.sendall(bytes([2]))
+                    clipboard_fixture(connection, data)
+                    record(log, "bell", muted=data == b"after muted bell")
+            elif kind == 21 and apple_server:
+                take(stream, 7)
             else:
                 raise ValueError(f"unexpected client message {kind}")
 
@@ -126,6 +142,8 @@ def main():
     parser.add_argument("--log", type=Path, required=True)
     parser.add_argument("--no-clipboard", action="store_true")
     parser.add_argument("--two-monitors", action="store_true")
+    parser.add_argument("--bell-check", action="store_true")
+    parser.add_argument("--close-check", action="store_true")
     args = parser.parse_args()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server, args.log.open("w") as log:
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -135,7 +153,8 @@ def main():
         while True:
             connection, _ = server.accept()
             try:
-                serve(connection, log, include_clipboard=not args.no_clipboard, two_monitors=args.two_monitors)
+                serve(connection, log, include_clipboard=not args.no_clipboard,
+                      two_monitors=args.two_monitors, bell_check=args.bell_check, close_check=args.close_check)
             except EOFError:
                 record(log, "closed")
             except (OSError, ValueError) as error:

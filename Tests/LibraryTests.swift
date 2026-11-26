@@ -2,6 +2,34 @@ import XCTest
 @testable import DeskLink
 
 final class LibraryTests: XCTestCase {
+    func testAppleMediaEncryptionBeforeAndAfterTheFirstPicture() {
+        XCTAssertEqual(ConnectionReport.encryptionLabel(.none, usesSSH: false, awaitingHighPerformancePicture: true), "正在协商")
+        XCTAssertEqual(ConnectionReport.encryptionLabel(.none, usesSSH: false, awaitingHighPerformancePicture: false), "未加密")
+        XCTAssertEqual(ConnectionReport.encryptionLabel(.none, usesSSH: true, awaitingHighPerformancePicture: true), "SSH")
+        let active = ConnectionReport.encryptionLabel(.appleComCryption(cipherMode: nil, keyLength: 128, mediaSRTP: true),
+                                                     usesSSH: false, awaitingHighPerformancePicture: true)
+        XCTAssertEqual(active, "Apple 屏幕共享加密、SRTP")
+    }
+
+    #if targetEnvironment(macCatalyst)
+    @MainActor func testKeepMacAwakePersistsAcrossApplicationInstances() throws {
+        let suite = "Telescope-awake-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        do {
+            let first = MacAvailability(defaults: defaults)
+            XCTAssertFalse(first.keepAwake)
+            first.keepAwake = true
+            XCTAssertTrue(first.keepAwake)
+        }
+        let reopened = MacAvailability(defaults: defaults)
+        XCTAssertTrue(reopened.keepAwake)
+        reopened.keepAwake = false
+        XCTAssertFalse(reopened.keepAwake)
+        XCTAssertFalse(MacAvailability(defaults: defaults).keepAwake)
+    }
+    #endif
+
     @MainActor
     func testSortKeepsManualPositionsAndCountsOnlySuccessfulConnections() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
@@ -65,6 +93,7 @@ final class LibraryTests: XCTestCase {
         XCTAssertEqual(restored.audioPlaybackLabel, "播放引擎已启动")
         book.keepReport(recent, for: computer)
         book.keepReport(report(start: 50, sample: 120, count: 15), for: computer)
+        book.keepReport(report(start: 115, sample: 120, count: 0), for: computer)
         XCTAssertEqual(ConnectionLibrary(file: file).lastReport(for: computer.id), recent)
         XCTAssertFalse(String(decoding: try book.archive.encoded(), as: UTF8.self).contains("encodings"))
         var transient = computer

@@ -5,6 +5,29 @@ import RFBProtocol
 @testable import RFBTransport
 
 @MainActor final class DisplaySizeTests: XCTestCase {
+    func testPCScrollSpeedPersistsAndPreservesFractionalMovement() throws {
+        var computer = Computer(endpoint: try Endpoint(address: "scroll.fixture.invalid"))
+        let legacy = try JSONEncoder().encode(computer)
+        XCTAssertNil((try JSONSerialization.jsonObject(with: legacy) as? [String: Any])?["pcScrollSpeed"])
+        XCTAssertEqual(try JSONDecoder().decode(Computer.self, from: legacy).scrollSpeed(forMac: false), .standard)
+        for speed in RemoteScrollSpeed.allCases {
+            computer.pcScrollSpeed = speed
+            let entry = try JSONDecoder().decode(Computer.self, from: JSONEncoder().encode(computer))
+            XCTAssertEqual(entry.scrollSpeed(forMac: true), .standard)
+            var points = ScrollPointAccumulator()
+            var wheel = ScrollWheelUnitAccumulator()
+            var ticksX = 0, ticksY = 0
+            for _ in 0..<40 {
+                let step = points.consume(CGPoint(x: -1, y: 1), speed: entry.scrollSpeed(forMac: false))
+                let ticks = wheel.consume(pointDeltaX: step.x, pointDeltaY: step.y)
+                ticksX += Int(ticks.x)
+                ticksY += Int(ticks.y)
+            }
+            XCTAssertEqual(ticksX, -speed.rawValue / 25)
+            XCTAssertEqual(ticksY, speed.rawValue / 25)
+        }
+    }
+
     func testHalfResolutionKeepsAdjacentMonitorEdgesAndMapsInputToNativePixels() {
         let scale = AppleFramebufferScale.half
         let nativeLeft = AppleDisplayInfo(displayIndex: 4, originX: -159, originY: -20, width: 160, height: 100, flags: 1)
@@ -155,6 +178,34 @@ import RFBProtocol
         XCTAssertNil(reopened.existingComputer(matching: quick)?.display(for: .current).lastMonitor)
     }
 
+    func testImportedDisplayLayoutUsesTheReceivingClientAndPreservesItsSource() throws {
+        var old = Computer(endpoint: try Endpoint(address: "migrated-display.invalid"))
+        old.quality = .adaptive
+        old.layout = .virtualPair
+        old.matchWindow = true
+        let data = try LibraryArchive(computers: [old]).encoded()
+        let restored = try XCTUnwrap(LibraryArchive.read(data).computers.first)
+        let mac = restored.display(for: .mac).resolved(for: .mac)
+        XCTAssertEqual(mac.layout, .virtualPair)
+        XCTAssertEqual(mac.fixedDesktop, .standard)
+        let tablet = restored.display(for: .iPad).resolved(for: .iPad)
+        XCTAssertEqual(tablet.layout, .single)
+        XCTAssertTrue(tablet.matchWindow)
+        XCTAssertNil(tablet.fixedDesktop)
+        let active = restored.configuration
+        XCTAssertEqual(active.displayMode, DisplayClient.current == .mac ? .twoVirtualDisplays : .oneDisplay)
+        XCTAssertEqual(active.fixedDesktopSize, DisplayClient.current == .mac ? CGSize(width: 1440, height: 900) : nil)
+        XCTAssertEqual(restored, old)
+        var physical = mac
+        physical.layout = .combined
+        XCTAssertFalse(physical.resolved(for: .mac).matchWindow)
+        XCTAssertNil(physical.resolved(for: .mac).fixedDesktop)
+        var standard = mac
+        standard.quality = .standard
+        XCTAssertEqual(standard.resolved(for: .mac).layout, .single)
+        XCTAssertNil(standard.resolved(for: .mac).fixedDesktop)
+    }
+
     func testDisablingMediaOrUsingSSHRetainsTheVirtualDesktop() throws {
         var computer = Computer(endpoint: try Endpoint(address: "fixture.invalid"))
         var display = DesktopDisplayPreferences(quality: .adaptive, layout: .virtualPair, matchWindow: true,
@@ -165,7 +216,9 @@ import RFBProtocol
         display.smoothVideo = false
         computer.setDisplay(display, for: .current)
         let fixed = computer.configuration
-        XCTAssertEqual(fixed.displayMode, .twoVirtualDisplays)
+        let expectedMode: VNCConfiguration.DisplayMode = DisplayClient.current == .mac ? .twoVirtualDisplays : .oneDisplay
+        XCTAssertEqual(fixed.displayMode, expectedMode)
+        XCTAssertEqual(fixed.fixedDesktopSize, CGSize(width: 1024, height: 768))
         XCTAssertEqual(fixed.videoQualityMode, .adaptive)
         XCTAssertTrue(fixed.effectiveEncodings.contains(.tight))
         XCTAssertFalse(fixed.effectiveEncodings.contains(.appleH264))
@@ -176,7 +229,7 @@ import RFBProtocol
         var tunnel = computer.configuration
         tunnel.transportProvider = { _, _ in throw URLError(.notConnectedToInternet) }
         XCTAssertEqual(tunnel.videoQualityMode, .adaptive)
-        XCTAssertEqual(tunnel.displayMode, .twoVirtualDisplays)
+        XCTAssertEqual(tunnel.displayMode, expectedMode)
         XCTAssertFalse(tunnel.effectiveEncodings.contains(.appleH264))
         XCTAssertFalse(tunnel.effectiveRemoteAudioPlaybackEnabled)
         let size = try XCTUnwrap(VNCSession(configuration: tunnel).matchingClientDisplaySize(viewSize: .zero, displayScale: 2))

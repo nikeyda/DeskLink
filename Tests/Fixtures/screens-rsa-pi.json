@@ -1,0 +1,75 @@
+{
+  "filename": "Screens Archive 2026-11-25",
+  "folders": [],
+  "scFolders": [],
+  "screens": [
+    {
+      "adaptiveQualityMode": 2,
+      "allowBellSignal": true,
+      "authenticationMethod": 5,
+      "clientProtocol": "vnc",
+      "colorDepth": 2,
+      "computerUUID": "",
+      "cursorTrackingSpeed": 1,
+      "curtainModeMessage": "",
+      "desktopDisplayPreferences": [],
+      "disabledCodecs": [],
+      "enableMomentumScrolling": true,
+      "grabScreenshot": true,
+      "hardwareKeyboardMode": 2,
+      "hostname": "rsa71.invalid",
+      "id": "0BD0F331-5253-4367-A31F-1845BD48F594",
+      "imageCompressionMode": 0,
+      "initialScalingMode": 0,
+      "isCustom": false,
+      "lastConnectionDate": -63114076800,
+      "macDesktopScaling": 0.5,
+      "migratedToVersion5": false,
+      "name": "Telescope RSA 71",
+      "numberOfConnections": 0,
+      "onDisconnectAction": 0,
+      "onScreenDragDelay": 0.3,
+      "operatingSystem": 5,
+      "pcScrollSpeed": 2,
+      "permuteCmdAndCtrlModifierKeys": false,
+      "port": 5900,
+      "publicPort": 0,
+      "rememberLastSelectedDisplay": true,
+      "restorationIdentifier": "0BD0F331-5253-4367-A31F-1845BD48F594.saved",
+      "rsaAesAuthencationType": 1,
+      "screenshotCount": 0,
+      "showLocalCursor": true,
+      "softwareKeyboardMode": 1,
+      "sshPort": 22,
+      "sshUsers": [
+        {
+          "id": "864B5268-8709-40B0-95C8-655478E00328",
+          "username": null
+        }
+      ],
+      "startInObserveMode": false,
+      "streamVideoAndAudio": true,
+      "tags": "",
+      "tightVncJPEGEncodingQuality": 3,
+      "turnOffZooming": false,
+      "type": {
+        "saved": {}
+      },
+      "useCurtainMode": false,
+      "useFallbackCursor": false,
+      "useLegacyKeyboardSystem": false,
+      "useMiddleClickForRightClick": true,
+      "useSecureConnection": false,
+      "useSecureConnectionsLocally": true,
+      "useSharedClipboard": true,
+      "users": [
+        {
+          "id": "51DFC434-80B8-4E1D-BDC4-FAD69FEC1BA3",
+          "username": "fixture"
+        }
+      ],
+      "version": 6
+    }
+  ],
+  "tsFolders": []
+}

@@ -2,6 +2,7 @@ import UniformTypeIdentifiers
 import XCTest
 @testable import RFBTransport
 @testable import rootshellVNC
+@testable import DeskLink
 
 @MainActor
 final class FileTransferTests: XCTestCase {
@@ -24,6 +25,109 @@ final class FileTransferTests: XCTestCase {
             guard ContinuousClock.now < deadline else { throw CocoaError(.coderValueNotFound) }
             try await Task.sleep(for: .milliseconds(25))
         }
+    }
+
+    private func receiveFile(named name: String, bytes: Data, session: UInt32,
+                             in controller: VNCFileTransferController) async throws -> VNCFileTransfer {
+        let id = controller.startDownload(paths: ["/Fixture/" + name], dragImage: nil)
+        receive([.item(session: session, .init(kind: .file, name: name, level: 0, dataSize: UInt64(bytes.count))),
+                 .fileData(session: session, bytes), .end(session: session, status: 0)], in: controller)
+        try await waitUntil { controller.transfers.first(where: { $0.id == id })?.isActive == false }
+        return try XCTUnwrap(controller.transfers.first(where: { $0.id == id }))
+    }
+
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+    func testReceiveArchiveForSystemFiles() async throws {
+        guard let raw = ProcessInfo.processInfo.environment["DESKLINK_FILES_FIXTURE"], let id = UUID(uuidString: raw) else {
+            throw XCTSkip("Requires a matching archive identifier for the system Files check.")
+        }
+        var computer = Computer(name: "Files " + id.uuidString, endpoint: try Endpoint(address: "files.fixture.invalid"))
+        computer.id = id
+        let bytes = try LibraryArchive(computers: [computer]).encoded()
+        let name = "DeskLink-" + id.uuidString + ".desklink"
+        let controller = VNCFileTransferController()
+        controller.updateSupport(upload: false, download: true)
+        let result = try await receiveFile(named: name, bytes: bytes, session: 1, in: controller)
+        XCTAssertEqual(result.state, .completed)
+        let url = try XCTUnwrap(result.localURLs.first)
+        XCTAssertEqual(url.standardizedFileURL.path, URL.documentsDirectory.appending(path: "Downloads/" + name).standardizedFileURL.path)
+        XCTAssertEqual(try Data(contentsOf: url), bytes)
+    }
+    #endif
+
+    func testPublishedDownloadsKeepNamesAndBytesAcrossRelaunchAndClearingHistory() async throws {
+        let privateRoot = try temporaryFolder()
+        let publicRoot = try temporaryFolder().appending(path: "Downloads", directoryHint: .isDirectory)
+        let store = VNCDownloadStore(root: privateRoot)
+        store.publishCompletedDownloads(in: publicRoot)
+        let controller = VNCFileTransferController(downloadStore: store)
+        controller.updateSupport(upload: false, download: true)
+        let name = "测试报告.txt"
+        let id = controller.startDownload(paths: ["/Fixture/" + name], dragImage: nil)
+        receive([.item(session: 1, .init(kind: .file, name: name, level: 0, dataSize: 3)),
+                 .fileData(session: 1, Data([1]))], in: controller)
+        await store.refresh()
+        XCTAssertTrue(store.downloads.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: publicRoot.appending(path: name).path))
+        receive([.fileData(session: 1, Data([2, 3])), .end(session: 1, status: 0)], in: controller)
+        try await waitUntil { controller.transfers.first?.state == .completed }
+        let first = try XCTUnwrap(controller.transfers.first?.localURLs.first)
+        XCTAssertEqual(first.path, publicRoot.appending(path: name).path)
+        XCTAssertEqual(try Data(contentsOf: first), Data([1, 2, 3]))
+        await store.refresh()
+        let oldListing = try XCTUnwrap(store.downloads.first(where: { $0.url.path == first.path }))
+        let second = try await receiveFile(named: name, bytes: Data([4, 5]), session: 2, in: controller)
+        XCTAssertEqual(second.state, .completed)
+        let duplicate = try XCTUnwrap(second.localURLs.first)
+        XCTAssertEqual(duplicate.lastPathComponent, "测试报告 2.txt")
+        XCTAssertEqual(try Data(contentsOf: duplicate), Data([4, 5]))
+        let mine = publicRoot.appending(path: "手动存入.txt")
+        try Data([7]).write(to: mine)
+        // Moving the first in Files frees its name. Removing its old row must preserve the new transfer.
+        let renamed = publicRoot.appending(path: "我已改名.txt")
+        try FileManager.default.moveItem(at: first, to: renamed)
+        let third = try await receiveFile(named: name, bytes: Data([6]), session: 3, in: controller)
+        XCTAssertEqual(third.localURLs.first?.path, first.path)
+        controller.remove(id)
+        XCTAssertEqual(try Data(contentsOf: first), Data([6]))
+        // A confirmation sheet may still be showing the original item after Files renamed it.
+        await store.delete(oldListing)
+        XCTAssertEqual(try Data(contentsOf: first), Data([6]))
+        controller.clearFinished()
+        XCTAssertTrue(controller.transfers.isEmpty)
+        let reopened = VNCDownloadStore(root: privateRoot)
+        reopened.publishCompletedDownloads(in: publicRoot)
+        await reopened.refresh()
+        XCTAssertEqual(Set(reopened.downloads.map(\.name)), [name, duplicate.lastPathComponent, renamed.lastPathComponent])
+        await reopened.delete(try XCTUnwrap(reopened.downloads.first(where: { $0.name == name })))
+        XCTAssertEqual(try Data(contentsOf: duplicate), Data([4, 5]))
+        await reopened.deleteAll()
+        XCTAssertEqual(try Data(contentsOf: mine), Data([7]))
+        XCTAssertTrue(reopened.downloads.isEmpty)
+    }
+
+    func testInterruptedIncomingDataStaysPrivateAndPublicationFailureRemainsRecoverable() async throws {
+        let privateRoot = try temporaryFolder()
+        let legacyFolder = privateRoot.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: legacyFolder, withIntermediateDirectories: true)
+        try Data([8]).write(to: legacyFolder.appending(path: "旧版.txt"))
+        let store = VNCDownloadStore(root: privateRoot)
+        let blocked = try temporaryFolder().appending(path: "Downloads")
+        try Data([0]).write(to: blocked)
+        store.publishCompletedDownloads(in: blocked)
+        let abandoned = store.makeFolder().appending(path: "未完成.bin")
+        try Data([0]).write(to: abandoned)
+        let controller = VNCFileTransferController(downloadStore: store)
+        controller.updateSupport(upload: false, download: true)
+        let file = try await receiveFile(named: "留存.bin", bytes: Data([3, 4]), session: 1, in: controller)
+        guard case .failed = file.state else { return XCTFail("The Files destination was unavailable") }
+        let recovered = try XCTUnwrap(file.localURLs.first)
+        XCTAssertEqual(try Data(contentsOf: recovered), Data([3, 4]))
+        let reopened = VNCDownloadStore(root: privateRoot)
+        reopened.publishCompletedDownloads(in: blocked)
+        await reopened.refresh()
+        XCTAssertEqual(Set(reopened.downloads.map(\.name)), ["旧版.txt", "留存.bin"])
+        XCTAssertEqual(try Data(contentsOf: blocked), Data([0]))
     }
 
     func testFilesDropStagesUnicodeNamesAndBytesIncludingAnEmptyFile() async throws {
@@ -49,6 +153,8 @@ final class FileTransferTests: XCTestCase {
 
     func testRemoteDragDeliversFolderAndFileToDownloadListThenMovesThem() async throws {
         let store = VNCDownloadStore(root: try temporaryFolder())
+        let publicRoot = try temporaryFolder().appending(path: "Downloads", directoryHint: .isDirectory)
+        store.publishCompletedDownloads(in: publicRoot)
         let controller = VNCFileTransferController(downloadStore: store)
         controller.updateSupport(upload: true, download: true)
         let reply = Wire.DragOutReply(handle: 3, paths: ["/Fixture/资料"], dragImagePNG: nil)
@@ -61,6 +167,10 @@ final class FileTransferTests: XCTestCase {
         XCTAssertTrue(controller.remoteDragOverTarget)
         controller.observePointer(buttonMask: 0, x: 120, y: 120)
         controller.handle(reply)
+        XCTAssertEqual(controller.dragStatistics.remoteDrags, 1)
+        XCTAssertEqual(controller.dragStatistics.fileAnnouncements, 1)
+        XCTAssertEqual(controller.dragStatistics.downloadRequests, 1)
+        XCTAssertEqual(controller.dragStatistics.downloadReplies, 1)
         XCTAssertEqual(controller.transfers.first?.name, "资料")
         let data = Data("一份完整的测试文件\nΔ\t✅".utf8)
         receive([
@@ -76,6 +186,7 @@ final class FileTransferTests: XCTestCase {
         try await waitUntil { store.downloads.count == 1 }
         let item = try XCTUnwrap(store.downloads.first)
         XCTAssertEqual(item.name, "资料")
+        XCTAssertEqual(item.url.standardizedFileURL.path, publicRoot.appending(path: "资料").standardizedFileURL.path)
         XCTAssertEqual(item.byteCount, Int64(data.count))
         XCTAssertEqual(controller.transfers.first?.fractionCompleted, 1)
         let saved = try temporaryFolder().appending(path: item.name)
@@ -84,6 +195,52 @@ final class FileTransferTests: XCTestCase {
         XCTAssertTrue(store.downloads.isEmpty)
         XCTAssertEqual(try Data(contentsOf: saved.appending(path: "样本.txt")), data)
     }
+
+    func testDownloadTargetFitsVisibleDesktopAndLeavesRoomToStartDragging() throws {
+        let visible = CGRect(x: 52, y: 60, width: 220, height: 390)
+        for anchor in [CGPoint(x: 54, y: 62), CGPoint(x: 268, y: 444), CGPoint(x: 150, y: 230)] {
+            let rect = try XCTUnwrap(VNCDragOutTargetView.targetFrame(in: visible, near: anchor))
+            XCTAssertTrue(visible.contains(rect))
+            XCTAssertFalse(rect.contains(anchor))
+            XCTAssertLessThan(abs(rect.midY - anchor.y), rect.height)
+        }
+        let top = try XCTUnwrap(VNCDragOutTargetView.targetFrame(in: visible, near: nil))
+        XCTAssertEqual(top.midX, visible.midX)
+        XCTAssertEqual(top.minY, visible.minY + 16)
+        XCTAssertNil(VNCDragOutTargetView.targetFrame(in: .zero, near: .zero))
+    }
+
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+    func testMovingAwayOrDismissingPreventsOnlyThisDragFromDownloading() {
+        let controller = VNCFileTransferController()
+        controller.updateSupport(upload: false, download: true)
+        let reply = Wire.DragOutReply(handle: 3, paths: ["/Fixture/sample.txt"], dragImagePNG: nil)
+        let rect = CGRect(x: 150, y: 200, width: 200, height: 56)
+        controller.dragOutTarget = rect
+        for explicitDismissal in [true, false] {
+            controller.observePointer(buttonMask: 1, x: 250, y: 275)
+            controller.observePointer(buttonMask: 1, x: 250, y: 250)
+            controller.handle(reply)
+            XCTAssertEqual(controller.remoteDragAnchor, CGPoint(x: 250, y: 275))
+            XCTAssertTrue(controller.showsDragOutTarget)
+            if explicitDismissal { controller.dismissDragOutTarget() }
+            else { controller.observePointer(buttonMask: 1, x: 700, y: 275) }
+            controller.handle(reply)
+            controller.observePointer(buttonMask: 1, x: 250, y: 235)
+            XCTAssertFalse(controller.showsDragOutTarget)
+            XCTAssertFalse(controller.remoteDragOverTarget)
+            controller.observePointer(buttonMask: 0, x: 250, y: 235)
+            controller.handle(reply)
+            XCTAssertTrue(controller.transfers.isEmpty)
+            XCTAssertNil(controller.remoteDragAnchor)
+        }
+        XCTAssertEqual(controller.dragStatistics.remoteDrags, 2)
+        XCTAssertEqual(controller.dragStatistics.downloadRequests, 0)
+        controller.transportDidEnd()
+        XCTAssertEqual(controller.dragStatistics.remoteDrags, 0)
+        XCTAssertEqual(controller.dragStatistics.fileAnnouncements, 0)
+    }
+    #endif
 
     func testCancelledAndDisconnectedTransfersDiscardPartialFilesAndAllowAnotherDownload() async throws {
         let store = VNCDownloadStore(root: try temporaryFolder())
@@ -131,6 +288,8 @@ final class FileTransferTests: XCTestCase {
 
     func testResourceForkAndDataForkRemainDistinctAfterDownload() async throws {
         let store = VNCDownloadStore(root: try temporaryFolder())
+        let publicRoot = try temporaryFolder().appending(path: "Downloads", directoryHint: .isDirectory)
+        store.publishCompletedDownloads(in: publicRoot)
         let controller = VNCFileTransferController(downloadStore: store)
         let data = Data("ordinary content".utf8)
         let resource = Data((0..<70003).map { UInt8(truncatingIfNeeded: $0) })
@@ -144,6 +303,7 @@ final class FileTransferTests: XCTestCase {
         ], in: controller)
         try await waitUntil { controller.transfers.first?.isActive == false }
         let output = try XCTUnwrap(controller.transfers.first?.localURLs.first)
+        XCTAssertEqual(output.standardizedFileURL.path, publicRoot.appending(path: "design.bin").standardizedFileURL.path)
         XCTAssertEqual(try Data(contentsOf: output), data)
         let fork = URL(filePath: output.path + "/..namedfork/rsrc")
         XCTAssertEqual(try Data(contentsOf: fork), resource)

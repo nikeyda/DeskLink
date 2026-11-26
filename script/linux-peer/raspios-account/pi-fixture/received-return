@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+cd /var/lib/desklink-test/results
+if [ -f green ]; then
+    rm green
+else
+    touch green
+fi
+echo DESKLINK_WAYLAND_INPUT_RECEIVED >> input-events

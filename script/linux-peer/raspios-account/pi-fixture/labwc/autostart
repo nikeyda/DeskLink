@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+cd /var/lib/desklink-test
+wlr-randr --output HEADLESS-1 --custom-mode 800x480
+exec env GDK_BACKEND=wayland /usr/bin/python3 ./chart.py

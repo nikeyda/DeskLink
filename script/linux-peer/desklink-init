@@ -29,7 +29,18 @@ if [ ! -S /tmp/.X11-unix/X1 ]; then cat /tmp/desklink-xvnc.log; exit 1; fi
 for i in $(seq 1 80); do [ -S /tmp/.X11-unix/X2 ] && break; sleep 0.2; done
 if [ ! -S /tmp/.X11-unix/X2 ]; then cat /tmp/desklink-xvnc-tls.log; exit 1; fi
 DISPLAY=:2 xsetroot -solid '#1f59a5'
-Xvnc :4 -localhost yes -SecurityTypes VncAuth -PasswordFile /root/.vnc/fixture -geometry 800x480 -depth 24 -rfbport 5904 -desktop DeskLink-Resize -noreset -nolisten tcp >/tmp/desklink-xvnc-resize.log 2>&1 &
+set -- -SecurityTypes VncAuth
+if [ -s /test-tls/rsa-mode ]; then
+    read -r types credentials </test-tls/rsa-mode
+    set -- -SecurityTypes "$types" -RSAKey /test-tls/key.pem
+    if [ "$credentials" = account ]; then
+        adduser -D -s /bin/sh chartuser
+        printf '%s\n' 'chartuser:FixtureAccount71!' | chpasswd
+        printf '%s\n' 'auth required pam_unix.so' 'account required pam_unix.so' >/etc/pam.d/desklink-fixture
+        set -- "$@" -RequireUsername -PlainUsers chartuser -PAMService desklink-fixture
+    fi
+fi
+Xvnc :4 -localhost yes "$@" -PasswordFile /root/.vnc/fixture -geometry 800x480 -depth 24 -rfbport 5904 -desktop DeskLink-Resize -noreset -nolisten tcp >/tmp/desklink-xvnc-resize.log 2>&1 &
 for i in $(seq 1 80); do [ -S /tmp/.X11-unix/X4 ] && break; sleep 0.2; done
 DISPLAY=:4 xsetroot -solid '#1f59a5'
 (
@@ -47,8 +58,37 @@ export LANG=C.UTF-8
 cat > /tmp/desklink-text-receiver <<'EOF'
 #!/bin/sh
 stty -echo
+wheel=0
 while IFS= read -r line; do
-    if [ "$line" = 'DeskLink 中文 café Ω 🙂' ]; then
+    if [ "$line" = 'wheel-up' ]; then
+        wheel=$((wheel + 1))
+    elif [ "$line" = 'count' ]; then
+        echo "DESKLINK_X11_WHEEL_COUNT $wheel" >/dev/console
+        case "$wheel" in
+            2) color='#be5096' ;;
+            3) color='#297bc4' ;;
+            4) color='#58b676' ;;
+            6) color='#91a549' ;;
+            8) color='#dd7540' ;;
+            *) color='#ff0000' ;;
+        esac
+        xsetroot -solid "$color"
+        wheel=0
+    elif [ "$line" = 'reset' ]; then
+        wheel=0
+        xsetroot -solid '#1f59a5'
+    elif [ "$line" = 'The remote desktop is ready.' ] || [ "$line" = 'The remote desktop is ready' ] ||
+         [ "$line" = 'the remote desktop is ready.' ] || [ "$line" = 'the remote desktop is ready' ]; then
+        echo DESKLINK_X11_DICTATION_RECEIVED >/dev/console
+        xsetroot -solid '#289bb6'
+        sleep 2
+        xsetroot -solid '#1f59a5'
+    elif [ "$line" = '你好' ]; then
+        echo DESKLINK_X11_PINYIN_CANDIDATE_RECEIVED >/dev/console
+        xsetroot -solid '#34ae92'
+        sleep 3
+        xsetroot -solid '#1f59a5'
+    elif [ "$line" = 'DeskLink 中文 café Ω 🙂' ]; then
         echo DESKLINK_X11_UNICODE_TEXT_RECEIVED >/dev/console
         xsetroot -solid '#c23684'
         sleep 2
@@ -57,7 +97,9 @@ while IFS= read -r line; do
 done
 EOF
 chmod 755 /tmp/desklink-text-receiver
-DISPLAY=:4 xterm -u8 -geometry 28x5+10+10 -title DeskLinkText -e /tmp/desklink-text-receiver >/tmp/desklink-text.log 2>&1 &
+DISPLAY=:4 xterm -u8 -geometry 28x5+10+10 -title DeskLinkText \
+    -xrm '*VT100.Translations: #override \n<Btn4Down>: string("wheel-up") string(0x0d)' \
+    -e /tmp/desklink-text-receiver >/tmp/desklink-text.log 2>&1 &
 for i in $(seq 1 60); do
     id=$(DISPLAY=:4 xdotool search --onlyvisible --name '^DeskLinkText$' 2>/dev/null | head -1)
     if [ -n "$id" ]; then DISPLAY=:4 xdotool windowfocus "$id"; break; fi

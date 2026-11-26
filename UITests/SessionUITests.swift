@@ -4,6 +4,279 @@ import XCTest
 @MainActor
 final class SessionUITests: XCTestCase {
     #if !targetEnvironment(macCatalyst)
+    func testRememberedComputerConnectsFromItsTileAndWidgetURL() async throws {
+        let desktop = LocalTestDisplay()
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        let name = "Desk " + String(UUID().uuidString.prefix(8))
+        app.launchArguments = ["--test-library", UUID().uuidString]
+        app.launch()
+        let new = app.buttons["library.new"]
+        XCTAssertTrue(new.waitForExistence(timeout: 10))
+        new.tap()
+        let remember = app.switches["connection.remember"]
+        let thumb = remember.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5))
+        thumb.tap()
+        guard remember.value as? String == "1" else {
+            XCTFail("The new connection form did not enable password storage.")
+            return
+        }
+        let host = app.textFields["connection.host"]
+        let computerName = app.textFields["connection.name"]
+        computerName.tap()
+        computerName.typeText(name)
+        host.tap()
+        host.typeText("127.0.0.1:\(port)")
+        let username = app.textFields["connection.username"]
+        username.tap()
+        username.typeText("fixture-" + UUID().uuidString.lowercased())
+        let secret = app.secureTextFields["connection.password"]
+        secret.tap()
+        secret.typeText("one-tap-fixture")
+        XCTAssertEqual(remember.value as? String, "1")
+        let save = app.buttons["connection.submit"]
+        save.tap()
+        let dismissPasswordManager = app.alerts["保存密码？"].buttons["以后"]
+        if dismissPasswordManager.waitForExistence(timeout: 3) { dismissPasswordManager.tap() }
+        let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
+                                                  "library.computer.", name)).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 8))
+        let id = try XCTUnwrap(row.identifier.split(separator: ".").last.flatMap { UUID(uuidString: String($0)) })
+        let route = try XCTUnwrap(URL(string: "desklink:///connect/" + id.uuidString))
+        func openWidgetURL() {
+            XCUIDevice.shared.system.open(route)
+            let confirm = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.buttons["打开"]
+            if confirm.waitForExistence(timeout: 2) { confirm.tap() }
+        }
+        for fromWidget in [false, true] {
+            let before = desktop.frameCount, closedBefore = desktop.closedConnections
+            if fromWidget { openWidgetURL() } else { row.tap() }
+            // The test peer handles its handshake on the runner's main actor. Give it time
+            // to send the frame before XCTest synchronously asks the viewer for its UI.
+            do { try await waitUntil(timeout: 30) { desktop.frameCount > before } }
+            catch {
+                XCTFail("No frame from \(fromWidget ? "widget URL" : "library tile"). Accepted \(desktop.acceptedConnections), closed \(desktop.closedConnections), overlapping \(desktop.overlappingConnections), server error \(desktop.failure ?? "none").")
+                return
+            }
+            try await waitUntil(timeout: 30) {
+                if dismissPasswordManager.exists && dismissPasswordManager.isHittable {
+                    dismissPasswordManager.tap()
+                    return false
+                }
+                return app.buttons["session.mode"].exists && Self.hasColorChart(app.screenshot().image)
+            }
+            app.typeKey("c", modifierFlags: [.shift, .control, .command])
+            try await waitUntil { !app.buttons["session.mode"].exists && row.isHittable }
+            do { try await waitUntil { desktop.closedConnections > closedBefore } }
+            catch {
+                XCTFail("The viewer returned to the library without closing its connection to the test display.")
+                return
+            }
+        }
+        // Forget only this test account, then check that credentials are requested again.
+        row.press(forDuration: 0.8)
+        app.buttons["编辑连接"].firstMatch.tap()
+        XCTAssertEqual(remember.value as? String, "1")
+        remember.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        save.tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        let frameCount = desktop.frameCount
+        openWidgetURL()
+        XCTAssertTrue(host.waitForExistence(timeout: 8))
+        XCTAssertEqual(remember.value as? String, "0")
+        XCTAssertEqual(desktop.frameCount, frameCount)
+    }
+
+    private func reveal(_ element: XCUIElement, in form: XCUIElement) -> Bool {
+        for _ in 0..<9 {
+            if element.exists && element.isHittable
+                && form.frame.insetBy(dx: 0, dy: 15).contains(CGPoint(x: element.frame.midX, y: element.frame.midY)) {
+                return true
+            }
+            let start = form.coordinate(withNormalizedOffset: CGVector(dx: 0.48, dy: 0.76))
+            let end = form.coordinate(withNormalizedOffset: CGVector(dx: 0.48, dy: 0.32))
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+        return false
+    }
+
+    func testPinchRespectsTheConnectionSettingAndKeepsPointerCoordinatesAligned() async throws {
+        for allowsZoom in [true, false] {
+            let desktop = LocalTestDisplay()
+            let port = try await desktop.start()
+            defer { desktop.stop() }
+            let app = XCUIApplication()
+            app.launchArguments = ["--test-library", UUID().uuidString]
+            app.launch()
+            XCTAssertTrue(app.buttons["library.quick"].waitForExistence(timeout: 10))
+            app.open(try XCTUnwrap(URL(string: "vnc://127.0.0.1:\(port)")))
+            let form = app.collectionViews["connection.form"].firstMatch
+            XCTAssertTrue(form.waitForExistence(timeout: 8))
+            let display = app.buttons["显示器"].firstMatch
+            XCTAssertTrue(reveal(display, in: form))
+            display.tap()
+            let setting = app.switches["connection.viewportZoom"].firstMatch
+            XCTAssertTrue(reveal(setting, in: form))
+            XCTAssertEqual(setting.value as? String, "1")
+            if !allowsZoom {
+                setting.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.5)).tap()
+                XCTAssertEqual(setting.value as? String, "0")
+            }
+            app.buttons["connection.submit"].tap()
+            let surface = app.descendants(matching: .any).matching(identifier: "session.input").firstMatch
+            try await waitUntil { desktop.frameCount > 0 && surface.isHittable && Self.hasColorChart(app.screenshot().image) }
+            let point = surface.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5))
+            func clickedX() async throws -> Int {
+                let earlier = desktop.primaryPresses.count
+                point.tap()
+                try await waitUntil { desktop.primaryPresses.count > earlier }
+                return desktop.primaryPresses[earlier]
+            }
+            let before = try await clickedX()
+            let coverageBefore = Self.chartFractions(XCUIScreen.main.screenshot().image).reduce(0, +)
+            surface.pinch(withScale: 2.5, velocity: 1.5)
+            let after = try await clickedX()
+            let rendered = XCUIScreen.main.screenshot()
+            let coverageAfter = Self.chartFractions(rendered.image).reduce(0, +)
+            XCTAssertGreaterThan(coverageBefore, 0.2)
+            XCTContext.runActivity(named: "Pinch enabled = \(allowsZoom), remote x = \(before) then \(after)") { activity in
+                let screenshot = XCTAttachment(screenshot: rendered)
+                screenshot.name = allowsZoom ? "Magnified desktop" : "Fitted desktop"
+                screenshot.lifetime = .keepAlways
+                activity.add(screenshot)
+            }
+            if allowsZoom {
+                XCTAssertGreaterThan(coverageAfter - coverageBefore, 0.04)
+                XCTAssertGreaterThan(after - before, 8, "Pinching should bring the sampled point nearer the center of the 160-pixel desktop.")
+            } else {
+                XCTAssertEqual(coverageAfter, coverageBefore, accuracy: 0.025)
+                XCTAssertEqual(Double(after), Double(before), accuracy: 1)
+            }
+            app.terminate()
+        }
+    }
+
+    func testHardwareControlReachesTheServerAsCommandWhenEnabledInTheEditor() async throws {
+        let desktop = LocalTestDisplay()
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString]
+        app.launch()
+        XCTAssertTrue(app.buttons["library.quick"].waitForExistence(timeout: 10))
+        app.open(try XCTUnwrap(URL(string: "vnc://127.0.0.1:\(port)")))
+        let form = app.collectionViews["connection.form"].firstMatch
+        XCTAssertTrue(form.waitForExistence(timeout: 8))
+        let display = app.buttons["显示器"].firstMatch
+        guard reveal(display, in: form) else { XCTFail("Display options are not visible in the connection form."); return }
+        display.tap()
+        let swap = app.switches["connection.swapCommandControl"].firstMatch
+        guard reveal(swap, in: form) else { XCTFail("The keyboard switch is not visible in the connection form."); return }
+        XCTAssertEqual(swap.value as? String, "0")
+        swap.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+        XCTAssertEqual(swap.value as? String, "1")
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "Hardware keyboard settings"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        app.buttons["connection.submit"].tap()
+        try await waitUntil { desktop.frameCount > 0 && app.buttons["session.info"].exists }
+        app.descendants(matching: .any).matching(identifier: "session.input").firstMatch.tap()
+        app.typeKey("x", modifierFlags: .control)
+        try await waitUntil { desktop.keyDowns.contains(0x78) }
+        XCTAssertEqual(Array(desktop.keyDowns.suffix(2)), [0xFFEB, 0x78])
+        XCTAssertFalse(desktop.keyDowns.contains(0xFFE3))
+    }
+
+    func testIPadSessionKeyboardShortcutsActOnTheViewerAndRemoteDesktop() async throws {
+        let desktop = LocalTestDisplay()
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        openChart(app, port: port)
+        let surface = app.descendants(matching: .any).matching(identifier: "session.input").firstMatch
+        try await waitUntil { desktop.frameCount > 0 && app.buttons["session.info"].exists }
+        XCTAssertTrue(surface.waitForExistence(timeout: 5))
+        surface.tap()
+        let chord: XCUIElement.KeyModifierFlags = [.shift, .control, .command]
+        app.typeKey("w", modifierFlags: chord)
+        // This peer uses PC conventions. Close Window expands to Alt-F4.
+        try await waitUntil { desktop.keyDowns.contains(0xFFC1) }
+        XCTAssertTrue(desktop.keyDowns.contains(0xFFE9))
+        XCTAssertFalse(desktop.keyDowns.contains(0x77))
+
+        app.typeKey("r", modifierFlags: chord)
+        let cancel = app.buttons.matching(NSPredicate(format: "label IN %@", ["取消", "Cancel"])).firstMatch
+        guard cancel.waitForExistence(timeout: 30) else {
+            XCTFail("The screenshot shortcut did not open the system export sheet.")
+            return
+        }
+        cancel.tap()
+        XCTAssertFalse(desktop.keyDowns.contains(0x72))
+        app.typeKey("c", modifierFlags: chord)
+        XCTAssertTrue(app.buttons["library.quick"].waitForExistence(timeout: 8))
+        XCTAssertFalse(desktop.keyDowns.contains(0x63))
+    }
+
+    func testQuickConnectionCanBeFiledAsALinkWithoutSavingACustomComputer() async throws {
+        let desktop = LocalTestDisplay()
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        openChart(app, port: port)
+        try await waitUntil { desktop.frameCount > 0 && app.buttons["session.close"].exists }
+        app.buttons["session.close"].tap()
+        let entry = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.computer.")).firstMatch
+        let quick = app.buttons["library.quick"]
+        XCTAssertTrue(quick.waitForExistence(timeout: 8))
+        XCTAssertFalse(entry.exists)
+        func selectPage(_ identifier: String) {
+            let row = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+            if !row.isHittable {
+                let sidebar = app.buttons.matching(NSPredicate(format: "label IN %@", ["显示边栏", "显示侧边栏", "Show Sidebar"])).firstMatch
+                if sidebar.isHittable { sidebar.tap() }
+            }
+            XCTAssertTrue(row.waitForExistence(timeout: 5))
+            row.tap()
+        }
+        selectPage("library.links")
+        XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        app.buttons["library.more"].tap()
+        app.buttons["新建文件夹"].tap()
+        let alert = app.alerts["新建文件夹"]
+        let folder = "临时桌面"
+        alert.textFields.firstMatch.tap()
+        alert.textFields.firstMatch.typeText(folder)
+        alert.buttons["保存"].tap()
+        XCTAssertTrue(entry.waitForNonExistence(timeout: 5))
+        selectPage("library.links")
+        entry.press(forDuration: 0.8)
+        app.buttons["移到链接文件夹"].tap()
+        app.buttons[folder].firstMatch.tap()
+        app.terminate()
+        app.launch()
+        selectPage("library.linkFolder." + folder)
+        XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        XCTAssertTrue(entry.label.contains("127.0.0.1"))
+    }
+
+    func testAutomaticReconnectReportIdentifiesTheInterruptedTransport() async throws {
+        let desktop = LocalTestDisplay()
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        openChart(app, port: port)
+        let info = app.buttons["session.info"]
+        try await waitUntil { info.exists && desktop.frameCount > 0 }
+        let initialFrames = desktop.frameCount
+        desktop.dropCurrentConnection()
+        try await waitUntil { desktop.frameCount > initialFrames && info.isEnabled }
+        info.tap()
+        let trigger = app.descendants(matching: .any)["details.reconnect"].firstMatch
+        try await waitUntil { trigger.value as? String == "传输连接中断" }
+    }
+
     func testManualReconnectAfterPeerClosesUsesTheSameOpenSession() async throws {
         let desktop = LocalTestDisplay()
         let port = try await desktop.start()
@@ -30,6 +303,8 @@ final class SessionUITests: XCTestCase {
         XCTAssertFalse(app.textFields["connection.host"].exists)
         app.buttons["toolbar.tab"].tap()
         try await waitUntil { desktop.keyDowns.contains(0xFF09) }
+        info.tap()
+        try await waitUntil { app.descendants(matching: .any)["details.reconnect"].firstMatch.value as? String == "手动重试" }
     }
     #endif
 
@@ -66,6 +341,209 @@ final class SessionUITests: XCTestCase {
     }
 
     #if !targetEnvironment(macCatalyst)
+    func testPinyinCandidateSendsOnlyCommittedCharactersToTheRemoteDesktop() async throws {
+        guard ProcessInfo.processInfo.environment["DESKLINK_TEST_PINYIN"] == "1" else {
+            throw XCTSkip("Requires an active Simplified Chinese Pinyin onscreen keyboard.")
+        }
+        let desktop = LocalTestDisplay()
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString]
+        app.launch()
+        XCTAssertTrue(app.buttons["library.quick"].waitForExistence(timeout: 10))
+        app.open(try XCTUnwrap(URL(string: "vnc://127.0.0.1:\(port)")))
+        let submit = app.buttons["connection.submit"]
+        XCTAssertTrue(submit.waitForExistence(timeout: 8))
+        submit.tap()
+        let toggle = app.buttons["toolbar.keyboard"]
+        try await waitUntil { desktop.frameCount > 0 && toggle.isHittable }
+        try await selectPinyinGreeting(in: app) {
+            XCTAssertEqual(desktop.keyDowns, [], "Uncommitted Pinyin reached the peer.")
+        }
+        let expected: [UInt32] = [0x0100_4F60, 0x0100_597D]
+        try await waitUntil { desktop.keyDowns.count >= expected.count }
+        XCTAssertEqual(desktop.keyDowns, expected)
+        XCTAssertNil(desktop.failure)
+        XCTContext.runActivity(named: "Selected 你好 after five system key taps, peer received only U+4F60 U+597D") { _ in }
+        try await submitPinyinLine(in: app)
+        try await waitUntil { desktop.keyDowns.count > expected.count }
+        XCTAssertEqual(desktop.keyDowns, expected + [0xff0d])
+    }
+
+    func testRaspberryPiAuthenticationPickerHostFingerprintAndLiveEncryptionReport() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let address = env["DESKLINK_RSA_UI_TERMINAL"], let pin = env["DESKLINK_RSA_PIN"],
+              var target = URLComponents(string: address) else { throw XCTSkip("Requires the paired RSA-AES desktop.") }
+        target.user = "chartuser"
+        target.password = "FixtureAccount71!"
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString]
+        app.launch()
+        XCTAssertTrue(app.buttons["library.quick"].waitForExistence(timeout: 10))
+        app.open(try XCTUnwrap(target.url))
+        let picker = app.buttons["connection.authentication"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        picker.tap()
+        app.buttons["Raspberry Pi · RSA-AES"].firstMatch.tap()
+        app.buttons["connection.submit"].tap()
+        let identity = app.alerts.firstMatch
+        XCTAssertTrue(identity.waitForExistence(timeout: 10))
+        let fingerprint = identity.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", pin)).firstMatch
+        guard fingerprint.exists else { return XCTFail("The approval dialog omitted the fixture host fingerprint") }
+        let prompt = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        prompt.name = "RSA host fingerprint on iPad"
+        prompt.lifetime = .keepAlways
+        add(prompt)
+        identity.buttons["记住主机指纹"].tap()
+        let info = app.buttons["session.info"]
+        try await waitUntil(timeout: 20) { info.exists && info.isEnabled }
+        info.tap()
+        let encryption = app.descendants(matching: .any).matching(identifier: "details.encryption").firstMatch
+        try await waitUntil { encryption.value as? String == "RSA-AES-256" }
+        let report = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        report.name = "Authenticated RSA-AES desktop and connection details"
+        report.lifetime = .keepAlways
+        add(report)
+        app.buttons["details.done"].tap()
+        app.buttons["session.close"].tap()
+        try await waitUntil { app.buttons["library.quick"].exists }
+    }
+
+    func testSelectedPinyinCandidateArrivesInTheLinuxTerminal() async throws {
+        guard let address = ProcessInfo.processInfo.environment["DESKLINK_TEST_PINYIN_TERMINAL"],
+              var target = URLComponents(string: address) else { throw XCTSkip("Requires the isolated X11 Pinyin terminal.") }
+        target.user = "fixture"
+        target.password = "Chart42!"
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString]
+        app.launch()
+        XCTAssertTrue(app.buttons["library.quick"].waitForExistence(timeout: 10))
+        app.open(try XCTUnwrap(target.url))
+        let submit = app.buttons["connection.submit"]
+        XCTAssertTrue(submit.waitForExistence(timeout: 8))
+        let form = app.collectionViews["connection.form"].firstMatch
+        let display = app.buttons["显示器"].firstMatch
+        guard reveal(display, in: form) else { return XCTFail("Could not reveal the display settings.") }
+        display.tap()
+        let compatibility = app.switches["connection.tigerKeyboard"].firstMatch
+        guard reveal(compatibility, in: form) else { return XCTFail("Could not reveal the TigerVNC keyboard setting.") }
+        XCTAssertEqual(compatibility.value as? String, "0")
+        compatibility.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+        XCTAssertEqual(compatibility.value as? String, "1")
+        let setting = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        setting.name = "TigerVNC first key compatibility enabled"
+        setting.lifetime = .keepAlways
+        add(setting)
+        submit.tap()
+        try await waitUntil { app.buttons["toolbar.keyboard"].isHittable &&
+            Self.chartFractions(XCUIScreen.main.screenshot().image).first.map { $0 > 0.10 } == true }
+        try await selectPinyinGreeting(in: app)
+        try await submitPinyinLine(in: app)
+        // The terminal turns the X11 root green only on receiving the exact UTF-8 line.
+        try await waitUntil {
+            let colors = Self.chartFractions(XCUIScreen.main.screenshot().image)
+            return colors.count == 4 && colors[2] > 0.04
+        }
+    }
+
+    private func submitPinyinLine(in app: XCUIApplication) async throws {
+        let enter = app.keyboards.firstMatch.descendants(matching: .any).matching(identifier: "Return").firstMatch
+        try await waitUntil { enter.isHittable }
+        enter.tap()
+    }
+
+    private func selectPinyinGreeting(in app: XCUIApplication, whileComposing: () -> Void = {}) async throws {
+        app.buttons["toolbar.keyboard"].tap()
+        let keyboard = app.keyboards.firstMatch
+        try await waitUntil { keyboard.exists && keyboard.frame.height > 0 }
+        for character in "nihao" {
+            let key = keyboard.keys.matching(NSPredicate(format: "label ==[c] %@", String(character))).firstMatch
+            try await waitUntil { key.exists && key.isHittable &&
+                app.frame.contains(CGPoint(x: key.frame.midX, y: key.frame.midY)) }
+            key.tap()
+            whileComposing()
+        }
+        let candidate = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@ OR identifier == %@", "你好", "你好")).firstMatch
+        XCTAssertTrue(candidate.waitForExistence(timeout: 6), "The system IME did not expose the expected candidate.")
+        XCTAssertTrue(candidate.isHittable)
+        whileComposing()
+        candidate.tap()
+    }
+
+    func testUpwardSwipeOnKeyboardShortcutStripReachesRemoteBottomEdge() async throws {
+        try await verifyKeyboardToolbarEdgeSwipe(floating: false)
+    }
+
+    func testUpwardSwipeOnFloatingKeyboardShortcutStripReachesRemoteBottomEdge() async throws {
+        try await verifyKeyboardToolbarEdgeSwipe(floating: true)
+    }
+
+    private func verifyKeyboardToolbarEdgeSwipe(floating: Bool) async throws {
+        let desktop = LocalTestDisplay(hasTwoMonitors: true)
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString]
+        app.launch()
+        XCTAssertTrue(app.buttons["library.quick"].waitForExistence(timeout: 10))
+        if floating { selectToolbar("浮动", in: app) }
+        app.open(try XCTUnwrap(URL(string: "vnc://127.0.0.1:\(port)")))
+        let host = app.textFields["connection.host"]
+        XCTAssertTrue(host.waitForExistence(timeout: 8))
+        host.tap()
+        let softwareKeyboard = app.keyboards.firstMatch
+        XCTAssertTrue(softwareKeyboard.waitForExistence(timeout: 8))
+        let letter = softwareKeyboard.keys.matching(NSPredicate(format: "label ==[c] %@ OR identifier ==[c] %@", "a", "a")).firstMatch
+        let controlKey = letter.exists ? letter.frame : .zero
+        XCTContext.runActivity(named: "Address field keyboard \(softwareKeyboard.frame), A \(controlKey)") { _ in }
+        app.buttons["connection.submit"].tap()
+        let monitors = app.buttons["session.monitors"]
+        try await waitUntil { desktop.frameCount > 0 && monitors.isHittable }
+        monitors.tap()
+        app.buttons["显示器 2"].firstMatch.tap()
+        let keyboard = app.buttons["toolbar.keyboard"]
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 6))
+        keyboard.tap()
+        XCTAssertTrue(softwareKeyboard.waitForExistence(timeout: 8))
+        let tab = app.buttons["toolbar.tab"]
+        func recordKeyboard(_ stage: String) {
+            let keyFrame = letter.exists ? letter.frame : .zero
+            XCTContext.runActivity(named: "\(stage) window \(app.frame), keyboard \(softwareKeyboard.frame), A \(keyFrame), Tab \(tab.frame)") { activity in
+                let image = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+                image.name = stage
+                image.lifetime = .keepAlways
+                activity.add(image)
+            }
+        }
+        func hasVisibleKeyboard() -> Bool {
+            guard letter.exists, letter.isHittable, app.frame.contains(CGPoint(x: letter.frame.midX, y: letter.frame.midY)),
+                  tab.isHittable else { return false }
+            return tab.frame.maxY <= letter.frame.minY
+        }
+        do { try await waitUntil { hasVisibleKeyboard() } }
+        catch { recordKeyboard("Before swipe"); throw error }
+        let start = tab.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.03, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -110)),
+                    withVelocity: .fast, thenHoldForDuration: 0)
+        try await waitUntil { desktop.latestPointer.map { (80...159).contains($0.x) && $0.y == 95 } == true }
+        let point = try XCTUnwrap(desktop.latestPointer)
+        XCTAssertEqual(desktop.clicks, 0)
+        XCTAssertEqual(desktop.keys, 0)
+        recordKeyboard("After swipe")
+        XCTAssertTrue(hasVisibleKeyboard())
+        XCTContext.runActivity(named: "Keyboard strip moved remote pointer to \(Int(point.x)),\(Int(point.y))") { _ in }
+        tab.tap()
+        try await waitUntil { desktop.keyDowns == [0xff09] }
+        let backspace = softwareKeyboard.keys.matching(NSPredicate(
+            format: "identifier IN %@ OR label IN %@",
+            ["delete", "Delete", "Backspace", "删除", "退格"], ["delete", "Delete", "Backspace", "删除", "退格"])).firstMatch
+        XCTAssertTrue(backspace.exists && backspace.isHittable)
+        backspace.tap()
+        try await waitUntil { desktop.keyDowns == [0xff09, 0xff08] }
+    }
+
     func testInwardEdgeAndCornerSwipesMoveToTheSelectedDisplayWithoutClicking() async throws {
         let desktop = LocalTestDisplay(hasTwoMonitors: true)
         let port = try await desktop.start()
@@ -78,18 +556,48 @@ final class SessionUITests: XCTestCase {
         app.buttons["显示器 2"].firstMatch.tap()
         let surface = app.descendants(matching: .any).matching(identifier: "session.input").firstMatch
         XCTAssertTrue(surface.waitForExistence(timeout: 6))
-        let origin = surface.coordinate(withNormalizedOffset: .zero)
-        let width = surface.frame.width, height = surface.frame.height
-        let right = origin.withOffset(CGVector(dx: width - 16, dy: height * 0.52))
-        right.press(forDuration: 0.03, thenDragTo: right.withOffset(CGVector(dx: -96, dy: 0)),
-                    withVelocity: .fast, thenHoldForDuration: 0)
-        try await waitUntil { desktop.latestPointer?.x == 159 }
-        let mappedY = try XCTUnwrap(desktop.latestPointer?.y)
-        XCTAssertTrue((20...76).contains(mappedY))
-        let corner = origin.withOffset(CGVector(dx: 16, dy: height - 16))
-        corner.press(forDuration: 0.03, thenDragTo: corner.withOffset(CGVector(dx: 96, dy: -96)),
-                     withVelocity: .fast, thenHoldForDuration: 0)
-        try await waitUntil { desktop.latestPointer == CGPoint(x: 80, y: 95) }
+        let frame = surface.frame
+        let origin = app.coordinate(withNormalizedOffset: .zero).withOffset(
+            CGVector(dx: frame.minX - app.frame.minX, dy: frame.minY - app.frame.minY))
+        let width = frame.width, height = frame.height
+        func stroke(_ start: CGPoint, dx: CGFloat, dy: CGFloat) {
+            let point = origin.withOffset(CGVector(dx: start.x, dy: start.y))
+            point.press(forDuration: 0.03, thenDragTo: point.withOffset(CGVector(dx: dx, dy: dy)),
+                        withVelocity: .fast, thenHoldForDuration: 0)
+        }
+        let left: CGFloat = 16, right = width - 16, top: CGFloat = 16, bottom = height - 16
+        // The second display spans x = 80...159 and y = 0...95 in the combined framebuffer.
+        let cases: [(CGPoint, CGFloat, CGFloat, ClosedRange<CGFloat>, ClosedRange<CGFloat>)] = [
+            (CGPoint(x: right, y: height / 2), -96, 0, 159...159, 20...76),
+            (CGPoint(x: left, y: height / 2), 96, 0, 80...80, 20...76),
+            (CGPoint(x: width / 2, y: top), 0, 96, 100...140, 0...0),
+            (CGPoint(x: width / 2, y: bottom), 0, -96, 100...140, 95...95),
+            (CGPoint(x: left, y: bottom), 96, -96, 80...80, 95...95),
+            (CGPoint(x: right, y: bottom), -96, -96, 159...159, 95...95),
+            (CGPoint(x: left, y: top), 96, 96, 80...80, 0...0),
+            (CGPoint(x: right, y: top), -96, 96, 159...159, 0...0)
+        ]
+        for (start, dx, dy, x, y) in cases {
+            stroke(start, dx: dx, dy: dy)
+            do {
+                try await waitUntil { desktop.latestPointer.map { x.contains($0.x) && y.contains($0.y) } == true }
+            } catch {
+                XCTFail("Inward swipe from \(start) expected x \(x), y \(y); received \(String(describing: desktop.latestPointer)).")
+                return
+            }
+            let point = try XCTUnwrap(desktop.latestPointer)
+            XCTContext.runActivity(named: "Remote edge position \(Int(point.x)),\(Int(point.y))") { _ in }
+        }
+        XCTAssertEqual(desktop.clicks, 0)
+        XCTAssertEqual(desktop.scrollTicks, 0)
+        let mode = app.buttons["session.mode"]
+        mode.tap()
+        try await waitUntil { mode.label == "仅观察" }
+        try await waitUntil { !surface.exists }
+        let previous = desktop.latestPointer
+        stroke(CGPoint(x: left, y: height / 2), dx: 96, dy: 0)
+        XCTAssertTrue(mode.exists)
+        XCTAssertEqual(desktop.latestPointer, previous)
         XCTAssertEqual(desktop.clicks, 0)
         XCTAssertEqual(desktop.scrollTicks, 0)
     }
@@ -224,6 +732,60 @@ final class SessionUITests: XCTestCase {
         }
     }
 
+    func testDraggingToTheNearbyDownloadTargetRequestsOnlyTheChosenFile() async throws {
+        let desktop = LocalTestDisplay(appleScalingCapability: false, offersDraggedFile: true)
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        openChart(app, port: port)
+        try await waitUntil { desktop.frameCount > 0 && app.buttons["session.mode"].exists }
+        let file = app.coordinate(withNormalizedOffset: CGVector(dx: 0.48, dy: 0.57))
+        let outside = file.withOffset(CGVector(dx: 24, dy: 160))
+        file.press(forDuration: 1.2, thenDragTo: outside, withVelocity: .slow, thenHoldForDuration: 0.4)
+        try await waitUntil { desktop.heldLeftX.count > 1 }
+        XCTAssertEqual(desktop.downloadRequests, 0)
+        let target = file.withOffset(CGVector(dx: 78, dy: -44))
+        file.press(forDuration: 1.2, thenDragTo: target, withVelocity: .slow, thenHoldForDuration: 0.4)
+        try await waitUntil { desktop.downloadRequests == 1 || desktop.failure != nil }
+        XCTAssertNil(desktop.failure)
+        XCTAssertEqual(desktop.downloadRequests, 1)
+    }
+
+    func testConnectionDragDelayOverridesTheApplicationDefault() async throws {
+        for shortDelay in [true, false] {
+            let desktop = LocalTestDisplay()
+            let port = try await desktop.start()
+            defer { desktop.stop() }
+            let app = XCUIApplication()
+            app.launchArguments = ["--test-library", UUID().uuidString]
+            app.launch()
+            app.buttons["library.quick"].tap()
+            applyLink("vnc://127.0.0.1:\(port)", in: app)
+            let display = app.buttons["显示器"].firstMatch
+            for _ in 0..<4 where !display.isHittable { app.swipeUp() }
+            display.tap()
+            let toggle = app.switches["connection.customDragDelay"].firstMatch
+            for _ in 0..<8 where !toggle.isHittable { app.swipeUp() }
+            XCTAssertEqual(toggle.value as? String, "0")
+            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+            XCTAssertEqual(toggle.value as? String, "1")
+            let slider = app.sliders["connection.dragDelay"]
+            for _ in 0..<3 where !slider.isHittable { app.swipeUp() }
+            slider.adjust(toNormalizedSliderPosition: shortDelay ? 0 : 1)
+            app.buttons["connection.submit"].tap()
+            try await waitUntil { desktop.frameCount > 0 && app.buttons["session.mode"].exists }
+            let point = app.coordinate(withNormalizedOffset: CGVector(dx: 0.42, dy: 0.42))
+            point.press(forDuration: 0.42, thenDragTo: point.withOffset(CGVector(dx: 100, dy: 165)))
+            if shortDelay {
+                try await waitUntil { desktop.heldLeftX.count >= 2 }
+            } else {
+                try await waitUntil { desktop.scrollTicks > 0 }
+                XCTAssertTrue(desktop.heldLeftX.isEmpty)
+            }
+            app.buttons["session.close"].tap()
+        }
+    }
+
     func testConnectionDetailsCountInputWrittenToTheDesktop() async throws {
         let desktop = LocalTestDisplay()
         let port = try await desktop.start()
@@ -317,6 +879,67 @@ final class SessionUITests: XCTestCase {
         target.tap()
         XCTAssertEqual(desktop.clicks, before)
         app.buttons["session.close"].tap()
+    }
+
+    func testSharedMacAccessLinksOpenWithTheExternalPortOnTheCorrectService() throws {
+        let env = ProcessInfo.processInfo.environment
+        let json = env["DESKLINK_MAC_ACCESS_LINKS"] ?? #"{"ssh":"desklink://[2001:db8::10]?ssh=42422","direct":"desklink://[2001:db8::10]:42422"}"#
+        let links = try JSONDecoder().decode([String: URL].self, from: Data(json.utf8))
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString]
+        app.launch()
+        XCTAssertTrue(app.buttons["library.quick"].waitForExistence(timeout: 10))
+        for kind in ["direct", "ssh"] {
+            app.open(try XCTUnwrap(links[kind]))
+            let host = app.textFields["connection.host"]
+            XCTAssertTrue(host.waitForExistence(timeout: 10))
+            XCTAssertEqual(host.value as? String, "2001:db8::10")
+            XCTAssertEqual(app.textFields["connection.port"].value as? String, kind == "ssh" ? "5900" : "42422")
+            if kind == "ssh" {
+                let port = app.textFields["connection.sshPort"]
+                for _ in 0..<4 where !port.exists { app.swipeUp() }
+                XCTAssertEqual(port.value as? String, "42422")
+            }
+            app.buttons["取消"].firstMatch.tap()
+            XCTAssertTrue(app.buttons["library.quick"].waitForExistence(timeout: 8))
+        }
+    }
+
+    func testSystemVNCAndSSHLinksOpenTheCorrespondingConnectionForms() async throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString]
+        app.launch()
+        XCTAssertTrue(app.buttons["library.quick"].waitForExistence(timeout: 10))
+
+        let desktop = LocalTestDisplay()
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let url = try XCTUnwrap(URL(string: "vnc://127.0.0.1:\(port)?observe=1"))
+        app.open(url)
+        let submit = app.buttons["connection.submit"]
+        XCTAssertTrue(submit.waitForExistence(timeout: 10))
+        XCTAssertEqual(app.textFields["connection.port"].value as? String, String(port))
+        XCTAssertEqual(desktop.frameCount, 0)
+        submit.tap()
+        try await waitUntil { desktop.frameCount > 0 && app.buttons["session.mode"].exists }
+        XCTAssertEqual(app.buttons["session.mode"].label, "仅观察")
+        app.buttons["session.close"].tap()
+        XCTAssertTrue(app.buttons["library.quick"].waitForExistence(timeout: 10))
+
+        for scheme in ["ssh", "screens-ssh"] {
+            app.open(try XCTUnwrap(URL(string: scheme + "://reader@studio.fixture.invalid:2203")))
+            XCTAssertTrue(submit.waitForExistence(timeout: 10))
+            XCTAssertEqual(app.textFields["connection.host"].value as? String, "studio.fixture.invalid")
+            XCTAssertEqual(app.textFields["connection.port"].value as? String, "5900")
+            let sshPort = app.textFields["connection.sshPort"]
+            for _ in 0..<4 where !sshPort.exists { app.swipeUp() }
+            XCTAssertEqual(sshPort.value as? String, "2203")
+            let sshUser = app.textFields["connection.sshUsername"]
+            for _ in 0..<4 where !sshUser.exists { app.swipeUp() }
+            XCTAssertEqual(sshUser.value as? String, "reader")
+            app.buttons["取消"].firstMatch.tap()
+            XCTAssertTrue(app.buttons["library.quick"].waitForExistence(timeout: 8))
+        }
     }
 
     func testQuickLinkKeepsObservationModeAndWaitsForExplicitConnection() async throws {
@@ -576,8 +1199,10 @@ final class SessionUITests: XCTestCase {
 
     private func waitUntil(timeout: TimeInterval = 12, _ check: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
-        while !check() && Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
-        guard check() else { throw TimedOut() }
+        while !check() {
+            guard Date() < deadline else { throw TimedOut() }
+            try await Task.sleep(for: .milliseconds(100))
+        }
     }
 
     private struct TimedOut: LocalizedError {
@@ -586,14 +1211,21 @@ final class SessionUITests: XCTestCase {
 
     private static func hasColorChart(_ screenshot: UIImage, minimumFraction: Double = 0.005,
                                       visible: Set<Int> = [0, 1, 2, 3]) -> Bool {
-        guard let image = screenshot.cgImage else { return false }
+        let fractions = chartFractions(screenshot)
+        return fractions.count == 4 && fractions.enumerated().allSatisfy { index, fraction in
+            visible.contains(index) ? fraction > minimumFraction : fraction < 0.02
+        }
+    }
+
+    private static func chartFractions(_ screenshot: UIImage) -> [Double] {
+        guard let image = screenshot.cgImage else { return [] }
         let dimension = 64
         var bytes = [UInt8](repeating: 0, count: dimension * dimension * 4)
         let colors = [[31,89,165], [241,183,69], [52,174,146], [223,102,88]]
         return bytes.withUnsafeMutableBytes { storage in
             guard let context = CGContext(data: storage.baseAddress, width: dimension, height: dimension,
                 bitsPerComponent: 8, bytesPerRow: dimension * 4, space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return false }
+                bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return [] }
             context.draw(image, in: CGRect(x: 0, y: 0, width: dimension, height: dimension))
             let pixels = storage.bindMemory(to: UInt8.self)
             var counts = [Int](repeating: 0, count: 4)
@@ -603,10 +1235,7 @@ final class SessionUITests: XCTestCase {
                     counts[color] += 1
                 }
             }
-            return counts.enumerated().allSatisfy { index, count in
-                let fraction = Double(count) / Double(dimension * dimension)
-                return visible.contains(index) ? fraction > minimumFraction : fraction < 0.02
-            }
+            return counts.map { Double($0) / Double(dimension * dimension) }
         }
     }
 }

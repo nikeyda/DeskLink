@@ -8,7 +8,7 @@ xcodebuild -quiet -project DeskLink.xcodeproj -scheme DeskLink -configuration De
     -derivedDataPath .build/Xcode -clonedSourcePackagesDirPath .build/Packages \
     -onlyUsePackageVersionsFromResolvedFile -jobs 6 \
     COMPILER_INDEX_STORE_ENABLE=NO build
-bundle="$PWD/.build/Xcode/Build/Products/Debug-maccatalyst/DeskLink.app"
+bundle="$PWD/.build/Xcode/Build/Products/Debug-maccatalyst/Telescope.app"
 codesign --verify --strict "$bundle"
 # Stop only a process launched from this project's build product.
 binary="$bundle/Contents/MacOS/DeskLink"

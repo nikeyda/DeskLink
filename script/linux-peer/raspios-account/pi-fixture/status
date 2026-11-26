@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+cd /var/lib/desklink-test
+/usr/bin/dpkg-query -W -f='DESKLINK_PI_PACKAGE ${Package} ${Version}\n' wayvnc labwc systemd libpam-systemd
+for i in $(seq 1 120); do
+    if ss -lnt | grep -q '127.0.0.1:5903 ' &&
+       wayvncctl --socket=/tmp/wayvnc/wayvncctl.sock output-list 2>/dev/null | grep -q HEADLESS-1; then
+        echo DESKLINK_WAYVNC_READY
+        journalctl -b -f -n 0 -o cat -u wayvnc.service -u wayvnc-control.service &
+        exec tail -n +1 -s 0.1 -f results/input-events
+    fi
+    if [ "$i" = 15 ] || [ "$i" = 60 ]; then
+        systemctl --no-pager --failed || true
+        loginctl list-sessions --no-legend || true
+        journalctl -b --no-pager -n 16 -u wayvnc -u wayvnc-control -u desklink-session || true
+    fi
+    sleep 0.5
+done
+echo DESKLINK_PI_NO_SERVER

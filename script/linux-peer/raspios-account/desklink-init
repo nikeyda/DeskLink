@@ -1,0 +1,78 @@
+#!/bin/sh
+# Ephemeral boot environment for the distribution's own login service.
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+mount -t devtmpfs devtmpfs /dev
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+exec </dev/console >/dev/console 2>&1
+set -eu
+trap 'echo DESKLINK_PI_INIT_FAILED; poweroff -f' EXIT
+echo DESKLINK_PI_RAMDISK
+mkdir -p /dev/pts /dev/shm
+mount -t devpts devpts /dev/pts
+mount -t tmpfs -o mode=1777,size=64m tmpfs /dev/shm
+ip link set lo up
+mkdir -p /modules /base /ram /newroot
+modprobe loop
+modprobe squashfs
+mount -t squashfs -o loop,ro /modloop /modules
+mount -o bind /modules/modules /lib/modules
+modprobe virtio_blk
+modprobe ext4
+modprobe overlay
+modprobe vmw_vsock_virtio_transport
+for attempt in $(seq 1 60); do
+    [ -b /dev/vda2 ] && break
+    sleep 0.1
+done
+mount -t ext4 -o ro,noload /dev/vda2 /base
+mount -t tmpfs -o size=650m tmpfs /ram
+mkdir /ram/upper /ram/work
+mount -t overlay overlay -o lowerdir=/base,upperdir=/ram/upper,workdir=/ram/work /newroot
+mkdir -p /newroot/run /newroot/usr/lib/modules /newroot/var/lib/desklink-test
+cfg=/newroot/var/lib/desklink-test
+cp -a /pi-fixture/. "$cfg/"
+chmod 755 "$cfg/received-return" "$cfg/start-session" "$cfg/chart.py" "$cfg/bridge.py" "$cfg/status"
+keys=/newroot/etc/wayvnc/desklink-identity
+mkdir -p "$keys"
+cp /test-tls/cert.pem /test-tls/key.pem "$keys/"
+# Use the distribution's server and control units. Only the test identity and
+# local listening address differ in the temporary filesystem.
+cfgfile=/newroot/etc/wayvnc/config
+sed -i '/^address=/d; /^port=/d; /^certificate_file=/d; /^private_key_file=/d; /^rsa_private_key_file=/d' "$cfgfile"
+printf '%s\n' 'address=127.0.0.1' 'port=5903' 'certificate_file=/etc/wayvnc/desklink-identity/cert.pem' 'private_key_file=/etc/wayvnc/desklink-identity/key.pem' 'rsa_private_key_file=/etc/wayvnc/desklink-identity/rsa.pem' >> "$cfgfile"
+grep -q '^enable_pam=true' "$cfgfile"
+grep -q '^enable_auth=true' "$cfgfile"
+cmp /base/etc/pam.d/wayvnc /newroot/etc/pam.d/wayvnc
+awk '!/^#/ && NF {print "DESKLINK_STOCK_PAM", $0}' /base/etc/pam.d/wayvnc
+sha256sum /base/etc/pam.d/wayvnc /newroot/etc/pam.d/wayvnc
+for unit in /base/usr/lib/systemd/system/wayvnc*.service; do
+    [ -f "$unit" ] && awk '/^(User|Group|SupplementaryGroups|ExecStart)=/ {print "DESKLINK_PI_UNIT", $0}' "$unit"
+done
+mount -o bind /lib/modules /newroot/usr/lib/modules
+# The board's fstab describes an SD card. This boot instead uses a RAM overlay
+# above the read-only virtio disk and a separate ephemeral machine identity.
+: >/newroot/etc/fstab
+tr -d '-' </proc/sys/kernel/random/uuid >/newroot/etc/machine-id
+echo desklink-pi-test >/newroot/etc/hostname
+mkdir -p /newroot/dev/pts /newroot/sys /newroot/proc
+mount -o move /sys /newroot/sys
+mount -o move /proc /newroot/proc
+mount -o move /dev /newroot/dev
+chroot /newroot /usr/bin/openssl rsa -in /etc/wayvnc/desklink-identity/key.pem \
+    -traditional -out /etc/wayvnc/desklink-identity/rsa.pem
+chroot /newroot chown -R vnc:vnc /etc/wayvnc/desklink-identity
+chmod 700 "$keys"
+chmod 600 "$keys/"*.pem
+chroot /newroot /usr/sbin/useradd -m -s /bin/sh fixture
+chroot /newroot /usr/sbin/useradd -m -s /bin/sh deskother
+printf '%s\n' 'fixture:WaylandFixture42' 'deskother:OtherFixture72!' | chroot /newroot /usr/sbin/chpasswd
+chown -R 0:0 "$cfg"
+mkdir "$cfg/results"
+: > "$cfg/results/input-events"
+chroot /newroot chown -R fixture:fixture /var/lib/desklink-test/results
+units=/newroot/etc/systemd/system
+cp "$cfg"/desklink-*.service "$cfg"/desklink-test.target "$units/"
+ln -sf /etc/systemd/system/desklink-test.target "$units/default.target"
+echo DESKLINK_PI_SYSTEM_BOOT
+exec switch_root /newroot /lib/systemd/systemd --unit=desklink-test.target

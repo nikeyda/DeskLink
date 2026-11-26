@@ -28,7 +28,11 @@ final class PhysicalSessionUITests: XCTestCase {
         app.buttons["以高性能模式连接"].firstMatch.tap()
         let address = app.textFields["connection.host"]
         XCTAssertTrue(address.waitForExistence(timeout: 8))
-        XCTAssertEqual((address.value as? String)?.lowercased(), host.lowercased())
+        func dnsName(_ value: String) -> String {
+            let lower = value.lowercased()
+            return lower.hasSuffix(".") ? String(lower.dropLast()) : lower
+        }
+        XCTAssertEqual(dnsName(try XCTUnwrap(address.value as? String)), dnsName(host))
         XCTAssertTrue(app.buttons["connection.submit"].isEnabled)
     }
 

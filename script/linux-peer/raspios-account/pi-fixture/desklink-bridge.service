@@ -1,0 +1,8 @@
+[Unit]
+Description=Paired test route to local WayVNC
+
+[Service]
+User=fixture
+ExecStart=/usr/bin/python3 /var/lib/desklink-test/bridge.py
+StandardOutput=journal+console
+StandardError=journal+console

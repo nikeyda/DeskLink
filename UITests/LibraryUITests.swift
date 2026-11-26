@@ -2,6 +2,85 @@ import XCTest
 
 @MainActor
 final class LibraryUITests: XCTestCase {
+    func testEmptyLibraryOpensTheSaveAndQuickConnectionEditors() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString]
+        app.launch()
+        let save = app.buttons["library.empty.new"].firstMatch
+        XCTAssertTrue(save.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["添加第一台电脑"].firstMatch.exists)
+        let emptyLibrary = XCTAttachment(screenshot: app.screenshot())
+        emptyLibrary.name = "Empty connection library"
+        emptyLibrary.lifetime = .keepAlways
+        add(emptyLibrary)
+        save.tap()
+        XCTAssertTrue(app.textFields["connection.name"].firstMatch.waitForExistence(timeout: 5))
+        app.buttons["取消"].firstMatch.tap()
+        let quick = app.buttons["library.empty.quick"].firstMatch
+        XCTAssertTrue(quick.waitForExistence(timeout: 5))
+        quick.tap()
+        XCTAssertTrue(app.textFields["connection.host"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.textFields["connection.name"].firstMatch.exists)
+        XCTAssertFalse(app.buttons["connection.submit"].firstMatch.isEnabled)
+        app.buttons["取消"].firstMatch.tap()
+        let favorites = app.staticTexts["收藏"].firstMatch
+        if !favorites.isHittable, app.buttons["显示边栏"].firstMatch.isHittable {
+            app.buttons["显示边栏"].firstMatch.tap()
+        }
+        XCTAssertTrue(favorites.waitForExistence(timeout: 5))
+        favorites.tap()
+        XCTAssertTrue(app.staticTexts["还没有收藏的电脑"].firstMatch.waitForExistence(timeout: 5))
+        app.buttons["library.empty.all"].firstMatch.tap()
+        XCTAssertTrue(save.waitForExistence(timeout: 5))
+    }
+
+    func testListShowsTheFolderBesideTheSavedComputer() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString]
+        app.launch()
+        let more = app.buttons["library.more"]
+        XCTAssertTrue(more.waitForExistence(timeout: 10))
+
+        func choose(_ title: String) {
+            more.tap()
+            let action = app.buttons[title].firstMatch
+            if action.exists { action.tap() } else { app.menuItems[title].firstMatch.tap() }
+        }
+        let folder = "Studio QA"
+        choose("新建文件夹")
+        let name = app.alerts.textFields.firstMatch
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.tap()
+        name.typeText(folder)
+        let saveFolder = app.alerts.buttons["保存"].firstMatch
+        XCTAssertEqual(name.value as? String, folder)
+        XCTAssertTrue(saveFolder.wait(for: \.isEnabled, toEqual: true, timeout: 5))
+        saveFolder.tap()
+        XCTAssertTrue(app.alerts["新建文件夹"].waitForNonExistence(timeout: 5))
+        app.buttons["library.new"].tap()
+        let host = app.textFields["connection.host"]
+        XCTAssertTrue(host.waitForExistence(timeout: 5))
+        host.tap()
+        host.typeText("group-test.invalid")
+        app.buttons["connection.submit"].tap()
+        let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.computer.")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        choose("列表")
+        XCTAssertFalse(row.label.contains(folder))
+        app.descendants(matching: .any).matching(identifier: "library.all").firstMatch.tap()
+        let grouped = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@ AND label CONTAINS %@",
+            "library.computer.", "group-test.invalid", folder)).firstMatch
+        XCTAssertTrue(grouped.waitForExistence(timeout: 5))
+        #if targetEnvironment(macCatalyst)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        #else
+        let capture = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        #endif
+        capture.name = "Grouped connection list"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
     #if targetEnvironment(simulator)
     func testOpenArchiveDocumentTwiceUsingTheSystemFileRoute() throws {
         let app = XCUIApplication()
@@ -168,6 +247,126 @@ final class LibraryUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(entry.waitForExistence(timeout: 10))
     }
+
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+    func testImportScreensArchiveUsingSystemPicker() throws {
+        guard let raw = ProcessInfo.processInfo.environment["DESKLINK_SCREENS_DOCUMENT"],
+              let id = UUID(uuidString: raw) else { throw XCTSkip("Requires the known synthetic .screens file on the iPad.") }
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString]
+        app.launch()
+        let more = app.buttons["library.more"]
+        XCTAssertTrue(more.waitForExistence(timeout: 10))
+        more.tap()
+        app.buttons["导入"].tap()
+        func named(_ labels: [String]) -> XCUIElement {
+            app.descendants(matching: .any).matching(NSPredicate(format: "label IN %@ OR identifier IN %@", labels, labels)).firstMatch
+        }
+        let grid = app.collectionViews["File View"].cells
+        let document = grid.matching(NSPredicate(format: "identifier CONTAINS[c] %@ OR label CONTAINS[c] %@", raw, raw)).firstMatch
+        func choose(_ element: XCUIElement, _ name: String) throws {
+            guard element.waitForExistence(timeout: 8), element.isHittable else {
+                #if targetEnvironment(simulator)
+                let snapshot = XCTAttachment(screenshot: app.screenshot())
+                snapshot.name = "Archive picker at " + name
+                snapshot.lifetime = .keepAlways
+                add(snapshot)
+                #endif
+                throw NSError(domain: "TelescopeArchiveTest", code: 1, userInfo: [NSLocalizedDescriptionKey: "Picker did not show " + name])
+            }
+            let icon = element.images.firstMatch
+            if icon.exists { icon.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+            else { element.tap() }
+        }
+        if !document.waitForExistence(timeout: 2) {
+            let names = ["On My iPad", "在我的 iPad 上", "我的iPad", "我的 iPad"]
+            let location = app.cells.containing(NSPredicate(format: "label IN %@", names)).firstMatch
+            let sidebar = app.buttons["ToggleSideBar"]
+            if !location.isHittable, sidebar.isHittable { sidebar.tap() }
+            try choose(location.isHittable ? location : named(names), "On My iPad")
+            let buttons = app.buttons.matching(NSPredicate(format: "label IN %@", ["Search", "搜索"]))
+            if let searchButton = buttons.allElementsBoundByIndex.last(where: { $0.isHittable }) {
+                searchButton.tap()
+                // Files owns the focused field in a separate process. The app's
+                // search field behind the sheet remains visible to XCTest.
+                XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+                app.typeText(raw + "\n")
+                let suggestion = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", raw)).firstMatch
+                if suggestion.waitForExistence(timeout: 2), suggestion.isHittable { suggestion.tap() }
+            } else {
+                let container = grid.matching(NSPredicate(format: "identifier BEGINSWITH %@ OR identifier BEGINSWITH %@", "远程随航,", "Telescope,")).firstMatch
+                try choose(container, "Telescope")
+                let downloads = grid.matching(NSPredicate(format: "label BEGINSWITH[c] %@ OR label BEGINSWITH %@", "Downloads", "下载")).firstMatch
+                try choose(downloads, "Downloads")
+            }
+        }
+        try choose(document, raw)
+        let confirm = app.buttons.matching(NSPredicate(format: "label IN %@", ["打开", "Open"])).firstMatch
+        if confirm.isHittable { confirm.tap() }
+        let result = app.alerts["导入完成"]
+        XCTAssertTrue(result.waitForExistence(timeout: 10))
+        XCTAssertTrue(result.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "SSH")).firstMatch.exists)
+        result.buttons.firstMatch.tap()
+        XCTAssertTrue(app.buttons["library.computer." + id.uuidString].waitForExistence(timeout: 8))
+    }
+
+    func testOpenReceivedArchiveFromSystemFiles() throws {
+        guard let raw = ProcessInfo.processInfo.environment["DESKLINK_FILES_FIXTURE"], let id = UUID(uuidString: raw) else {
+            throw XCTSkip("Run after receiving the matching archive on this iPad.")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString]
+        app.launch()
+        XCTAssertTrue(app.buttons["library.new"].waitForExistence(timeout: 10))
+        let files = XCUIApplication(bundleIdentifier: "com.apple.DocumentsApp")
+        files.activate()
+        func named(_ labels: [String]) -> XCUIElement {
+            files.descendants(matching: .any).matching(NSPredicate(format: "label IN %@ OR identifier IN %@", labels, labels)).firstMatch
+        }
+        let cells = files.collectionViews["File View"].cells
+        func folder(_ labels: [String]) -> XCUIElement {
+            cells.containing(NSPredicate(format: "label IN %@", labels)).firstMatch
+        }
+        func openItem(_ entry: XCUIElement, named label: String) throws {
+            guard entry.waitForExistence(timeout: 10) else {
+                throw CocoaError(.fileReadNoSuchFile, userInfo: [NSLocalizedDescriptionKey: "Files did not list " + label])
+            }
+            let icon = entry.images.firstMatch
+            if icon.exists { icon.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+            else { entry.tap() }
+        }
+        let start = named(["Continue", "继续"])
+        if start.waitForExistence(timeout: 2), start.isHittable { start.tap() }
+        let appNames = ["远程随航", "Telescope"]
+        let local = ["On My iPad", "在我的 iPad 上", "我的iPad", "我的 iPad"]
+        let appFolder = folder(appNames)
+        let downloads = folder(["Downloads", "下载项", "下载"])
+        let base = "DeskLink-" + id.uuidString
+        let document = cells.matching(NSPredicate(format: "identifier CONTAINS[c] %@ OR label CONTAINS[c] %@", id.uuidString, id.uuidString)).firstMatch
+        if !document.exists {
+            if !appFolder.exists {
+                let browse = named(["Browse", "浏览"])
+                if browse.exists, browse.isHittable { browse.tap() }
+                let location = files.cells.containing(NSPredicate(format: "label IN %@", local)).firstMatch
+                let sidebar = files.buttons["ToggleSideBar"]
+                if !location.isHittable, sidebar.isHittable { sidebar.tap() }
+                let localEntry = location.isHittable ? location : named(local)
+                XCTAssertTrue(localEntry.waitForExistence(timeout: 6))
+                localEntry.tap()
+            }
+            // Another provider can also have a Downloads folder. Enter ours from On My iPad.
+            try openItem(appFolder, named: appNames[0])
+            try openItem(downloads, named: "Downloads")
+        }
+        try openItem(document, named: base)
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        let result = app.alerts["导入完成"]
+        XCTAssertTrue(result.waitForExistence(timeout: 8))
+        result.buttons.firstMatch.tap()
+        XCTAssertTrue(app.buttons["library.computer." + id.uuidString].waitForExistence(timeout: 8))
+    }
+
+    #endif
 
     func testTransferLibraryAndPreferences() throws {
         let app = XCUIApplication()

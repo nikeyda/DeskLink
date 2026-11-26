@@ -1,10 +1,59 @@
 import CoreImage
 import CoreMedia
 @testable import RFBRendering
+import rootshellVNC
 import XCTest
 import os
 
 final class MediaPlaybackTests: XCTestCase {
+    @MainActor
+    func testHighPerformanceCloseWaitsForManualRetryAndStandardCloseRecovers() async throws {
+        #if targetEnvironment(macCatalyst)
+        guard let port = ProcessInfo.processInfo.environment["DESKLINK_CLOSE_PEER_PORT"].flatMap(UInt16.init) else {
+            throw XCTSkip("Start the loopback test peer with --close-check and specify its port.")
+        }
+        #else
+        let peer = LocalTestDisplay()
+        let port = try await peer.start()
+        defer { peer.stop() }
+        #endif
+        var configuration = VNCConfiguration()
+        configuration.reconnectionPolicy.isEnabled = true
+        let session = VNCSession(configuration: configuration)
+        defer { session.disconnect() }
+        var connections = 0
+        session.onServerClipboardText = { if $0 == "DeskLink clipboard fixture" { connections += 1 } }
+        func wait(until condition: () -> Bool) async throws {
+            let deadline = ContinuousClock.now + .seconds(10)
+            while !condition() {
+                guard ContinuousClock.now < deadline else { throw URLError(.timedOut) }
+                try await Task.sleep(for: .milliseconds(35))
+            }
+        }
+        func endRemoteTransport() {
+            #if targetEnvironment(macCatalyst)
+            session.sendClipboardText("DeskLink end sharing")
+            #else
+            peer.dropCurrentConnection()
+            #endif
+        }
+        try await session.connect(credentials: VNCCredentials(host: "127.0.0.1", port: port, password: ""))
+        try await wait { connections == 1 }
+        // The peer supplies a real TCP close. Set the negotiated mode independently
+        // so the test isolates recovery policy without requiring an HEVC encoder.
+        session.isHighPerformanceMode = true
+        endRemoteTransport()
+        try await wait { session.connectionState == .disconnected }
+        XCTAssertNil(session.lastReconnectTrigger)
+        XCTAssertTrue(session.retryConnection())
+        try await wait { connections == 2 }
+        XCTAssertEqual(session.lastReconnectTrigger, .manual)
+        XCTAssertFalse(session.isHighPerformanceMode)
+        endRemoteTransport()
+        try await wait { connections == 3 }
+        XCTAssertEqual(session.lastReconnectTrigger, .transportEnded)
+    }
+
     private struct Frame: Sendable {
         let width: Int
         let height: Int

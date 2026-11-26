@@ -6,6 +6,10 @@ import rootshellVNC
 
 @MainActor
 final class SSHWireTests: XCTestCase {
+    private var peerHost: String {
+        ProcessInfo.processInfo.environment["DESKLINK_SSH_HOST"] ?? "127.0.0.1"
+    }
+
     private struct GeneratedKey: Decodable {
         let key: String
         let `public`: String
@@ -43,7 +47,7 @@ final class SSHWireTests: XCTestCase {
         }
         let session = VNCSession(configuration: config)
         defer { trust.cancel(); session.disconnect() }
-        let attempt = Task { try await session.connect(credentials: VNCCredentials(host: "127.0.0.1", password: "")) }
+        let attempt = Task { try await session.connect(credentials: VNCCredentials(host: peerHost, password: "")) }
         defer { attempt.cancel() }
         try await until { trust.prompt != nil }
         let matches = trust.prompt?.fingerprint == pin
@@ -62,7 +66,7 @@ final class SSHWireTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let trust = HostTrust(defaults: defaults)
-        let settings = SSHSettings(port: port, username: "fixture", usesKey: false, server: "127.0.0.1")
+        let settings = SSHSettings(port: port, username: "fixture", usesKey: false, server: peerHost)
         var config = VNCConfiguration(enableHighPerformanceMode: false, videoQualityMode: .standard)
         config.transportProvider = { host, port in
             DesktopSSH(host: host, desktopPort: port, settings: settings, proof: .password("chart-test-only"), trust: trust)
@@ -74,7 +78,9 @@ final class SSHWireTests: XCTestCase {
         }
         defer { connection.cancel() }
         try await until { trust.prompt != nil }
-        let matches = trust.prompt?.host == "127.0.0.1:\(port)" && trust.prompt?.fingerprint == pin
+        let shownHost = peerHost.contains(":") ? "[\(peerHost)]" : peerHost
+        XCTAssertEqual(trust.prompt?.displayAddress, "\(shownHost):\(port)")
+        let matches = trust.prompt?.host == "\(peerHost):\(port)" && trust.prompt?.fingerprint == pin
         trust.answer(matches)
         XCTAssertTrue(matches)
         try await connection.value
@@ -100,7 +106,7 @@ final class SSHWireTests: XCTestCase {
         var remoteText: String?
         session.onServerClipboardText = { remoteText = $0 }
         defer { trust.cancel(); session.disconnect() }
-        let task = Task { try await session.connect(credentials: VNCCredentials(host: "127.0.0.1", password: "")) }
+        let task = Task { try await session.connect(credentials: VNCCredentials(host: peerHost, password: "")) }
         defer { task.cancel() }
         try await until { trust.prompt != nil || session.connectionState.canConnect && session.connectionState != .idle }
         XCTAssertEqual(trust.prompt?.fingerprint, pin)

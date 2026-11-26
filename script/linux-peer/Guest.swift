@@ -18,6 +18,12 @@ final class Guest: NSObject, VZVirtualMachineDelegate {
         let boot = VZLinuxBootLoader(kernelURL: root.appending(path: "Image"))
         boot.initialRamdiskURL = root.appending(path: "guest-initrd")
         boot.commandLine = "console=hvc0 rdinit=/desklink-init panic=0 quiet"
+        let piDisk = root.appending(path: "raspios.img")
+        if FileManager.default.fileExists(atPath: piDisk.path) {
+            let image = try VZDiskImageStorageDeviceAttachment(url: piDisk, readOnly: true)
+            config.storageDevices = [VZVirtioBlockDeviceConfiguration(attachment: image)]
+            boot.commandLine += " desklink_raspios=1"
+        }
         config.bootLoader = boot
         config.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
         config.socketDevices = [VZVirtioSocketDeviceConfiguration()]

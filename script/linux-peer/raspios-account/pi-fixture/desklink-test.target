@@ -1,0 +1,6 @@
+[Unit]
+Description=Isolated Raspberry Pi desktop and login test
+Requires=basic.target dbus.service systemd-logind.service
+After=basic.target dbus.service systemd-logind.service
+Wants=wayvnc.service wayvnc-control.service desklink-session.service desklink-bridge.service desklink-status.service
+AllowIsolate=yes

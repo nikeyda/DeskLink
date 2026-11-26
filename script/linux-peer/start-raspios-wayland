@@ -1,0 +1,45 @@
+#!/bin/sh
+# Start the compositor and screen-sharing server from the official read-only image.
+set -eu
+run=/run/desklink-wayland
+pi_root=/mnt/raspios
+modprobe virtio_blk
+modprobe ext4
+for attempt in $(seq 1 50); do [ -b /dev/vda2 ] && break; sleep 0.1; done
+mkdir -p "$pi_root"
+mount -t ext4 -o ro,noload /dev/vda2 "$pi_root"
+for directory in dev dev/shm dev/pts proc sys run tmp; do mount -o bind "/$directory" "$pi_root/$directory"; done
+chroot "$pi_root" /usr/bin/dpkg-query -W -f='DESKLINK_PI_PACKAGE ${Package} ${Version}\n' labwc wayvnc wlr-randr
+if [ -f "$pi_root/etc/wayvnc/config" ]; then
+    awk -F= '$1 == "enable_auth" || $1 == "enable_pam" {print "DESKLINK_PI_DEFAULT", $1, $2}' "$pi_root/etc/wayvnc/config"
+fi
+# This isolated server uses the disposable WayVNC account configured by
+# start-wayland. The read-only image keeps its default desktop-login policy.
+cp -R /test-tls "$run/tls"
+sed -i "s|/test-tls/|$run/tls/|g" "$run/server.conf"
+echo DESKLINK_PI_TEST_AUTH_WAYVNC_ACCOUNT
+mkdir -p "$run/labwc" "$run/cache"
+cat > "$run/labwc/rc.xml" <<'XML'
+<labwc_config><keyboard><keybind key="Return"><action name="Execute" command="/usr/bin/touch /run/desklink-wayland/input-received"/></keybind></keyboard></labwc_config>
+XML
+cat > "$run/labwc/autostart" <<'START'
+#!/bin/sh
+set -eu
+run=/run/desklink-wayland
+wlr-randr --output HEADLESS-1 --custom-mode 800x480
+printf '%s\n' "$WAYLAND_DISPLAY" > "$run/display"
+exec wayvnc -Linfo -C "$run/server.conf" 127.0.0.1 5903
+START
+chmod 755 "$run/labwc/autostart"
+chown -R deskpeer:deskpeer "$run"
+XDG_RUNTIME_DIR="$run" XDG_CACHE_HOME="$run/cache" WLR_BACKENDS=headless WLR_HEADLESS_OUTPUTS=1 WLR_RENDERER=pixman \
+    chroot "$pi_root" /usr/bin/setpriv --reuid "$(id -u deskpeer)" --regid "$(id -g deskpeer)" --clear-groups \
+    /usr/bin/labwc -C "$run/labwc" > /tmp/desklink-wayland.log 2>&1 &
+for attempt in $(seq 1 100); do [ -s "$run/display" ] && break; sleep 0.1; done
+[ -s "$run/display" ] || { tail -30 /tmp/desklink-wayland.log; exit 1; }
+export XDG_RUNTIME_DIR="$run" WAYLAND_DISPLAY="$(cat "$run/display")"
+# The two solid colours make the remotely received Return observable in pixels.
+su -s /bin/sh deskpeer -c 'echo $$ > /run/desklink-wayland/background-pid; exec swaybg -c "#1f59a5"' >> /tmp/desklink-wayland.log 2>&1 &
+while [ ! -e "$run/input-received" ]; do sleep 0.1; done
+kill "$(cat "$run/background-pid")"
+su -s /bin/sh deskpeer -c 'exec swaybg -c "#34ae92"' >> /tmp/desklink-wayland.log 2>&1

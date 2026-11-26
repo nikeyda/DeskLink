@@ -1,10 +1,80 @@
 import UIKit
 import XCTest
 import RFBProtocol
+@testable import DeskLink
 @testable import RFBTransport
 @testable import rootshellVNC
 
 @MainActor final class ClipboardTests: XCTestCase {
+    private final class PermissionClipboard: VNCClipboardProviding {
+        var changeCount = 0
+        let remoteWrites = VNCClipboardRemoteWrites()
+        var offeredType = ClipboardType.utf8PlainText
+        var permittedContent: ClipboardContent?
+        var reads = 0
+
+        func hasTransferableContent(for support: ClipboardContentSupport) -> Bool {
+            support.accepts(offeredType)
+        }
+
+        func readContent(for support: ClipboardContentSupport) -> ClipboardContent? {
+            reads += 1
+            return permittedContent
+        }
+
+        func write(_ content: ClipboardContent) {
+            XCTFail("Sending a local copy should not replace the local clipboard")
+        }
+    }
+
+    func testDeclinedAutomaticReadIsNotRepeatedWhenServerAddsFormats() {
+        let board = PermissionClipboard()
+        var support = ClipboardContentSupport.plainText
+        var sent: [ClipboardContent] = []
+        let controller = VNCClipboardSynchronizer(clipboard: board, canSend: { true },
+            send: { sent.append($0) }, contentSupport: { support },
+            observesApplicationLifecycle: false, automaticallyMonitors: false)
+        defer { controller.invalidate() }
+        controller.sharedClipboardEnabled = true
+        board.changeCount += 1
+        controller.localClipboardDidChange()
+        XCTAssertEqual(board.reads, 1)
+        support = .all
+        controller.clipboardCapabilitiesDidChange()
+        controller.localClipboardDidChange()
+        XCTAssertEqual(board.reads, 1)
+        XCTAssertTrue(sent.isEmpty)
+
+        board.permittedContent = .text("manual retry")
+        controller.sendClipboard()
+        XCTAssertEqual(sent, [.text("manual retry")])
+        board.changeCount += 1
+        board.permittedContent = .text("next copy")
+        controller.localClipboardDidChange()
+        XCTAssertEqual(sent.last, .text("next copy"))
+    }
+
+    func testRichOnlyCopyIsReadWhenServerCanReceiveIt() {
+        let board = PermissionClipboard()
+        board.offeredType = ClipboardType.png
+        let image = ClipboardContent(items: [[.init(type: ClipboardType.png, data: Data([1, 2, 3]))]])
+        board.permittedContent = image
+        var support = ClipboardContentSupport.plainText
+        var sent: [ClipboardContent] = []
+        let controller = VNCClipboardSynchronizer(clipboard: board, canSend: { true },
+            send: { sent.append($0) }, contentSupport: { support },
+            observesApplicationLifecycle: false, automaticallyMonitors: false)
+        defer { controller.invalidate() }
+        controller.sharedClipboardEnabled = true
+        board.changeCount += 1
+        controller.localClipboardDidChange()
+        XCTAssertEqual(board.reads, 0)
+        support = .all
+        controller.clipboardCapabilitiesDidChange()
+        XCTAssertEqual(board.reads, 1)
+        XCTAssertEqual(sent, [image])
+    }
+
     func testAppleClipboardKeepsURLRichTextAndImageRepresentations() throws {
         let name = UIPasteboard.Name("local.nikey.desklink.tests." + UUID().uuidString)
         let board = try XCTUnwrap(UIPasteboard(name: name, create: true))
@@ -29,6 +99,50 @@ import RFBProtocol
         XCTAssertEqual(board.data(forPasteboardType: ClipboardType.png, inItemSet: IndexSet(integer: 2))?.first, image)
         let fallback = try XCTUnwrap(bridge.readContent(for: .plainText))
         XCTAssertEqual(fallback, .text(address.absoluteString))
+    }
+
+    func testSingleItemKeepsURLBoldTextAndPNGAfterWireCompression() throws {
+        let board = UIPasteboard.withUniqueName()
+        defer { UIPasteboard.remove(withName: board.name) }
+        let url = try XCTUnwrap(URL(string: "https://example.invalid/grouped-item"))
+        let styled = NSAttributedString(string: "Grouped", attributes: [.font: UIFont.boldSystemFont(ofSize: 14)])
+        let rich = try styled.data(from: NSRange(location: 0, length: styled.length),
+                                   documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
+        let file = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "clipboard-pixels", withExtension: "plist")
+            ?? Bundle(for: Self.self).url(forResource: "clipboard-pixels", withExtension: "plist", subdirectory: "Fixtures"))
+        let images = try PropertyListDecoder().decode([String: Data].self, from: Data(contentsOf: file))
+        let png = try XCTUnwrap(images["mac"])
+        board.setItems([[ClipboardType.url: url, ClipboardType.rtf: rich, ClipboardType.png: png]], options: [.localOnly: true])
+        let bridge = VNCSystemClipboard(pasteboard: board)
+        let content = try XCTUnwrap(bridge.readContent(for: .all))
+        let packet = try AppleClipboardProtocol.packedMessage(content)
+        let size = try XCTUnwrap(AppleClipboardProtocol.uint32BE(packet, at: 8))
+        let compressed = packet.dropFirst(AppleClipboardProtocol.packedScrapHeaderSize)
+        XCTAssertEqual(AppleClipboardProtocol.uint32BE(packet, at: 12), UInt32(compressed.count))
+        let decoded = try AppleClipboardProtocol.unpackContent(compressed: Data(compressed), uncompressedSize: Int(size))
+        board.items = []
+        bridge.write(decoded)
+        XCTAssertEqual(board.numberOfItems, 1)
+        XCTAssertEqual(board.url, url)
+        let received = try XCTUnwrap(board.data(forPasteboardType: ClipboardType.rtf))
+        let text = try NSAttributedString(data: received, options: [.documentType: NSAttributedString.DocumentType.rtf], documentAttributes: nil)
+        XCTAssertEqual(text.string, "Grouped")
+        let font = try XCTUnwrap(text.attribute(.font, at: 0, effectiveRange: nil) as? UIFont)
+        XCTAssertTrue(font.fontDescriptor.symbolicTraits.contains(.traitBold))
+        XCTAssertEqual(board.data(forPasteboardType: ClipboardType.png), png)
+    }
+
+    func testAppleScreenSharingURLPropertyListPastesAsANativeURL() throws {
+        let expected = try XCTUnwrap(URL(string: "https://example.invalid/mac/clipboard"))
+        let binary = try PropertyListSerialization.data(fromPropertyList: [expected.absoluteString, ""], format: .binary, options: 0)
+        let content = ClipboardContent(items: [[.init(type: ClipboardType.url, data: binary)]])
+        let board = UIPasteboard.withUniqueName()
+        defer { UIPasteboard.remove(withName: board.name) }
+        let received = try AppleClipboardProtocol.unpack(AppleClipboardProtocol.pack(content))
+        VNCSystemClipboard(pasteboard: board).write(received)
+        XCTAssertEqual(board.url, expected)
+        let provider = try XCTUnwrap(board.itemProviders.first)
+        XCTAssertTrue(provider.canLoadObject(ofClass: NSURL.self))
     }
 
     func testOnlyTheActiveWindowSendsAutomaticChanges() throws {
@@ -59,6 +173,61 @@ import RFBProtocol
         second.localClipboardDidChange()
         XCTAssertEqual(left, ["first window"])
         XCTAssertEqual(right, ["second window"])
+    }
+
+    func testUIKitWindowFocusRoutesBothClipboardDirections() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive })
+        let original = scene.keyWindow
+        let board = UIPasteboard.withUniqueName()
+        defer { UIPasteboard.remove(withName: board.name) }
+        let bridge = VNCSystemClipboard(pasteboard: board)
+        var sent = [0: [String](), 1: [String]()]
+        var focused: [Int: Bool] = [:]
+        var windows: [UIWindow] = []
+        var controllers: [VNCClipboardSynchronizer] = []
+        defer {
+            controllers.forEach { $0.invalidate() }
+            windows.forEach { $0.isHidden = true }
+            original?.makeKey()
+        }
+        for index in 0..<2 {
+            let controller = VNCClipboardSynchronizer(clipboard: bridge, canSend: { true }, send: { content in
+                if let value = content.plainText { sent[index, default: []].append(value) }
+            }, observesApplicationLifecycle: false, automaticallyMonitors: false)
+            controller.setHostWindowActive(false)
+            controller.sharedClipboardEnabled = true
+            controllers.append(controller)
+            let window = UIWindow(windowScene: scene)
+            let root = UIViewController()
+            window.rootViewController = root
+            let tracker = SessionWindowFocus.Tracker(frame: .zero)
+            tracker.changed = { active in
+                focused[index] = active
+                controller.setHostWindowActive(active)
+            }
+            root.view.addSubview(tracker)
+            windows.append(window)
+        }
+        for (turn, active) in [0, 1, 0].enumerated() {
+            let other = 1 - active
+            windows[active].makeKeyAndVisible()
+            let clock = ContinuousClock()
+            let deadline = clock.now + .seconds(3)
+            while (focused[active] != true || focused[other] == true) && clock.now < deadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            XCTAssertTrue(windows[active].isKeyWindow)
+            XCTAssertEqual(focused[active], true)
+            XCTAssertNotEqual(focused[other], true)
+            board.string = "local-\(turn)"
+            controllers.forEach { $0.localClipboardDidChange() }
+            controllers[active].receiveRemoteClipboardText("active-\(turn)")
+            controllers[other].receiveRemoteClipboardText("background-\(turn)")
+            XCTAssertEqual(board.string, "active-\(turn)")
+        }
+        XCTAssertEqual(sent[0], ["local-0", "local-2"])
+        XCTAssertEqual(sent[1], ["local-1"])
     }
 
     func testViewerPasswordIsSeparateFromTheOSAccountPassword() {

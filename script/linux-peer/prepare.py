@@ -1,6 +1,7 @@
 import gzip
 import base64
 import hashlib
+import ipaddress
 import os
 from pathlib import Path
 import shutil
@@ -24,8 +25,11 @@ extra = root / "extra"
 tls = extra / "test-tls"
 tls.mkdir(mode=0o700, exist_ok=True)
 configuration = root / "fixture-tls.cnf"
+subject_names = "DNS:localhost,IP:127.0.0.1"
+if len(sys.argv) > 2:
+    subject_names += ",IP:" + str(ipaddress.IPv6Address(sys.argv[2]))
 configuration.write_text("[req]\ndistinguished_name=dn\nprompt=no\nx509_extensions=leaf\n"
-                         "[dn]\nCN=localhost\n[leaf]\nsubjectAltName=DNS:localhost,IP:127.0.0.1\n"
+                         f"[dn]\nCN=localhost\n[leaf]\nsubjectAltName={subject_names}\n"
                          "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\n"
                          "extendedKeyUsage=serverAuth\n")
 subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-sha256", "-nodes", "-days", "1",
@@ -34,8 +38,20 @@ subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-sha256", "-n
 (tls / "key.pem").chmod(0o600)
 der = subprocess.check_output(["openssl", "x509", "-in", str(tls / "cert.pem"), "-outform", "DER"])
 (root / "tls-pin").write_text("SHA256:" + base64.b64encode(hashlib.sha256(der).digest()).decode().rstrip("="))
+rsa_mode = tls / "rsa-mode"
+rsa_bits = os.environ.get("DESKLINK_TEST_RSA_AES")
+if rsa_bits:
+    security = {"128": "RA2", "256": "RA2_256,RA2"}[rsa_bits]
+    account = "account" if os.environ.get("DESKLINK_TEST_RSA_ACCOUNT") == "1" else "password"
+    rsa_mode.write_text(f"{security} {account}\n")
+else:
+    rsa_mode.unlink(missing_ok=True)
+if rsa_bits or os.environ.get("DESKLINK_TEST_PI_DESKTOP_ACCOUNT") == "1":
+    spki = subprocess.check_output(["openssl", "pkey", "-in", str(tls / "key.pem"), "-pubout", "-outform", "DER"])
+    (root / "rsa-pin").write_text("SHA256:" + base64.b64encode(hashlib.sha256(spki).digest()).decode().rstrip("="))
 shutil.copyfile(Path(__file__).with_name("desklink-init"), extra / "desklink-init")
 shutil.copyfile(Path(__file__).with_name("start-wayland"), extra / "start-wayland")
+shutil.copyfile(Path(__file__).with_name("start-raspios-wayland"), extra / "start-raspios-wayland")
 if not (extra / "modloop").exists():
     os.link(root / "modloop", extra / "modloop")
 (extra / "desklink-init").chmod(0o755)
