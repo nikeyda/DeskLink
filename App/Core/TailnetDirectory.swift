@@ -59,11 +59,16 @@ struct TailnetDevice: Decodable, Identifiable, Sendable {
         return item
     }
 
-    func widgetComputer(in account: TailnetAccount) -> ComputerEntity? {
-        guard !id.isEmpty, let computer else { return nil }
-        // A widget follows the node across renames and address changes.
+    func directoryID(in account: TailnetAccount) -> UUID? {
+        guard !id.isEmpty else { return nil }
+        // The same node keeps its identity across renames and address changes.
         let identity = "local.nikey.desklink/tailnet/" + account.tailnet.lowercased() + "/" + id
-        return ComputerEntity(id: UUID.derived(from: identity), name: computer.displayName, address: computer.endpoint.address)
+        return UUID.derived(from: identity)
+    }
+
+    func widgetComputer(in account: TailnetAccount) -> ComputerEntity? {
+        guard let id = directoryID(in: account), let computer else { return nil }
+        return ComputerEntity(id: id, name: computer.displayName, address: computer.endpoint.address)
     }
 }
 
@@ -83,20 +88,27 @@ final class TailnetDirectory {
         let account: TailnetAccount
         let computers: [ComputerEntity]
     }
+    private static let hiddenDevicesKey = "tailnet.hiddenDevices"
     private static let session = URLSession(configuration: .ephemeral, delegate: FixedServiceDelegate(), delegateQueue: nil)
 
     private let defaults: UserDefaults
     private let transport: Transport
     private var secret: String?
     private var attempt = UUID()
+    private var hiddenIDs: Set<UUID>
+    private var widgetCandidates = [ComputerEntity]()
     private(set) var account: TailnetAccount?
     private(set) var devices = [TailnetDevice]()
-    private(set) var widgetComputers = [ComputerEntity]()
     private(set) var loading = false
     var error: String?
 
+    var visibleDevices: [TailnetDevice] { devices.filter { !isHidden($0) } }
+    var hiddenDevices: [TailnetDevice] { devices.filter { isHidden($0) } }
+    var widgetComputers: [ComputerEntity] { widgetCandidates.filter { !hiddenIDs.contains($0.id) } }
+
     init(defaults: UserDefaults = .standard, transport: Transport? = nil) {
         self.defaults = defaults
+        hiddenIDs = Set((defaults.stringArray(forKey: Self.hiddenDevicesKey) ?? []).compactMap(UUID.init(uuidString:)))
         self.transport = transport ?? { request in
             let (data, response) = try await Self.session.data(for: request)
             guard let response = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
@@ -108,7 +120,7 @@ final class TailnetDirectory {
             if let stored = cache?.account ?? (try? decoder.decode(TailnetAccount.self, from: data)),
                let validated = try? TailnetAccount(tailnet: stored.tailnet, clientID: stored.clientID) {
                 account = validated
-                widgetComputers = cache?.computers ?? []
+                widgetCandidates = cache?.computers ?? []
             }
         }
     }
@@ -159,10 +171,21 @@ final class TailnetDirectory {
         account = nil
         secret = nil
         devices = []
-        widgetComputers = []
+        widgetCandidates = []
         loading = false
         error = nil
         defaults.removeObject(forKey: "tailnet.account")
+    }
+
+    func setHidden(_ hidden: Bool, device: TailnetDevice) {
+        guard let account, let id = device.directoryID(in: account) else { return }
+        if hidden { hiddenIDs.insert(id) } else { hiddenIDs.remove(id) }
+        defaults.set(hiddenIDs.map(\.uuidString).sorted(), forKey: Self.hiddenDevicesKey)
+    }
+
+    private func isHidden(_ device: TailnetDevice) -> Bool {
+        guard let account, let id = device.directoryID(in: account) else { return false }
+        return hiddenIDs.contains(id)
     }
 
     func computerForWidget(_ id: UUID) -> Computer? {
@@ -176,13 +199,13 @@ final class TailnetDirectory {
     private func storeWidgetComputers(_ listing: [TailnetDevice], account: TailnetAccount, remember: Bool) throws {
         guard remember else {
             defaults.removeObject(forKey: "tailnet.account")
-            widgetComputers = []
+            widgetCandidates = []
             return
         }
         let computers = listing.compactMap { $0.widgetComputer(in: account) }
         let cache = RememberedDirectory(account: account, computers: computers)
         defaults.set(try JSONEncoder().encode(cache), forKey: "tailnet.account")
-        widgetComputers = computers
+        widgetCandidates = computers
     }
 
     private func requestDevices(_ account: TailnetAccount, secret: String) async throws -> [TailnetDevice] {

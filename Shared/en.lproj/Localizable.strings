@@ -11,3 +11,9 @@
 "链接" = "Links";
 "所有连接" = "All Connections";
 "自定义连接" = "Custom Connections";
+"隐藏设备" = "Hide Device";
+"隐藏的设备" = "Hidden Devices";
+"查看隐藏的设备" = "View Hidden Devices";
+"恢复显示" = "Show Device";
+"恢复显示：%@" = "Show Device: %@";
+"没有隐藏的设备" = "No Hidden Devices";

@@ -131,3 +131,7 @@ RSA-AES 连接使用「认证方式」「自动协商」「Raspberry Pi · RSA-A
 ## Siri 与快捷指令
 
 简体中文口令为「用远程随航连接到〈电脑名称〉」，英文口令为 “Connect to 〈computer name〉 with Telescope”。应用名称和电脑名称由系统代入。快捷指令中的英文动作名为 “Connect to Computer”，参数名为 “Saved Computer”。
+
+## Tailscale 设备显示
+
+在设备菜单选「隐藏设备」，可从 Tailscale 菜单中的「隐藏的设备」逐台「恢复显示」。如果目录中的设备全被隐藏，列表提供「查看隐藏的设备」。恢复最后一台后显示「没有隐藏的设备」。

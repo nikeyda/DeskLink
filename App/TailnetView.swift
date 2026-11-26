@@ -7,6 +7,7 @@ struct TailnetView: View {
     var save: (Computer) -> Void
     @State private var editing = false
     @State private var unlinking = false
+    @State private var managingHiddenDevices = false
 
     var body: some View {
         Group {
@@ -15,9 +16,10 @@ struct TailnetView: View {
                     Label("Tailscale", systemImage: "network")
                 } actions: { Button("连接") { editing = true } }
             } else {
+                let results = directory.visibleDevices.filter(matches)
                 List {
                     if let error = directory.error { Text(error).foregroundStyle(.red) }
-                    ForEach(directory.devices.filter(matches)) { item in
+                    ForEach(results) { item in
                         if let computer = item.computer {
                             Button { select(computer) } label: {
                                 Label {
@@ -27,16 +29,29 @@ struct TailnetView: View {
                                     }
                                 } icon: { Image(systemName: "desktopcomputer") }
                             }
-                            .contextMenu { Button("保存到连接库") { save(computer) } }
+                            .contextMenu {
+                                Button("保存到连接库") { save(computer) }
+                                if !item.id.isEmpty {
+                                    Button("隐藏设备", systemImage: "eye.slash") { directory.setHidden(true, device: item) }
+                                }
+                            }
                         }
                     }
-                    if !directory.loading && directory.devices.filter(matches).isEmpty { Text("未找到匹配的连接") }
+                    if !directory.loading && results.isEmpty {
+                        if search.isEmpty && !directory.hiddenDevices.isEmpty {
+                            Button("查看隐藏的设备") { managingHiddenDevices = true }
+                        } else {
+                            Text("未找到匹配的连接")
+                        }
+                    }
                 }
                 .refreshable { await directory.refresh() }
                 .toolbar {
                     ToolbarItem { Button { Task { await directory.refresh() } } label: { Label("重试", systemImage: "arrow.clockwise") } }
                     ToolbarItem {
                         Menu {
+                            Button("隐藏的设备", systemImage: "eye.slash") { managingHiddenDevices = true }
+                                .disabled(directory.hiddenDevices.isEmpty)
                             Button("身份验证") { editing = true }
                             Button("断开连接", role: .destructive) { unlinking = true }
                         } label: { Label("Tailscale", systemImage: "network") }
@@ -46,12 +61,39 @@ struct TailnetView: View {
         }
         .task { if directory.devices.isEmpty { await directory.refresh() } }
         .sheet(isPresented: $editing) { TailnetLogin(directory: directory) }
+        .sheet(isPresented: $managingHiddenDevices) { hiddenDeviceList }
         .alert("断开连接", isPresented: $unlinking) {
             Button("取消", role: .cancel) {}
             Button("确认", role: .destructive) {
                 do { try directory.unlink() } catch { directory.error = error.localizedDescription }
             }
         } message: { Text(verbatim: directory.account?.tailnet ?? "") }
+    }
+
+    private var hiddenDeviceList: some View {
+        NavigationStack {
+            List(directory.hiddenDevices) { device in
+                if let computer = device.computer {
+                    LabeledContent {
+                        Button("恢复显示") { directory.setHidden(false, device: device) }
+                            .accessibilityLabel(Text("恢复显示：\(computer.displayName)"))
+                    } label: {
+                        VStack(alignment: .leading) {
+                            Text(computer.displayName)
+                            Text(computer.endpoint.address).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .overlay {
+                if directory.hiddenDevices.isEmpty {
+                    ContentUnavailableView("没有隐藏的设备", systemImage: "eye")
+                }
+            }
+            .navigationTitle("隐藏的设备")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("关闭") { managingHiddenDevices = false } } }
+        }
     }
 
     private func matches(_ item: TailnetDevice) -> Bool {
