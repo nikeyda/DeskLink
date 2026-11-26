@@ -1,14 +1,14 @@
-# DeskLink
+# Telescope
 
 [English](../../README.md) · [简体中文](README.zh-CN.md) · [Español](README.es.md) · **日本語** · [한국어](README.ko.md)
 
-**iPhone、iPad、Mac から別のコンピュータの画面を見たり操作したりできます。** DeskLink はオープンソースの VNC クライアントです。「画面共有」を有効にした Mac や、互換性のある VNC サーバーを実行しているコンピュータに接続できます。デスクトップの作業を続けたり、Linux ワークステーションの状態を確認したり、別のコンピュータにあるファイルを開いたりできます。
+**iPhone、iPad、Mac から別のコンピュータの画面を見たり操作したりできます。** Telescope はオープンソースの VNC クライアントです。「画面共有」を有効にした Mac や、互換性のある VNC サーバーを実行しているコンピュータに接続できます。デスクトップの作業を続けたり、Linux ワークステーションの状態を確認したり、別のコンピュータにあるファイルを開いたりできます。
 
 | iPhone でリモート操作 | iPad のタッチショートカット | Mac の接続先一覧 |
 | :---: | :---: | :---: |
 | <a href="images/iphone-session.png"><img src="images/iphone-session.png" width="164" alt="iPhone でリモート操作"></a> | <a href="images/ipad-session.png"><img src="images/ipad-session.png" width="250" alt="iPad のタッチショートカット"></a> | <a href="images/mac-connections.jpg"><img src="images/mac-connections.jpg" width="405" alt="Mac の接続先一覧"></a> |
 
-*デモ用の接続先とリモートデスクトップを使った DeskLink のスクリーンショットです。画像を選ぶと拡大できます。*
+*デモ用の接続先とリモートデスクトップを使った Telescope のスクリーンショットです。画像を選ぶと拡大できます。*
 
 ## 主な機能
 
@@ -20,7 +20,7 @@
 ## はじめて接続する
 
 1. 接続先が Mac の場合は「システム設定 → 一般 → 共有」で「画面共有」をオンにします。Linux などでは、互換性のある VNC サーバーを起動します。[Apple の画面共有ガイド](https://support.apple.com/ja-jp/guide/mac-help/mh11848/mac/1000)
-2. 同じネットワーク上で DeskLink を開き、近くのコンピュータを選ぶか、クイック接続でホスト名または IP アドレスを入力します。
+2. 同じネットワーク上で Telescope を開き、近くのコンピュータを選ぶか、クイック接続でホスト名または IP アドレスを入力します。
 3. 接続先の認証情報でログインします。繰り返し使う場合は接続先を保存できます。
 
 ## ソースからビルドする
@@ -37,4 +37,4 @@ open DeskLink.xcodeproj
 
 ## ライセンス
 
-DeskLink は [MIT ライセンス](../../LICENSE)で公開されています。依存ライブラリのライセンスは[サードパーティのライセンス情報](../../App/Acknowledgements.txt)を参照してください。
+Telescope は [MIT ライセンス](../../LICENSE)で公開されています。依存ライブラリのライセンスは[サードパーティのライセンス情報](../../App/Acknowledgements.txt)を参照してください。
