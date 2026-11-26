@@ -23,10 +23,10 @@ final class CursorTrackingUITests: XCTestCase {
         let display = editor.buttons["显示器"].firstMatch
         reveal(display, in: editor)
         display.tap()
-        let trackpad = editor.switches["connection.trackpad"].firstMatch
-        reveal(trackpad, in: editor)
-        trackpad.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.5)).tap()
-        XCTAssertEqual(trackpad.value as? String, "1")
+        let mode = editor.descendants(matching: .any).matching(identifier: "connection.pointerMode").firstMatch
+        reveal(mode, in: editor)
+        mode.tap()
+        app.buttons["触控板"].firstMatch.tap()
         let speed = editor.descendants(matching: .any).matching(identifier: "connection.cursorTrackingSpeed").firstMatch
         reveal(speed, in: editor)
         speed.tap()

@@ -101,7 +101,9 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
     var smoothVideo: Bool?
     var remoteAudio = true
     var deviceDisplays: [String: DesktopDisplayPreferences]?
-    var trackpad = false
+    // Preserve the original Boolean so older versions can still read the connection.
+    private var trackpad = false
+    private var inheritsPointerMode: Bool?
     var cursorTrackingSpeed: Double?
     var allowsViewportZoom: Bool?
     var showsLocalCursor: Bool?
@@ -137,10 +139,24 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
         self.endpoint = endpoint
         usesMacHardwareKeyPositions = true
         openedFromLink = false
+        inheritsPointerMode = true
     }
 
     var displayName: String { name.isEmpty ? endpoint.host : name }
     var automaticCurtainMessage: String? { curtainsDisplayOnConnect == true ? (curtainMessage ?? "") : nil }
+    var pointerModeOverride: RemotePointerMode? {
+        get { inheritsPointerMode == true ? nil : (trackpad ? .trackpad : .direct) }
+        set {
+            trackpad = newValue == .trackpad
+            inheritsPointerMode = newValue == nil ? true : nil
+        }
+    }
+
+    func pointerMode(using preferences: UserDefaults) -> RemotePointerMode {
+        pointerModeOverride ?? preferences.string(forKey: SyncedPreference.pointerMode.rawValue)
+            .flatMap(RemotePointerMode.init(rawValue:)) ?? .direct
+    }
+
     func scrollSpeed(forMac: Bool) -> RemoteScrollSpeed {
         forMac ? .standard : pcScrollSpeed ?? .standard
     }

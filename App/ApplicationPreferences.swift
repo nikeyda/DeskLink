@@ -11,6 +11,7 @@ struct ApplicationPreferences: View {
     @AppStorage("connection.sharedClipboard") private var sharedClipboard = true
     @AppStorage("connection.clientCursor") private var clientCursor = true
     @AppStorage("pointer.speed") private var pointerSpeed = 1.0
+    @AppStorage(SyncedPreference.pointerMode.rawValue) private var pointerMode = RemotePointerMode.direct
     @AppStorage("gesture.upFingers") private var upFingers = RemoteSwipeFingers.three
     @AppStorage("gesture.downFingers") private var downFingers = RemoteSwipeFingers.three
     @AppStorage("gesture.horizontalFingers") private var horizontalFingers = RemoteSwipeFingers.three
@@ -39,6 +40,11 @@ struct ApplicationPreferences: View {
                 Section("控制方式") {
                     Toggle("使用本地光标", isOn: $clientCursor)
                     #if !targetEnvironment(macCatalyst)
+                    Picker("默认光标模式", selection: $pointerMode) {
+                        Text("直接触控").tag(RemotePointerMode.direct)
+                        Text("触控板").tag(RemotePointerMode.trackpad)
+                    }
+                    .accessibilityIdentifier("preferences.pointerMode")
                     NavigationLink("互动工具栏") { ToolbarPreferences() }
                         .accessibilityIdentifier("preferences.toolbar")
                     NavigationLink("键盘重复") { KeyRepeatPreferences() }

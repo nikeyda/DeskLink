@@ -57,6 +57,7 @@ struct SessionScreen: View {
     @State private var hostTrust: HostTrust
     @AppStorage("connection.files") private var transfers = true
     @AppStorage("connection.reconnect") private var reconnect = true
+    @State private var pointerMode: RemotePointerMode
     @State private var cursorTrackingSpeed: Double?
     @AppStorage("pointer.speed") private var pointerSpeed = 1.0
     @AppStorage("gesture.upFingers") private var upFingers = RemoteSwipeFingers.three
@@ -113,9 +114,9 @@ struct SessionScreen: View {
         #endif
         let desktop = RemoteDesktopView(session: session, keyboardCapture: keyboard, isFullScreen: fullscreen,
                                  toggleFullScreen: toggleFullScreen, clipboardSynchronizer: clipboard,
-                                 initialPointerMode: request.computer.trackpad ? .trackpad : .direct,
                                  pointerSpeed: cursorTrackingSpeed ?? pointerSpeed, touchGestures: gestures, onRemoteInput: remoteActivity,
                                  onSharedClipboardUserChange: setClipboardSharing, hudMenuExtras: pointerMenuExtras)
+            .controllingPointerMode($pointerMode)
             .desktopControls(controls)
             .onMonitorShortcut(chooseMonitor)
             .onScreenshotShortcut(captureScreenshot)
@@ -148,6 +149,7 @@ struct SessionScreen: View {
         }
         _session = State(initialValue: VNCSession(configuration: configuration))
         _observing = State(initialValue: request.computer.viewOnly)
+        _pointerMode = State(initialValue: request.computer.pointerMode(using: preferences))
         _cursorTrackingSpeed = State(initialValue: CursorTrackingSpeed.validated(request.computer.cursorTrackingSpeed))
     }
 

@@ -37,6 +37,10 @@
 "留空使用默认端口。仅在启用安全连接时使用 SSH 端口。" = "Leave a port blank to use its default. The SSH port is used when Secure Connection is on.";
 "使用备用光标" = "Use Fallback Cursor";
 "光标跟踪速度" = "Cursor Tracking Speed";
+"默认光标模式" = "Default Pointer Mode";
+"光标模式" = "Pointer Mode";
+"直接触控" = "Direct Touch";
+"触控板" = "Trackpad";
 "跟随应用设置" = "Use App Setting";
 "VNC 编码" = "VNC Encodings";
 "TightVNC JPEG 画质" = "TightVNC JPEG Quality";

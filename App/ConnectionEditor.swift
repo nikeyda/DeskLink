@@ -203,7 +203,7 @@ struct ConnectionEditor: View {
     @State private var retina: Bool
     @State private var smoothVideo: Bool
     @State private var audio: Bool
-    @State private var trackpad: Bool
+    @State private var pointerMode: RemotePointerMode?
     @State private var cursorTrackingSpeed: Double?
     @State private var allowsViewportZoom: Bool
     @State private var showsLocalCursor: Bool?
@@ -280,7 +280,7 @@ struct ConnectionEditor: View {
         _retina = State(initialValue: display.retinaResolution ?? true)
         _smoothVideo = State(initialValue: display.smoothVideo ?? true)
         _audio = State(initialValue: display.remoteAudio)
-        _trackpad = State(initialValue: c?.trackpad ?? false)
+        _pointerMode = State(initialValue: c?.pointerModeOverride)
         _cursorTrackingSpeed = State(initialValue: CursorTrackingSpeed.validated(c?.cursorTrackingSpeed))
         _allowsViewportZoom = State(initialValue: c?.allowsViewportZoom != false)
         _showsLocalCursor = State(initialValue: c?.showsLocalCursor)
@@ -592,8 +592,20 @@ struct ConnectionEditor: View {
                     Toggle("调整远程分辨率", isOn: Binding(get: { sizing != .physical }, set: { sizing = $0 ? .dynamic : .physical }))
                         .disabled(layout != .single)
                 }
-                Toggle("触控板", isOn: $trackpad)
-                    .accessibilityIdentifier("connection.trackpad")
+                #if targetEnvironment(macCatalyst)
+                Toggle("触控板", isOn: Binding(
+                    get: { pointerMode == .trackpad },
+                    set: { pointerMode = $0 ? .trackpad : .direct }
+                ))
+                .accessibilityIdentifier("connection.trackpad")
+                #else
+                Picker("光标模式", selection: $pointerMode) {
+                    Text("跟随应用设置").tag(nil as RemotePointerMode?)
+                    Text("直接触控").tag(RemotePointerMode.direct as RemotePointerMode?)
+                    Text("触控板").tag(RemotePointerMode.trackpad as RemotePointerMode?)
+                }
+                .accessibilityIdentifier("connection.pointerMode")
+                #endif
                 CursorTrackingSpeedPicker(selection: $cursorTrackingSpeed)
                     .accessibilityIdentifier("connection.cursorTrackingSpeed")
                 Picker("光标显示", selection: $showsLocalCursor) {
@@ -778,7 +790,7 @@ struct ConnectionEditor: View {
             display.windowedMonitors = old.windowedMonitors
         }
         entry.setDisplay(display, for: .current)
-        entry.trackpad = trackpad
+        entry.pointerModeOverride = pointerMode
         entry.cursorTrackingSpeed = cursorTrackingSpeed
         entry.allowsViewportZoom = allowsViewportZoom ? nil : false
         entry.showsLocalCursor = showsLocalCursor

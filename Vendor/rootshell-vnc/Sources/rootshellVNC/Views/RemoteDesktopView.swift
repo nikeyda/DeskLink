@@ -65,7 +65,9 @@ public struct RemoteDesktopView: View {
     /// Height at the bottom that a docked HUD bar keeps clear of the fitted screen.
     @State private var hudReserve: CGFloat = 0
     @State private var viewportPanningMode: RemoteViewportPanningMode
-    @State private var pointerMode: RemotePointerMode
+    @State private var localPointerMode: RemotePointerMode
+    private var hostPointerSelection: Binding<RemotePointerMode>?
+    private var pointerModeSelection: Binding<RemotePointerMode> { hostPointerSelection ?? $localPointerMode }
     @State private var keyboardActive = false
     @State private var confirmPasswordSend = false
     @State private var curtainPromptPresented = false
@@ -153,7 +155,7 @@ public struct RemoteDesktopView: View {
         self.hostOwnsRecoveryChrome = hostOwnsRecoveryChrome
         self.hudMenuExtras = hudMenuExtras
         self._viewportPanningMode = State(initialValue: initialViewportPanningMode)
-        self._pointerMode = State(initialValue: initialPointerMode)
+        self._localPointerMode = State(initialValue: initialPointerMode)
         self.pointerSpeed = pointerSpeed
         self.cursorHeight = cursorHeight
         self.touchGestures = touchGestures
@@ -208,6 +210,13 @@ public struct RemoteDesktopView: View {
                     session.setCurtainMode(false)
                 }
             })
+    }
+
+    /// Keeps pointer choices with the host when its desktop view is recreated.
+    public func controllingPointerMode(_ selection: Binding<RemotePointerMode>) -> Self {
+        var copy = self
+        copy.hostPointerSelection = selection
+        return copy
     }
 
     /// Hides the floating HUD (menu button and accessory). For a host that offers the same items in its own menu.
@@ -556,7 +565,7 @@ public struct RemoteDesktopView: View {
         RemoteInteractionView(
             viewport: $viewport,
             viewportPanningMode: viewportPanningMode,
-            pointerMode: pointerMode,
+            pointerMode: pointerModeSelection.wrappedValue,
             pointerSpeed: pointerSpeed,
             cursorHeight: cursorHeight,
             serverRendersCursor: session.activeCursorRendering == .server,
@@ -765,7 +774,7 @@ public struct RemoteDesktopView: View {
             hostProvidesKeyboardButton: hudAccessory?.providesKeyboardButton ?? false,
             viewport: $viewport,
             viewportPanningMode: $viewportPanningMode,
-            pointerMode: $pointerMode,
+            pointerMode: pointerModeSelection,
             isFullScreen: isFullScreen,
             toggleFullScreen: toggleFullScreen,
             extras: hudMenuExtras,
@@ -798,7 +807,7 @@ public struct RemoteDesktopView: View {
             Menu {
                 HUDFitScreenButton(viewport: $viewport)
                 HUDPanningPicker(selection: $viewportPanningMode)
-                HUDPointerPicker(selection: $pointerMode)
+                HUDPointerPicker(selection: pointerModeSelection)
                 curtainToggle
                 hudMenuExtras.display
             } label: {

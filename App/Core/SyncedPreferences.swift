@@ -18,6 +18,7 @@ enum SyncedPreference: String, CaseIterable {
     case reconnect = "connection.reconnect"
     case cursor = "connection.clientCursor"
     case speed = "pointer.speed"
+    case pointerMode = "pointer.mode"
     case up = "gesture.upFingers"
     case down = "gesture.downFingers"
     case horizontal = "gesture.horizontalFingers"
@@ -59,6 +60,7 @@ enum SyncedPreference: String, CaseIterable {
         case (.list, .flag), (.reconnect, .flag), (.cursor, .flag), (.keyboardTrailing, .flag), (.twoFingerToggle, .flag), (.keyRepeat, .flag):
             true
         case (.speed, .speed(let value)): (0.5...3).contains(value)
+        case (.pointerMode, .text(let value)): RemotePointerMode(rawValue: value) != nil
         case (.holdDuration, .speed(let value)): RemoteTouchGestureConfiguration.holdDurationRange.contains(value)
         case (.keyDelay, .speed(let value)): VNCKeyRepeat.delayRange.contains(value)
         case (.keyInterval, .speed(let value)): VNCKeyRepeat.intervalRange.contains(value)
@@ -81,7 +83,7 @@ enum SyncedPreference: String, CaseIterable {
         case .list, .reconnect, .cursor, .keyboardTrailing, .twoFingerToggle, .keyRepeat: result = .flag(defaults.bool(forKey: rawValue))
         case .speed, .holdDuration, .keyDelay, .keyInterval: result = .speed(defaults.double(forKey: rawValue))
         case .up, .down, .horizontal: result = .number(defaults.integer(forKey: rawValue))
-        case .style, .size, .buttons, .doubleTap, .squeeze, .savedOrder, .favoriteOrder, .recentOrder, .linkOrder:
+        case .style, .size, .buttons, .doubleTap, .squeeze, .savedOrder, .favoriteOrder, .recentOrder, .linkOrder, .pointerMode:
             result = defaults.string(forKey: rawValue).map(PreferenceValue.text)
         }
         return result.flatMap { accepts($0) ? $0 : nil }

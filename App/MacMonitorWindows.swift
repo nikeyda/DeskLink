@@ -109,7 +109,7 @@ struct MacMonitorWindow: View {
         var gestures = RemoteTouchGestureConfiguration.standard
         gestures.scrollSpeed = group.computer.scrollSpeed(forMac: group.session.serverUsesAppleModifierConvention)
         let view = RemoteDesktopView(session: group.session,
-                                     initialPointerMode: group.computer.trackpad ? .trackpad : .direct,
+                                     initialPointerMode: group.computer.pointerModeOverride ?? .direct,
                                      pointerSpeed: CursorTrackingSpeed.validated(group.computer.cursorTrackingSpeed) ?? pointerSpeed,
                                      touchGestures: gestures, hostOwnsRecoveryChrome: true)
             .showingMonitor(in: region).desktopControls(controls)
