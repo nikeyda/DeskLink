@@ -40,6 +40,7 @@ extension RemoteInputUIView: UITextInput {
     // MARK: Composition
 
     func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
+        if receiveLocalOptionMark(markedText) { return }
         // Clearing a composition deletes the selection it had replaced.
         guard let edit = textDocument.setMarked(markedText, selectedRange: selectedRange) else { return }
         applyTextEdit(edit)

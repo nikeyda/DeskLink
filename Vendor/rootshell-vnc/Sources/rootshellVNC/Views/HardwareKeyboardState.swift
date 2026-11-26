@@ -230,6 +230,124 @@ struct UniversalCommandKeyState {
     }
 }
 
+/// UIKit's Option flag does not identify the side. Track HID events so the
+/// opposite Option keeps its remote meaning, even when both keys are held.
+struct LocalOptionKeyState {
+    var side: VNCLocalOptionKey = .off
+    private var pressed: Set<UInt32> = []
+
+    func owns(_ usage: UInt32) -> Bool { usage == side.hidUsage }
+
+    mutating func update(usage: UInt32, down: Bool) {
+        guard side != .off, usage == 0xE2 || usage == 0xE6 else { return }
+        if down { pressed.insert(usage) }
+        else { pressed.remove(usage) }
+    }
+
+    mutating func releaseAll() { pressed.removeAll() }
+
+    var usesLocalOption: Bool {
+        if let local = side.hidUsage { return pressed == [local] }
+        return false
+    }
+
+    func remoteModifiers(_ modifiers: VNCKeyboardModifiers) -> VNCKeyboardModifiers {
+        usesLocalOption ? modifiers.subtracting(.option) : modifiers
+    }
+}
+
+/// A dead key starts with an empty UIKey. Use the mark UIKit reports for the
+/// active layout; some input methods omit it for Apple's standard shortcuts.
+struct LocalOptionComposition {
+    enum Route: Equatable {
+        case remote
+        case native
+        case text(String)
+    }
+
+    private struct Accent {
+        let spacing: String
+        let combining: String
+
+        init?(_ mark: String) {
+            guard !mark.isEmpty else { return nil }
+            let normalized: String
+            switch mark {
+            case "`": normalized = "\u{0300}"
+            case "^": normalized = "\u{0302}"
+            case "~": normalized = "\u{0303}"
+            case "ˇ": normalized = "\u{030C}"
+            default:
+                let scalars = mark.decomposedStringWithCompatibilityMapping.unicodeScalars
+                let marks = scalars.filter { $0 != " " }
+                guard !marks.isEmpty, marks.allSatisfy({
+                    switch $0.properties.generalCategory {
+                    case .nonspacingMark, .spacingMark, .enclosingMark: true
+                    default: false
+                    }
+                }) else { return nil }
+                normalized = String(String.UnicodeScalarView(marks))
+            }
+            spacing = mark
+            combining = normalized
+        }
+
+        func applying(to text: String) -> String {
+            if text == " " { return spacing }
+            guard let first = text.first, first.isLetter else { return spacing + text }
+            let firstText = String(first)
+            let composed = (firstText + combining).precomposedStringWithCanonicalMapping
+            return composed + text.dropFirst()
+        }
+    }
+
+    private static let standardMarks = ["e": "´", "`": "`", "n": "~", "u": "¨", "i": "^"]
+    private var waitsForBase = false
+    private var accent: Accent?
+
+    mutating func reset() {
+        waitsForBase = false
+        accent = nil
+    }
+
+    mutating func receiveMark(_ mark: String?) -> Bool {
+        guard waitsForBase else { return false }
+        if let mark, let reported = Accent(mark) { accent = reported }
+        return true
+    }
+
+    mutating func route(
+        usage: UInt32, characters: String, unmodified: String,
+        localOption: Bool, remoteShortcut: Bool
+    ) -> Route {
+        guard !(0xE0...0xE7).contains(usage) else { return .remote }
+        if remoteShortcut {
+            reset()
+            return .remote
+        }
+        if waitsForBase, usage == 0x29 || usage == 0x2A {
+            reset()
+            return .text("")
+        }
+        guard localOption || waitsForBase else { return .remote }
+        guard !unmodified.isEmpty, unmodified.unicodeScalars.allSatisfy({
+            $0.properties.generalCategory != .privateUse && $0.properties.generalCategory != .control
+        }) else {
+            reset()
+            return .remote
+        }
+        if localOption, characters.isEmpty {
+            waitsForBase = true
+            accent = Self.standardMarks[unmodified.lowercased()].flatMap(Accent.init)
+            return .native
+        }
+        guard !characters.isEmpty else { return .remote }
+        let text = accent?.applying(to: characters) ?? characters
+        reset()
+        return .text(text)
+    }
+}
+
 /// Physical modifier identities are separate from the remote keys they hold.
 /// Multiple physical Command keys and the translated chord share one remote
 /// Command, so releasing one source cannot release another source's modifier.
@@ -446,6 +564,17 @@ final class HardwareKeyboardController {
         if repeatingUsage == usage { stopRepeat() }
         send(transition, usage: usage)
         return true
+    }
+
+    /// Shift chooses the local glyph, so it must not also modify that glyph at
+    /// the remote OS. Keep the physical hold intact for the next key.
+    func whileShiftIsReleased(_ action: () -> Void) {
+        let shifts = [UInt32(0xE1), 0xE5].compactMap { usage in
+            (commandModifiers.physical[usage] ?? state.pressedKeysyms[usage]).map { (usage, $0) }
+        }
+        for (usage, _) in shifts { release(usage: usage) }
+        action()
+        for (usage, keysym) in shifts { press(usage: usage, keysym: keysym) }
     }
 
     func releaseAll() {

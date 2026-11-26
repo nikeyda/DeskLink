@@ -36,6 +36,20 @@ public struct VNCHostKeyboardShortcut: Equatable, Sendable {
     }
 }
 
+public enum VNCLocalOptionKey: String, Sendable {
+    case off
+    case left
+    case right
+
+    var hidUsage: UInt32? {
+        switch self {
+        case .off: nil
+        case .left: 0xE2
+        case .right: 0xE6
+        }
+    }
+}
+
 public struct VNCKeyRepeat: Equatable, Sendable {
     public static let delayRange = 0.15...1.5
     public static let intervalRange = 0.025...0.25
@@ -192,6 +206,8 @@ public final class VNCKeyboardCapture {
     /// takes precedence over compatibility/viewer shortcuts using that chord;
     /// explicit menu commands and toolbar modifiers keep their original meaning.
     public var controlOptionAsCommand: Bool = true
+    /// Option side reserved for character input in the device's keyboard layout.
+    public var localOptionKey: VNCLocalOptionKey = .off
     public var keyRepeat = VNCKeyRepeat()
 
     /// Mac: the host has turned off the local system shortcuts on Space

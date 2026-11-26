@@ -50,6 +50,7 @@ struct SessionScreen: View {
     @AppStorage("pencil.squeeze") private var pencilSqueeze = RemotePencilAction.toggleToolbar
     @AppStorage("toolbar.twoFingerToggle") private var twoFingerToggle = true
     @AppStorage("gesture.holdDuration") private var holdDuration = RemoteTouchGestureConfiguration.defaultHoldDuration
+    @AppStorage("keyboard.localOptionKey") private var localOptionKey = VNCLocalOptionKey.off
     @AppStorage("keyboard.repeat") private var repeatKeys = true
     @AppStorage("keyboard.delay") private var keyDelay = VNCKeyRepeat().delay
     @AppStorage("keyboard.interval") private var keyInterval = VNCKeyRepeat().interval
@@ -315,6 +316,9 @@ struct SessionScreen: View {
         #if !targetEnvironment(macCatalyst)
         .onChange(of: VNCKeyRepeat(enabled: repeatKeys, delay: keyDelay, interval: keyInterval), initial: true) { _, value in
             toolbar.keyboard.keyRepeat = value
+        }
+        .onChange(of: localOptionKey, initial: true) { _, value in
+            toolbar.keyboard.localOptionKey = value
         }
         .background {
             if #available(iOS 27.0, *), session.connectionState.isConnected {

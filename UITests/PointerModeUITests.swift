@@ -83,6 +83,98 @@ final class PointerModeUITests: XCTestCase {
         add(receipt)
     }
 
+    func testSelectedOptionTypesLocalCharactersAndOppositeOptionReachesTheRemoteDesktop() async throws {
+        continueAfterFailure = false
+        let desktop = LocalTestDisplay()
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString]
+        app.launch()
+
+        let preference = app.descendants(matching: .any).matching(identifier: "preferences.localOptionKey").firstMatch
+        func setOption(_ side: String) {
+            let more = app.buttons["library.more"].firstMatch
+            XCTAssertTrue(more.waitForExistence(timeout: 10))
+            more.tap()
+            app.buttons["设置"].firstMatch.tap()
+            for _ in 0..<6 where !preference.isHittable { app.swipeUp() }
+            XCTAssertTrue(preference.isHittable)
+            preference.tap()
+            let choice = app.buttons[side].firstMatch
+            XCTAssertTrue(choice.waitForExistence(timeout: 5))
+            choice.tap()
+            let selection = XCTAttachment(screenshot: app.screenshot())
+            selection.name = side + " setting"
+            selection.lifetime = .keepAlways
+            add(selection)
+            app.navigationBars.buttons["关闭"].firstMatch.tap()
+        }
+        func connect() async throws {
+            let frames = desktop.frameCount
+            let quick = app.buttons["library.quick"].firstMatch
+            XCTAssertTrue(quick.waitForExistence(timeout: 10))
+            quick.tap()
+            let address = app.textFields["connection.host"]
+            XCTAssertTrue(address.waitForExistence(timeout: 5))
+            address.tap()
+            address.typeText("127.0.0.1:\(port)")
+            app.buttons["connection.submit"].firstMatch.tap()
+            let input = app.descendants(matching: .any).matching(identifier: "session.input").firstMatch
+            try await waitUntil { desktop.frameCount > frames && input.isHittable }
+            input.tap()
+        }
+
+        setOption("左侧 Option")
+        try await connect()
+        var wire: [(Bool, UInt32)] = []
+        desktop.onWireKey = { down, symbol in wire.append((down, symbol)) }
+        app.typeKey("k", modifierFlags: [])
+        try await waitUntil { wire.contains { !$0.0 && $0.1 == 0x6B } }
+        let prior = desktop.keyDowns.count
+        wire.removeAll()
+        app.typeKey("a", modifierFlags: .option)
+        try await waitUntil { desktop.keyDowns.count > prior }
+        app.typeKey("e", modifierFlags: .option)
+        app.typeKey("e", modifierFlags: [])
+        app.typeKey("2", modifierFlags: [.option, .shift])
+        app.typeKey("n", modifierFlags: .option)
+        app.typeKey("n", modifierFlags: [])
+        app.typeKey("o", modifierFlags: .option)
+        app.typeKey("z", modifierFlags: [])
+        try await waitUntil { wire.contains { !$0.0 && $0.1 == 0x7A } }
+        let modifierKeysyms = Set<UInt32>([0xFFE1, 0xFFE2, 0xFFE9, 0xFFEA])
+        XCTAssertEqual(desktop.keyDowns.dropFirst(prior).filter { !modifierKeysyms.contains($0) }, [0xE5, 0xE9, 0x010020AC, 0xF1, 0xF8, 0x7A])
+        XCTAssertFalse(wire.contains { $0.1 == 0xFFE9 || $0.1 == 0xFFEA })
+        var shifts: Set<UInt32> = []
+        for (down, symbol) in wire {
+            if symbol == 0x010020AC, down { XCTAssertTrue(shifts.isEmpty) }
+            if symbol == 0xFFE1 || symbol == 0xFFE2 {
+                if down { shifts.insert(symbol) } else { shifts.remove(symbol) }
+            }
+        }
+        let localReceipt = wire.map { ($0.0 ? "down " : "up ") + String($0.1, radix: 16) }
+
+        app.buttons["session.close"].firstMatch.tap()
+        try await waitUntil { desktop.closedConnections == 1 }
+        setOption("右侧 Option")
+        try await connect()
+        wire.removeAll()
+        app.typeKey("a", modifierFlags: .option)
+        try await waitUntil { wire.contains { !$0.0 && $0.1 == 0xFFE9 } }
+        XCTAssertEqual(wire.map { $0.0 }, [true, true, false, false])
+        XCTAssertEqual(wire.map { $0.1 }, [0xFFE9, 0x61, 0x61, 0xFFE9])
+        app.typeKey("y", modifierFlags: [])
+        try await waitUntil { wire.contains { !$0.0 && $0.1 == 0x79 } }
+        XCTAssertFalse(wire.contains { $0.1 == 0xFFEA })
+
+        let forwarded = wire.map { ($0.0 ? "down " : "up ") + String($0.1, radix: 16) }
+        let receipt = XCTAttachment(string: (["Left selected"] + localReceipt + ["Right selected"] + forwarded).joined(separator: "\n"))
+        receipt.name = "Local Option and remote Alt wire events"
+        receipt.lifetime = .keepAlways
+        add(receipt)
+    }
+
     private func waitUntil(_ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now + .seconds(15)
         while !condition() {

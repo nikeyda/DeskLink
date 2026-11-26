@@ -29,6 +29,70 @@ import UIKit
     }
     #endif
 
+    func testLocalOptionChoosesOneSideAndPreservesTheOppositeModifier() {
+        let chord: VNCKeyboardModifiers = [.option, .shift]
+        var state = LocalOptionKeyState()
+        state.update(usage: 0xE2, down: true)
+        XCTAssertEqual(state.remoteModifiers(chord), chord)
+        for side in [VNCLocalOptionKey.left, .right] {
+            state.side = side
+            let local: UInt32 = side == .left ? 0xE2 : 0xE6
+            let other: UInt32 = side == .left ? 0xE6 : 0xE2
+            XCTAssertTrue(state.owns(local))
+            XCTAssertFalse(state.owns(other))
+            XCTAssertEqual(state.remoteModifiers(chord), chord)
+            state.update(usage: local, down: true)
+            XCTAssertEqual(state.remoteModifiers(chord), .shift)
+            state.update(usage: other, down: true)
+            XCTAssertEqual(state.remoteModifiers(chord), chord)
+            state.update(usage: other, down: false)
+            XCTAssertEqual(state.remoteModifiers(chord), .shift)
+            state.releaseAll()
+            XCTAssertEqual(state.remoteModifiers(chord), chord)
+        }
+    }
+
+    func testLocalOptionComposesSystemMarksAndKnownEmptyKeyboardEvents() {
+        var input = LocalOptionComposition()
+        func press(_ usage: UInt32, _ text: String, _ base: String, local: Bool = false,
+                   shortcut: Bool = false) -> LocalOptionComposition.Route {
+            input.route(usage: usage, characters: text, unmodified: base,
+                        localOption: local, remoteShortcut: shortcut)
+        }
+        XCTAssertEqual(press(4, "å", "a", local: true), .text("å"))
+        XCTAssertEqual(press(8, "", "e", local: true), .native)
+        XCTAssertTrue(input.receiveMark("å e"))
+        XCTAssertEqual(press(8, "E", "e"), .text("É"))
+        XCTAssertEqual(press(17, "", "n", local: true), .native)
+        XCTAssertTrue(input.receiveMark("˜"))
+        XCTAssertEqual(press(17, "n", "n"), .text("ñ"))
+        XCTAssertEqual(press(25, "", "v", local: true), .native)
+        XCTAssertTrue(input.receiveMark("ˇ"))
+        XCTAssertEqual(press(6, "c", "c"), .text("č"))
+        XCTAssertEqual(press(8, "", "e", local: true), .native)
+        XCTAssertEqual(press(44, " ", " "), .text("´"))
+        XCTAssertEqual(press(17, "", "n", local: true), .native)
+        XCTAssertEqual(press(0x2A, "\u{8}", "\u{8}"), .text(""))
+        XCTAssertEqual(press(17, "n", "n"), .remote)
+        XCTAssertEqual(press(8, "", "e", local: true), .native)
+        XCTAssertEqual(press(25, "v", "v", shortcut: true), .remote)
+        XCTAssertFalse(input.receiveMark("´"))
+        XCTAssertEqual(press(8, "e", "e"), .remote)
+    }
+
+    func testLocalTextLiftRestoresTheHeldShiftAndKeepsCharacterOnly() {
+        var events: [HardwareKeyboardTransition] = []
+        let handler = KeyboardInputHandler(sendKeyEvent: { down, keysym in
+            events.append(.init(downFlag: down, keysym: keysym))
+        })
+        let input = HardwareKeyboardController(keyboardHandler: handler)
+        input.press(usage: 0xE1, keysym: KeyboardInputHandler.keysymShiftL)
+        input.whileShiftIsReleased { handler.typeText("€") }
+        XCTAssertTrue(input.release(usage: 0xE1))
+        XCTAssertEqual(events.map(\.downFlag), [true, false, true, false, true, false])
+        XCTAssertEqual(events.map(\.keysym), [0xFFE1, 0xFFE1, 0x010020AC, 0x010020AC, 0xFFE1, 0xFFE1])
+    }
+
     func testRemotePositionsAreIndependentOfTheLocalCharacterAndKeyboardGeometry() {
         XCTAssertEqual(MacKeyboardPosition.keyCode(for: 0x14), 0x0C) // US Q, French A
         XCTAssertEqual(MacKeyboardPosition.keyCode(for: 0x04), 0x00)
