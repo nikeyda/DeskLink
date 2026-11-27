@@ -27,6 +27,8 @@ struct SessionScreen: View {
     @State private var reportStartedAt = Date()
     @State private var liveReport: ConnectionReport?
     @State private var diagnosticAttemptID = UUID()
+    @State private var connectionAttempt = UUID()
+    @State private var setupRequiresEditing = false
     @State private var lastReportWrite: Date?
     @State private var showsDictation = false
     @State private var screenshot = ScreenshotExport()
@@ -288,21 +290,45 @@ struct SessionScreen: View {
                         #endif
                     }
                 case .failed(let reason):
+                    let failure = SessionConnectionFailure(session.lastError, setupRequiresEditing: setupRequiresEditing)
                     ContentUnavailableView {
-                        Label("连接失败", systemImage: "exclamationmark.triangle")
+                        Label(failure.title, systemImage: "exclamationmark.triangle")
+                            .accessibilityIdentifier("session.failureTitle")
                     } description: {
-                        Text(reason).textSelection(.enabled)
-                    } actions: { retryActions("重试") }
+                        Text(failure.advice)
+                    } actions: {
+                        if failure.needsEditing {
+                            editConnectionButton.buttonStyle(.borderedProminent)
+                        } else {
+                            retryActions("重试")
+                        }
+                        if !reason.isEmpty {
+                            DisclosureGroup("错误详情") {
+                                Text(verbatim: reason).font(.caption).textSelection(.enabled)
+                            }
+                            .frame(maxWidth: 360)
+                        }
+                    }
                 case .disconnected:
                     ContentUnavailableView {
                         Label("已断开", systemImage: "rectangle.slash")
                     } actions: { retryActions("重新连接") }
-                case .idle, .connecting, .disconnecting:
-                    ProgressView(session.connectionPhaseDescription ?? "正在连接…")
+                case .idle, .connecting:
+                    VStack(spacing: 18) {
+                        ProgressView(session.connectionPhaseDescription ?? "正在连接…")
+                        Button("取消") { finish(edit: false) }
+                            .buttonStyle(.bordered)
+                            .accessibilityIdentifier("session.cancelConnection")
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .disconnecting:
+                    ProgressView("正在断开…")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .task {
+            .task(id: connectionAttempt) {
+                guard !closing, !stopped, session.connectionState.canConnect else { return }
+                setupRequiresEditing = false
                 session.userDisconnectHandler = { finish(edit: false) }
                 session.authorizePasswordSend = {
                     guard !observing, !stopped, !closing, !privacy.locked else { return false }
@@ -319,7 +345,12 @@ struct SessionScreen: View {
                         tunnelUserPassword: tunnelUserPassword))
                 } catch is CancellationError {
                 } catch {
-                    if session.connectionState == .idle { session.connectionState = .failed(error.localizedDescription) }
+                    if session.connectionState == .idle {
+                        if let error = error as? VNCError, case .unsupportedFeature = error {
+                            setupRequiresEditing = true
+                        }
+                        session.connectionState = .failed(error.localizedDescription)
+                    }
                 }
             }
             .onChange(of: geometry.size) { _, newSize in
@@ -444,13 +475,17 @@ struct SessionScreen: View {
 
     @ViewBuilder private func retryActions(_ title: String) -> some View {
         Button(title) {
-            if !recorded || !session.retryConnection() { finish(edit: true) }
+            guard !privacy.locked, !closing, !stopped else { return }
+            if !session.retryConnection() { connectionAttempt = UUID() }
         }
+        .buttonStyle(.borderedProminent)
         .accessibilityIdentifier("session.reconnect")
-        if recorded {
-            Button("编辑连接") { finish(edit: true) }
-                .accessibilityIdentifier("session.editConnection")
-        }
+        editConnectionButton.buttonStyle(.bordered)
+    }
+
+    private var editConnectionButton: some View {
+        Button("编辑连接") { finish(edit: true) }
+            .accessibilityIdentifier("session.editConnection")
     }
 
     private func syncTransferPermission() {

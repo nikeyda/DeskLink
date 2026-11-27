@@ -41,7 +41,7 @@ final class SupportDiagnosticsUITests: XCTestCase {
         let connect = app.buttons["connection.submit"].firstMatch
         XCTAssertTrue(connect.waitForExistence(timeout: 8))
         connect.tap()
-        XCTAssertTrue(app.buttons["session.reconnect"].firstMatch.waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["session.editConnection"].firstMatch.waitForExistence(timeout: 20))
         app.buttons["返回"].firstMatch.tap()
         XCTAssertTrue(more.waitForExistence(timeout: 8))
         more.tap()

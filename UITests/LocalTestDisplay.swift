@@ -29,6 +29,8 @@ final class LocalTestDisplay {
     private(set) var requestedFramebufferSize: CGSize?
     private(set) var frameCount = 0
     private(set) var acceptedConnections = 0
+    var connectionsToCloseBeforeHandshake = 0
+    var waitsForCancellationBeforeHandshake = false
     var withholdFramesAfterConnection: Int?
     private(set) var overlappingConnections = 0
     private(set) var closedConnections = 0
@@ -89,6 +91,12 @@ final class LocalTestDisplay {
             return
         }
         acceptedConnections += 1
+        if acceptedConnections <= connectionsToCloseBeforeHandshake {
+            incoming.start(queue: queue)
+            incoming.cancel()
+            closedConnections += 1
+            return
+        }
         peer = incoming
         incoming.start(queue: queue)
         worker = Task {
@@ -130,6 +138,10 @@ final class LocalTestDisplay {
 
     private func serve(_ connection: NWConnection) async throws {
         let version = Array((appleScalingCapability == nil ? "RFB 003.008\n" : "RFB 003.889\n").utf8)
+        if waitsForCancellationBeforeHandshake {
+            _ = try await read(1, from: connection)
+            return
+        }
         try await send(version, to: connection)
         guard try await read(12, from: connection) == version else { throw URLError(.badServerResponse) }
         try await send([1, 1], to: connection)
