@@ -295,7 +295,7 @@ public struct KeyboardInputHandler {
     }
 
     /// Send a touch-menu shortcut as the remote computer's platform spells it.
-    func handleMenuShortcut(_ shortcut: RemoteMenuShortcut) {
+    public func handleMenuShortcut(_ shortcut: RemoteMenuShortcut) {
         guard let chord = shortcut.chord(for: commandPlatform) else { return }
         handleChord(RemoteKeyChord(
             modifiers: Self.keysyms(

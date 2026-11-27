@@ -42,6 +42,7 @@ enum DeskToolbarSize: String, CaseIterable {
 
 enum DeskToolbarButton: String, CaseIterable {
     case escape, tab, shift, control, option, command, arrows, home, end, pageUp, pageDown, functions, edit, shortcuts, password, spacer, dictation, screenshot
+    case switchApp, spotlight, missionControl
     case enter, up, down, left, right
     case f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12
 
@@ -78,6 +79,9 @@ enum DeskToolbarButton: String, CaseIterable {
         case .functions: "功能键"
         case .edit: "编辑"
         case .shortcuts: "远程快捷命令"
+        case .switchApp: RemoteMenuShortcut.switchApp.title
+        case .spotlight: RemoteMenuShortcut.spotlight.title
+        case .missionControl: RemoteCommand.missionControl.title
         case .password: "输入用户密码"
         case .spacer: "间距"
         case .dictation: "听写"
@@ -88,6 +92,22 @@ enum DeskToolbarButton: String, CaseIterable {
         case .left: "向左"
         case .right: "向右"
         case .f1, .f2, .f3, .f4, .f5, .f6, .f7, .f8, .f9, .f10, .f11, .f12: rawValue.uppercased()
+        }
+    }
+
+    var preferenceTitle: String {
+        switch self {
+        case .spotlight: "\(title)／\(RemoteMenuShortcut.spotlight.title(for: .other))"
+        case .missionControl: "\(title)／任务视图"
+        default: title
+        }
+    }
+
+    func title(for platform: RemoteCommandPlatform) -> String {
+        switch self {
+        case .spotlight: RemoteMenuShortcut.spotlight.title(for: platform)
+        case .missionControl where platform == .other: "任务视图"
+        default: title
         }
     }
 
@@ -107,6 +127,9 @@ enum DeskToolbarButton: String, CaseIterable {
         case .functions: "function"
         case .edit: "scissors"
         case .shortcuts: "command.square"
+        case .switchApp: "square.on.square"
+        case .spotlight: "magnifyingglass"
+        case .missionControl: "rectangle.3.group"
         case .password: "key"
         case .spacer: "arrow.left.and.right"
         case .dictation: "mic"
@@ -247,6 +270,11 @@ struct InteractiveDesktop: View {
 
     private var buttons: [DeskToolbarButton] { DeskToolbarButton.buttons(in: order) }
 
+    private var keyboardHandler: KeyboardInputHandler {
+        KeyboardInputHandler(sendKeyEvent: { session.sendKeyEvent(downFlag: $0, key: $1) },
+                             usesAppleModifierConvention: { session.serverUsesAppleModifierConvention })
+    }
+
     private var keyboardEdgeSwipe: ((CGPoint, UIView) -> Void)? {
         guard bar.keyboard.softwareKeyboardRequested, style == .docked || bar.expanded else { return nil }
         return { point, view in controls.movePointerToBottomEdge(at: point, in: view) }
@@ -347,6 +375,11 @@ struct InteractiveDesktop: View {
         } else if button == .screenshot {
             Button(action: captureScreenshot) { icon(button.symbol) }
                 .accessibilityLabel(button.title).accessibilityIdentifier("toolbar.screenshot")
+        } else if button == .switchApp || button == .spotlight || button == .missionControl {
+            Button { sendPinnedCommand(button) } label: { icon(button.symbol) }
+                .disabled(!session.connectionState.isConnected || !session.hasPresentedCurrentPicture)
+                .accessibilityLabel(button.title(for: keyboardHandler.commandPlatform))
+                .accessibilityIdentifier("toolbar." + button.rawValue)
         } else if button == .spacer {
             Spacer().frame(width: size.points / 2).accessibilityHidden(true)
         } else if button == .password {
@@ -401,10 +434,20 @@ struct InteractiveDesktop: View {
 
     private func send(_ key: UInt32, additional: VNCKeyboardModifiers = []) {
         guard session.connectionState.isConnected else { return }
-        let handler = KeyboardInputHandler(sendKeyEvent: { session.sendKeyEvent(downFlag: $0, key: $1) },
-                                           usesAppleModifierConvention: { session.serverUsesAppleModifierConvention })
         bar.keyboard.noteExternalInput()
-        if handler.handleKeysymTap(key, supplementalModifiers: bar.keyboard.supplementalModifiers.union(additional)) { bar.consume() }
+        if keyboardHandler.handleKeysymTap(key, supplementalModifiers: bar.keyboard.supplementalModifiers.union(additional)) { bar.consume() }
+    }
+
+    private func sendPinnedCommand(_ button: DeskToolbarButton) {
+        guard session.connectionState.isConnected, session.hasPresentedCurrentPicture else { return }
+        bar.keyboard.noteExternalInput()
+        bar.consume()
+        switch button {
+        case .switchApp: keyboardHandler.handleMenuShortcut(.switchApp)
+        case .spotlight: keyboardHandler.handleMenuShortcut(.spotlight)
+        case .missionControl: keyboardHandler.handleRemoteCommand(.missionControl)
+        default: break
+        }
     }
 
     private func icon(_ symbol: String, active: Bool = false) -> some View {

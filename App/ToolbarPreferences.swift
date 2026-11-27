@@ -31,7 +31,7 @@ struct ToolbarPreferences: View {
             }
             Section("工具栏按钮") {
                 ForEach(Array(buttons.enumerated()), id: \.offset) { _, button in
-                    Label(button.title, systemImage: button.symbol)
+                    Label(button.preferenceTitle, systemImage: button.symbol)
                 }
                 .onDelete { offsets in
                     var items = buttons
@@ -44,6 +44,7 @@ struct ToolbarPreferences: View {
                     save(items)
                 }
                 Button("添加按钮…") { selected = []; adding = true }
+                    .accessibilityIdentifier("toolbar.addButton")
             }
         }
         .navigationTitle("互动工具栏")
@@ -55,11 +56,13 @@ struct ToolbarPreferences: View {
                         if !selected.insert(button).inserted { selected.remove(button) }
                     } label: {
                         HStack {
-                            Label(button.title, systemImage: button.symbol)
+                            Label(button.preferenceTitle, systemImage: button.symbol)
                             Spacer()
                             if selected.contains(button) { Image(systemName: "checkmark") }
                         }
-                    }.accessibilityAddTraits(selected.contains(button) ? .isSelected : [])
+                    }
+                    .accessibilityAddTraits(selected.contains(button) ? .isSelected : [])
+                    .accessibilityIdentifier("toolbar.add." + button.rawValue)
                 }
                 .navigationTitle("工具栏按钮")
                 .toolbar {

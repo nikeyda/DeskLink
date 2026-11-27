@@ -1,15 +1,15 @@
 import Foundation
 
-/// Touch-menu shortcuts only. These do not register additional hardware
+/// Shortcuts for touch menus and toolbars. These do not register additional hardware
 /// aliases or compete with the containing app's reserved shortcuts.
-enum RemoteMenuShortcut: String, CaseIterable, Identifiable {
+public enum RemoteMenuShortcut: String, CaseIterable, Identifiable, Sendable {
     case undo, redo, cut, copy, paste, pasteAndMatchStyle, selectAll, find
     case switchApp, switchAppBackward, switchWindow, hide, hideOthers, minimize
     case closeWindow, quit, fullScreen, spotlight, settings
     case newDocument, open, save, print, newTab, reopenTab, previousTab, nextTab
     case escape, tab, backTab, controlSpace, enter, backspace, forwardDelete
 
-    var id: Self { self }
+    public var id: Self { self }
 
     static let editing: [Self] = [.undo, .redo, .cut, .copy, .paste, .pasteAndMatchStyle, .selectAll, .find]
     static let applications: [Self] = [
@@ -75,14 +75,14 @@ enum RemoteMenuShortcut: String, CaseIterable, Identifiable {
         }
     }
 
-    func title(for platform: RemoteCommandPlatform) -> String {
+    public func title(for platform: RemoteCommandPlatform) -> String {
         if self == .spotlight, platform == .other {
             return String(localized: "Start Menu", bundle: .module)
         }
         return title
     }
 
-    var title: String {
+    public var title: String {
         switch self {
         case .undo: String(localized: "Undo", bundle: .module)
         case .redo: String(localized: "Redo", bundle: .module)

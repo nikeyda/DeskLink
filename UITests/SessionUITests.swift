@@ -1141,6 +1141,102 @@ final class SessionUITests: XCTestCase {
         app.buttons["session.close"].tap()
     }
 
+    func testPinnedRemoteActionsSendPlatformShortcuts() async throws {
+        let desktop = LocalTestDisplay()
+        var wire: [Int] = []
+        desktop.onWireKey = { down, key in wire.append(down ? Int(key) : -Int(key)) }
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let macDesktop = LocalTestDisplay(appleScalingCapability: false)
+        var macWire: [Int] = []
+        macDesktop.onWireKey = { down, key in macWire.append(down ? Int(key) : -Int(key)) }
+        let macPort = try await macDesktop.start()
+        defer { macDesktop.stop() }
+        let app = XCUIApplication()
+        openChart(app, port: port) {
+            app.buttons["library.more"].tap()
+            app.buttons["设置"].firstMatch.tap()
+            let settings = app.navigationBars["设置"]
+            XCTAssertTrue(settings.waitForExistence(timeout: 5))
+            let top = settings.frame.maxY
+            let scroll = settings.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 1))
+                .withOffset(.init(dx: 0, dy: 260))
+            let toolbar = app.buttons["preferences.toolbar"]
+            for _ in 0..<8 {
+                if toolbar.exists, (top + 25...top + 420).contains(toolbar.frame.midY), toolbar.isHittable { break }
+                let step = toolbar.exists && toolbar.frame.midY < top + 25 ? CGFloat(120) : -120
+                scroll.press(forDuration: 0.15, thenDragTo: scroll.withOffset(.init(dx: 0, dy: step)),
+                             withVelocity: .slow, thenHoldForDuration: 0.15)
+            }
+            toolbar.coordinate(withNormalizedOffset: .init(dx: 0.35, dy: 0.5)).tap()
+            XCTAssertTrue(app.navigationBars["互动工具栏"].waitForExistence(timeout: 5))
+            let add = app.buttons["toolbar.addButton"]
+            for _ in 0..<4 where !add.isHittable { app.swipeUp() }
+            add.tap()
+            for (id, title) in [("switchApp", "切换 App"), ("spotlight", "聚焦／开始菜单"), ("missionControl", "调度中心／任务视图")] {
+                let option = app.buttons["toolbar.add." + id]
+                for _ in 0..<4 where !option.isHittable { app.swipeUp() }
+                XCTAssertTrue(option.isHittable)
+                XCTAssertEqual(option.label, title)
+                option.tap()
+            }
+            attachToolbarScreenshot(app, name: "Choose pinned toolbar commands")
+            app.buttons["添加"].tap()
+            app.terminate()
+            app.launch()
+        }
+        let switchApp = app.buttons["toolbar.switchApp"]
+        let spotlight = app.buttons["toolbar.spotlight"]
+        let missionControl = app.buttons["toolbar.missionControl"]
+        try await waitUntil { desktop.frameCount > 0 && switchApp.isHittable && switchApp.isEnabled }
+        XCTAssertTrue(spotlight.isHittable)
+        XCTAssertTrue(missionControl.isEnabled)
+        XCTAssertEqual(spotlight.label, "开始菜单")
+        XCTAssertEqual(missionControl.label, "任务视图")
+        let control = app.buttons["toolbar.control"]
+        control.tap()
+        XCTAssertEqual(control.value as? String, "已选中")
+        switchApp.tap()
+        try await waitUntil { wire.count >= 4 }
+        XCTAssertEqual(wire, [0xFFE9, 0xFF09, -0xFF09, -0xFFE9])
+        XCTAssertNotEqual(control.value as? String, "已选中")
+        spotlight.tap()
+        try await waitUntil { wire.count >= 6 }
+        XCTAssertEqual(Array(wire.suffix(2)), [0xFFEB, -0xFFEB])
+        missionControl.tap()
+        try await waitUntil { wire.count >= 10 }
+        XCTAssertEqual(Array(wire.suffix(4)), [0xFFEB, 0xFF09, -0xFF09, -0xFFEB])
+        attachToolbarScreenshot(app, name: "Pinned commands on a standard desktop")
+        app.buttons["session.close"].tap()
+
+        connectChart(app, port: macPort) {
+            let display = app.buttons["显示器"].firstMatch
+            for _ in 0..<4 where !display.isHittable { app.swipeUp() }
+            display.tap()
+            let adaptive = app.buttons["connection.adaptiveQuality"]
+            for _ in 0..<4 where !adaptive.isHittable { app.swipeUp() }
+            adaptive.tap()
+            app.buttons["永不启用"].firstMatch.tap()
+        }
+        try await waitUntil { macDesktop.frameCount > 0 && missionControl.isHittable && missionControl.isEnabled }
+        XCTAssertEqual(spotlight.label, "聚焦")
+        XCTAssertEqual(missionControl.label, "调度中心")
+        attachToolbarScreenshot(app, name: "Pinned commands on a Mac desktop")
+        switchApp.tap()
+        try await waitUntil { macWire.count >= 4 }
+        XCTAssertEqual(macWire, [0xFFEB, 0xFF09, -0xFF09, -0xFFEB])
+        spotlight.tap()
+        try await waitUntil { macWire.count >= 8 }
+        XCTAssertEqual(Array(macWire.suffix(4)), [0xFFEB, 0x20, -0x20, -0xFFEB])
+        missionControl.tap()
+        try await waitUntil { macWire.count >= 12 }
+        XCTAssertEqual(Array(macWire.suffix(4)), [0xFFE3, 0xFF52, -0xFF52, -0xFFE3])
+        let receipt = XCTAttachment(string: "Standard RFB: \(wire)\nApple RFB: \(macWire)")
+        receipt.name = "Remote key press and release events"
+        receipt.lifetime = .keepAlways
+        add(receipt)
+    }
+
     func testFloatingToolbarCanCollapseAndStillSendKeysAfterExpanding() async throws {
         let desktop = LocalTestDisplay()
         let port = try await desktop.start()
@@ -1273,9 +1369,13 @@ final class SessionUITests: XCTestCase {
     private func openChart(_ app: XCUIApplication, port: UInt16, prepare: () -> Void = {}) {
         app.launchArguments = ["--test-library", UUID().uuidString]
         app.launch()
-        let quick = app.buttons["library.quick"]
-        XCTAssertTrue(quick.waitForExistence(timeout: 12))
+        XCTAssertTrue(app.buttons["library.quick"].waitForExistence(timeout: 12))
         prepare()
+        connectChart(app, port: port)
+    }
+
+    private func connectChart(_ app: XCUIApplication, port: UInt16, configure: () -> Void = {}) {
+        let quick = app.buttons["library.quick"]
         XCTAssertTrue(quick.waitForExistence(timeout: 8))
         quick.tap()
         let field = app.textFields["connection.host"]
@@ -1284,6 +1384,7 @@ final class SessionUITests: XCTestCase {
         XCTAssertFalse(submit.isEnabled)
         field.tap()
         field.typeText("127.0.0.1:\(port)")
+        configure()
         submit.tap()
     }
 
