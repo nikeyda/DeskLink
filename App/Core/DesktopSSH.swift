@@ -14,6 +14,13 @@ struct SSHSettings: Codable, Equatable, Sendable {
     var usesKey = false
     var keyName: String?
     var server: String?
+    // A missing value in older libraries continues to require the tunnel on every network.
+    var secureLocally: Bool?
+
+    func sameDestination(as other: Self) -> Bool {
+        port == other.port && username == other.username && usesKey == other.usesKey
+            && keyName == other.keyName && server == other.server
+    }
 }
 
 enum SSHProof: Sendable {
@@ -269,6 +276,17 @@ actor DesktopSSH: RFBConnection {
         self.settings = settings
         self.proof = proof
         self.trust = trust
+    }
+
+    static func transport(host: String, port: UInt16, settings: SSHSettings, proof: SSHProof?,
+                          trust: HostTrust) async throws -> any RFBConnection {
+        if settings.secureLocally == false,
+           let direct = try await TCPConnection.connectIfLocal(host: host, port: port, allowsLoopback: settings.server == nil) {
+            return direct
+        }
+        try Task.checkCancellation()
+        guard let proof else { throw URLError(.userAuthenticationRequired) }
+        return DesktopSSH(host: host, desktopPort: port, settings: settings, proof: proof, trust: trust)
     }
 
     func connect() async throws {

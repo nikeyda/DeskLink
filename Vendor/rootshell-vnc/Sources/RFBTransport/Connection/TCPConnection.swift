@@ -91,6 +91,8 @@ public actor TCPConnection: RFBConnection {
     private let maxDialAttempts: Int
     private let dialRetryBackoffNanos: UInt64
     private let connectTimeoutSeconds: Int
+    // nil dials normally; a value requires a directly attached peer and controls loopback.
+    private let localOnlyAllowsLoopback: Bool?
     private let keepalive: KeepaliveSettings
 
     /// TCP keepalive tuning.
@@ -141,6 +143,7 @@ public actor TCPConnection: RFBConnection {
         dialRetryBackoffNanos: UInt64,
         connectTimeoutSeconds: Int,
         keepalive: KeepaliveSettings = KeepaliveSettings(),
+        localOnlyAllowsLoopback: Bool? = nil,
         socksProxyResolver: @escaping @Sendable (String, UInt16) -> SOCKS5ProxyEndpoint? = {
             SystemSOCKSProxy.endpoint(forHost: $0, port: $1)
         }
@@ -150,8 +153,25 @@ public actor TCPConnection: RFBConnection {
         self.maxDialAttempts = max(1, maxDialAttempts)
         self.dialRetryBackoffNanos = dialRetryBackoffNanos
         self.connectTimeoutSeconds = max(1, connectTimeoutSeconds)
+        self.localOnlyAllowsLoopback = localOnlyAllowsLoopback
         self.keepalive = keepalive
         self.socksProxyResolver = socksProxyResolver
+    }
+
+    /// Returns the same socket that was verified to reach a directly attached peer.
+    /// No application bytes are sent while classifying the route.
+    public static func connectIfLocal(host: String, port: UInt16, allowsLoopback: Bool) async throws -> TCPConnection? {
+        let candidate = TCPConnection(host: host, port: port, maxDialAttempts: 1, dialRetryBackoffNanos: 0,
+                                      connectTimeoutSeconds: 2, localOnlyAllowsLoopback: allowsLoopback)
+        do {
+            try await candidate.connect()
+            try Task.checkCancellation()
+            return candidate
+        } catch {
+            await candidate.close()
+            try Task.checkCancellation()
+            return nil
+        }
     }
 
     public func connect() async throws {
@@ -168,6 +188,11 @@ public actor TCPConnection: RFBConnection {
             let attemptStart = DispatchTime.now().uptimeNanoseconds
             do {
                 try await dialOnce()
+                if let allowsLoopback = localOnlyAllowsLoopback,
+                   !(await isOnLocalNetwork(requiresSourceAddress: true, allowsLoopback: allowsLoopback)) {
+                    await close()
+                    throw URLError(.cannotConnectToHost)
+                }
                 return
             } catch {
                 // Elapsed time discriminates failure modes: ~instant means
@@ -196,6 +221,7 @@ public actor TCPConnection: RFBConnection {
         guard let proxy = socksProxyResolver(host, port) else {
             return try await dial(through: nil)
         }
+        guard localOnlyAllowsLoopback == nil else { throw URLError(.cannotConnectToHost) }
         do {
             try await dial(through: proxy)
         } catch SOCKS5Handshake.Failure.noAcceptableMethod {
@@ -231,7 +257,7 @@ public actor TCPConnection: RFBConnection {
             // a paused renderer also stops draining the kernel socket.
             .channelOption(ChannelOptions.autoRead, value: false)
             .channelOption(NIOTSChannelOptions.allowLocalEndpointReuse, value: true)
-            .configureNWParameters { [bypassesSystemProxy = proxy != nil] parameters in
+            .configureNWParameters { [bypassesSystemProxy = proxy != nil || localOnlyAllowsLoopback != nil] parameters in
                 parameters.serviceClass = .responsiveData
                 if bypassesSystemProxy { parameters.preferNoProxies = true }
             }
@@ -529,9 +555,13 @@ public actor TCPConnection: RFBConnection {
     }
 
     public func isOnLocalNetwork() async -> Bool {
+        await isOnLocalNetwork(requiresSourceAddress: false, allowsLoopback: true)
+    }
+
+    private func isOnLocalNetwork(requiresSourceAddress: Bool, allowsLoopback: Bool) async -> Bool {
         guard socksProxy == nil, let channel,
               let path = try? await channel.getOption(NIOTSChannelOptions.currentPath).get() else { return false }
-        if path.usesInterfaceType(.loopback) { return true }
+        if path.usesInterfaceType(.loopback) { return allowsLoopback }
         guard !path.usesInterfaceType(.cellular), !path.usesInterfaceType(.other),
               case .hostPort(let host, _) = path.remoteEndpoint else { return false }
         let names = Set(path.availableInterfaces.filter {
@@ -544,6 +574,16 @@ public actor TCPConnection: RFBConnection {
         case .ipv6(let address): (peer, family) = (address.rawValue, AF_INET6)
         default: return false
         }
+        let source: Data?
+        if case .hostPort(let host, _) = path.localEndpoint {
+            switch host {
+            case .ipv4(let address): source = family == AF_INET ? address.rawValue : nil
+            case .ipv6(let address): source = family == AF_INET6 ? address.rawValue : nil
+            default: source = nil
+            }
+        } else { source = nil }
+        if requiresSourceAddress, source == nil { return false }
+
         var interfaces: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&interfaces) == 0 else { return false }
         defer { freeifaddrs(interfaces) }
@@ -561,7 +601,9 @@ public actor TCPConnection: RFBConnection {
                 return withUnsafeBytes(of: pointer.assumingMemoryBound(to: sockaddr_in6.self).pointee.sin6_addr) { Data($0) }
             }
             let local = bytes(of: address)
+            if requiresSourceAddress, local != source { continue }
             let netmask = bytes(of: mask)
+            if requiresSourceAddress, !netmask.contains(where: { $0 != 0 }) { continue }
             if peer.indices.allSatisfy({ (peer[$0] & netmask[$0]) == (local[$0] & netmask[$0]) }) { return true }
         }
         return false

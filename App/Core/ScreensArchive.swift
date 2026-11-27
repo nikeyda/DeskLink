@@ -156,6 +156,7 @@ struct ScreensArchive: Decodable {
         let rememberLastSelectedDisplay: Bool?
         let streamVideoAndAudio: Bool?
         let useSecureConnection: Bool
+        let useSecureConnectionsLocally: Bool?
         let sshHostname: String?
         let sshPort: UInt16?
         let sshUsers: [User]?
@@ -244,7 +245,8 @@ struct ScreensArchive: Decodable {
                 guard !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       let sshPort, sshPort > 0 else { throw ImportError.incompleteSSH }
                 let server = try sshHostname.flatMap { $0.isEmpty ? nil : try Endpoint.hostOnly($0) }
-                result.ssh = SSHSettings(port: sshPort, username: username, server: server)
+                result.ssh = SSHSettings(port: sshPort, username: username, server: server,
+                                         secureLocally: useSecureConnectionsLocally == false ? false : nil)
             }
             return result
         }
@@ -344,6 +346,7 @@ extension ScreensArchive {
             record["users"] = authentication == DesktopAuthentication.unauthenticated.rawValue
                 ? [] : [user(computer.username, role: "desktop")]
             record["useSecureConnection"] = computer.ssh != nil
+            record["useSecureConnectionsLocally"] = computer.ssh?.secureLocally != false
             record["sshHostname"] = computer.ssh?.server
             record["sshPort"] = Int(computer.ssh?.port ?? 22)
             record["sshUsers"] = [user(computer.ssh?.username, role: "ssh")]

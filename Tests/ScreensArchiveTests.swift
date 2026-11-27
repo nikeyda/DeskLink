@@ -41,6 +41,29 @@ final class ScreensArchiveTests: XCTestCase {
         XCTAssertEqual(stored.display(for: .iPad).rememberMonitor, true)
     }
 
+    func testSecureConnectionsLocallySurvivesBothArchiveFormats() throws {
+        let included = try modified(fixture: "screens-group-ssh") { $0["useSecureConnectionsLocally"] = false }
+        let imported = try ScreensArchive.convert(included)
+        let restored = try LibraryArchive.read(imported.encoded())
+        let selected = try XCTUnwrap(restored.computers.first)
+        XCTAssertEqual(selected.ssh?.secureLocally, false)
+        let defaultArchive = try ScreensArchive.convert(fixture("screens-group-ssh"))
+        let defaultRoute = try XCTUnwrap(defaultArchive.computers.first)
+        XCTAssertNil(defaultRoute.ssh?.secureLocally)
+        XCTAssertTrue(defaultRoute.hasSameDestination(as: selected))
+
+        for (archive, expected) in [(restored, false), (defaultArchive, true)] {
+            let output = try ScreensArchive.export(archive, knownMacs: [], sharedClipboard: true)
+            let document = try XCTUnwrap(JSONSerialization.jsonObject(with: output) as? [String: Any])
+            let entries = try XCTUnwrap(document["screens"] as? [[String: Any]])
+            XCTAssertEqual(entries.first?["useSecureConnectionsLocally"] as? Bool, expected)
+            let route = try XCTUnwrap(try ScreensArchive.convert(output).computers.first?.ssh)
+            XCTAssertEqual(route.secureLocally != false, expected)
+        }
+        let omitted = try modified(fixture: "screens-group-ssh") { $0.removeValue(forKey: "useSecureConnectionsLocally") }
+        XCTAssertNil(try ScreensArchive.convert(omitted).computers.first?.ssh?.secureLocally)
+    }
+
     func testMixedOriginalArchiveRetainsExternalFoldersOnImportAndExport() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

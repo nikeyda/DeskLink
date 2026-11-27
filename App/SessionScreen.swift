@@ -158,8 +158,7 @@ struct SessionScreen: View {
         if let ssh = request.computer.ssh {
             let proof = request.sshProof
             configuration.transportProvider = { host, port in
-                guard let proof else { throw URLError(.userAuthenticationRequired) }
-                return DesktopSSH(host: host, desktopPort: port, settings: ssh, proof: proof, trust: trust)
+                try await DesktopSSH.transport(host: host, port: port, settings: ssh, proof: proof, trust: trust)
             }
         }
         _session = State(initialValue: VNCSession(configuration: configuration))

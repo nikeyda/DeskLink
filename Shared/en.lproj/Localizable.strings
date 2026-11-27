@@ -117,3 +117,5 @@
 "无认证" = "No Authentication";
 "服务器必须允许无认证连接。" = "The server must allow connections without authentication.";
 "记住 SSH 凭据" = "Remember SSH Credentials";
+"局域网内也使用 SSH" = "Use SSH on Local Networks";
+"确认目标在当前局域网时直接连接，其他网络仍使用 SSH。" = "Connect directly when the computer is confirmed to be on the local network. Other connections still use SSH.";

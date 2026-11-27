@@ -238,8 +238,10 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
     }
 
     func hasSameDestination(as other: Self) -> Bool {
-        endpoint == other.endpoint && username == other.username && ssh == other.ssh
-            && authentication.usesPassword == other.authentication.usesPassword
+        guard endpoint == other.endpoint, username == other.username,
+              authentication.usesPassword == other.authentication.usesPassword else { return false }
+        if let ssh, let route = other.ssh { return ssh.sameDestination(as: route) }
+        return ssh == nil && other.ssh == nil
     }
 
     fileprivate var withoutSessionHistory: Self {

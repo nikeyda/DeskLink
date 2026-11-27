@@ -231,6 +231,7 @@ struct ConnectionEditor: View {
     @State private var allowsRemoteBell: Bool
     @State private var pcScrollSpeed: RemoteScrollSpeed
     @State private var useSSH: Bool
+    @State private var secureLocally: Bool
     @State private var sshPort: String
     @State private var sshServer: String
     @State private var sshUser: String
@@ -309,6 +310,7 @@ struct ConnectionEditor: View {
         _allowsRemoteBell = State(initialValue: c?.allowsRemoteBell != false)
         _pcScrollSpeed = State(initialValue: c?.pcScrollSpeed ?? .standard)
         _useSSH = State(initialValue: c?.ssh != nil || request.initialSSHPort != nil)
+        _secureLocally = State(initialValue: c?.ssh?.secureLocally != false)
         _sshPort = State(initialValue: String(c?.ssh?.port ?? request.initialSSHPort ?? request.suggestedSSHPort ?? 22))
         _sshServer = State(initialValue: c?.ssh?.server ?? request.initialSSHServer ?? "")
         _sshUser = State(initialValue: tunnelUser)
@@ -531,7 +533,10 @@ struct ConnectionEditor: View {
     private var sshSection: some View {
         Section {
             Toggle("使用安全连接", isOn: $useSSH)
+                .accessibilityIdentifier("connection.useSSH")
             if useSSH {
+                Toggle("局域网内也使用 SSH", isOn: $secureLocally)
+                    .accessibilityIdentifier("connection.secureLocally")
                 TextField("SSH 服务器", text: $sshServer, prompt: Text("默认使用桌面地址"))
                     .keyboardType(.URL).autocorrectionDisabled().textInputAutocapitalization(.never)
                     .accessibilityIdentifier("connection.sshServer")
@@ -557,7 +562,13 @@ struct ConnectionEditor: View {
                     Toggle("记住 SSH 凭据", isOn: $remember).accessibilityIdentifier("connection.rememberSSH")
                 }
             }
-        } header: { Text(verbatim: "SSH") }
+        } header: {
+            Text(verbatim: "SSH")
+        } footer: {
+            if useSSH, !secureLocally {
+                Text("确认目标在当前局域网时直接连接，其他网络仍使用 SSH。")
+            }
+        }
     }
 
     private var displaySection: some View {
@@ -872,7 +883,8 @@ struct ConnectionEditor: View {
             do { server = sshServer.isEmpty ? nil : try Endpoint.hostOnly(sshServer) }
             catch { self.error = URLError(.badURL).localizedDescription; return }
             entry.ssh = SSHSettings(port: number, username: sshUser.trimmingCharacters(in: .whitespacesAndNewlines),
-                                    usesKey: sshUseKey, keyName: sshUseKey ? selectedKeyName : nil, server: server)
+                                    usesKey: sshUseKey, keyName: sshUseKey ? selectedKeyName : nil, server: server,
+                                    secureLocally: secureLocally ? nil : false)
         } else { entry.ssh = nil }
         if isSaving {
             entry.saved = true

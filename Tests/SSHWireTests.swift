@@ -1,4 +1,5 @@
 import XCTest
+import RFBTransport
 import NIOSSH
 import Security
 import rootshellVNC
@@ -13,6 +14,30 @@ final class SSHWireTests: XCTestCase {
     private struct GeneratedKey: Decodable {
         let key: String
         let `public`: String
+    }
+
+    func testOnlyAnOptedInLocalSocketBypassesSSH() async throws {
+        guard let port = ProcessInfo.processInfo.environment["DESKLINK_LOCAL_ROUTE_PORT"].flatMap(UInt16.init) else {
+            throw XCTSkip("Requires the independent loopback RFB chart.")
+        }
+        let trust = HostTrust()
+        let automatic = try await DesktopSSH.transport(host: "127.0.0.1", port: port, settings: SSHSettings(),
+                                                       proof: .password("unused-fixture"), trust: trust)
+        XCTAssertTrue(automatic is DesktopSSH)
+        let permitted = SSHSettings(secureLocally: false)
+        let direct = try await DesktopSSH.transport(host: "127.0.0.1", port: port, settings: permitted, proof: nil, trust: trust)
+        XCTAssertTrue(direct is TCPConnection)
+        // The transport's normal connect call consumes the socket already verified.
+        try await direct.connect()
+        let banner = try await direct.read(exactly: 12)
+        XCTAssertEqual(banner, Data("RFB 003.008\n".utf8))
+        await direct.close()
+        XCTAssertNil(trust.prompt)
+
+        let otherHost = SSHSettings(server: "gateway.fixture.invalid", secureLocally: false)
+        let tunneled = try await DesktopSSH.transport(host: "127.0.0.1", port: port, settings: otherHost,
+                                                       proof: .password("unused-fixture"), trust: trust)
+        XCTAssertTrue(tunneled is DesktopSSH)
     }
 
     func testPassphraseProtectedKeysAndPublicKeyLogin() async throws {
@@ -66,10 +91,11 @@ final class SSHWireTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let trust = HostTrust(defaults: defaults)
-        let settings = SSHSettings(port: port, username: "fixture", usesKey: false, server: peerHost)
+        let settings = SSHSettings(port: port, username: "fixture", usesKey: false, server: peerHost, secureLocally: false)
         var config = VNCConfiguration(enableHighPerformanceMode: false, videoQualityMode: .standard)
         config.transportProvider = { host, port in
-            DesktopSSH(host: host, desktopPort: port, settings: settings, proof: .password("chart-test-only"), trust: trust)
+            try await DesktopSSH.transport(host: host, port: port, settings: settings,
+                                           proof: .password("chart-test-only"), trust: trust)
         }
         let session = VNCSession(configuration: config)
         defer { trust.cancel(); session.disconnect() }
