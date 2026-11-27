@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import socket
+import subprocess
 from pathlib import Path
 
 import paramiko
@@ -62,12 +63,24 @@ def main():
         encoded = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.OpenSSH,
                                     serialization.BestAvailableEncryption(b"chart-key-phrase"))
         public = key.public_key().public_bytes(serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH)
-        fixture = {"key": encoded.decode(), "public": public.decode()}
+        encrypted_pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                          serialization.BestAvailableEncryption(b"chart-key-phrase"))
+        fixture = {"key": encoded.decode(), "public": public.decode(), "encryptedPEM": encrypted_pem.decode()}
         if isinstance(key, rsa.RSAPrivateKey):
             fixture["pem"] = [
                 key.private_bytes(serialization.Encoding.PEM, format, serialization.NoEncryption()).decode()
                 for format in (serialization.PrivateFormat.TraditionalOpenSSL, serialization.PrivateFormat.PKCS8)
             ]
+            openssl = os.environ.get("DESKLINK_FIXTURE_OPENSSL")
+            if openssl:
+                algorithms = [("aes-128-cbc", "hmacWithSHA1"), ("aes-128-cbc", "hmacWithSHA224"),
+                              ("aes-192-cbc", "hmacWithSHA384"), ("aes-256-cbc", "hmacWithSHA512")]
+                fixture["encryptedPEMVariants"] = [
+                    subprocess.run([openssl, "pkcs8", "-topk8", "-v2", cipher, "-v2prf", digest,
+                                    "-passout", "pass:chart-key-phrase"],
+                                   input=fixture["pem"][1].encode(), capture_output=True, check=True).stdout.decode()
+                    for cipher, digest in algorithms
+                ]
         fixtures.append(fixture)
     with options.ready.with_name("test-keys.json").open("w") as file:
         json.dump(fixtures, file)

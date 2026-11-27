@@ -8,6 +8,13 @@ enum SSHKeyFile {
     /// Returns a key ready for the session, or for the device Keychain when
     /// the user explicitly chose to remember it. The passphrase is never saved.
     static func opened(_ text: String, passphrase: String? = nil) throws -> String {
+        if SSHKeyPKCS8.isEncrypted(text) {
+            let key = try SSHKeyPKCS8.unlock(text, passphrase: passphrase)
+            guard (try? identity(key)) != nil else {
+                throw NSError(domain: NSOSStatusErrorDomain, code: Int(errSecAuthFailed))
+            }
+            return key
+        }
         guard text.contains("-----BEGIN OPENSSH PRIVATE KEY-----") else {
             _ = try identity(text)
             return text
@@ -66,6 +73,7 @@ enum SSHKeyFile {
         if let key = try? P256.Signing.PrivateKey(pemRepresentation: text) { return .init(p256Key: key) }
         if let key = try? P384.Signing.PrivateKey(pemRepresentation: text) { return .init(p384Key: key) }
         if let key = try? P521.Signing.PrivateKey(pemRepresentation: text) { return .init(p521Key: key) }
+        if let key = try? SSHKeyPKCS8.ed25519Key(text) { return .init(ed25519Key: key) }
         return try NIOSSHPrivateKey(rsaPEM: text)
     }
 

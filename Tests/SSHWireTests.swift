@@ -15,6 +15,8 @@ final class SSHWireTests: XCTestCase {
         let key: String
         let `public`: String
         let pem: [String]?
+        let encryptedPEM: String
+        let encryptedPEMVariants: [String]?
     }
 
     func testOnlyAnOptedInLocalSocketBypassesSSH() async throws {
@@ -97,14 +99,27 @@ final class SSHWireTests: XCTestCase {
         XCTAssertThrowsError(try SSHKeyFile.opened(first.key, passphrase: "invalid")) {
             XCTAssertEqual(($0 as NSError).code, Int(errSecAuthFailed))
         }
-        var opened: [NIOSSHPrivateKey] = []
+        XCTAssertThrowsError(try SSHKeyFile.opened(first.encryptedPEM)) {
+            XCTAssertEqual(($0 as NSError).code, Int(errSecPassphraseRequired))
+        }
+        XCTAssertThrowsError(try SSHKeyFile.opened(first.encryptedPEM, passphrase: "invalid")) {
+            XCTAssertEqual(($0 as NSError).code, Int(errSecAuthFailed))
+        }
+        var pemIdentities: [NIOSSHPrivateKey] = []
         for item in fixtures {
             let material = try SSHKeyFile.opened(item.key, passphrase: "chart-key-phrase")
             let key = try SSHKeyFile.identity(material)
             XCTAssertEqual(String(openSSHPublicKey: key.publicKey), item.public)
-            opened.append(key)
+            let pem = try SSHKeyFile.opened(item.encryptedPEM, passphrase: "chart-key-phrase")
+            let pemKey = try SSHKeyFile.identity(pem)
+            XCTAssertEqual(String(openSSHPublicKey: pemKey.publicKey), item.public)
+            pemIdentities.append(pemKey)
+            for variant in item.encryptedPEMVariants ?? [] {
+                let opened = try SSHKeyFile.opened(variant, passphrase: "chart-key-phrase")
+                XCTAssertEqual(String(openSSHPublicKey: try SSHKeyFile.identity(opened).publicKey), item.public)
+            }
         }
-        let login = try XCTUnwrap(opened.first)
+        let login = try XCTUnwrap(pemIdentities.first)
         let domain = "DeskLinkKeyLogin." + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
         defer { defaults.removePersistentDomain(forName: domain) }
@@ -137,7 +152,7 @@ final class SSHWireTests: XCTestCase {
         XCTAssertThrowsError(try SSHKeyFile.opened(rsa.key, passphrase: "invalid")) {
             XCTAssertEqual(($0 as NSError).code, Int(errSecAuthFailed))
         }
-        let encryptedKey = try SSHKeyFile.identity(SSHKeyFile.opened(rsa.key, passphrase: "chart-key-phrase"))
+        let encryptedKey = try SSHKeyFile.identity(SSHKeyFile.opened(rsa.encryptedPEM, passphrase: "chart-key-phrase"))
         XCTAssertTrue(encryptedKey.isRSA)
         let pemKeys = try XCTUnwrap(rsa.pem)
         XCTAssertEqual(pemKeys.count, 2)
