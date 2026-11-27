@@ -19,7 +19,7 @@ import XCTest
         let name = "Telescope-" + UUID().uuidString
         let port: UInt16 = 15276
         var registration: DNSServiceRef?
-        let browser = NearbyComputers()
+        let browser = NearbyComputers(localFilter: nil)
         browser.start()
         defer {
             if let registration { DNSServiceRefDeallocate(registration) }
@@ -47,6 +47,52 @@ import XCTest
         registration = nil
         try await waitFor { !browser.entries.contains { $0.id == nearby.id } }
     }
+
+    #if targetEnvironment(macCatalyst)
+    func testThisMacIsNotPublishedWhileOtherDiscoveredResultsRemainUsable() async throws {
+        let token = UUID().uuidString.prefix(8)
+        let localName = "Local-(token)"
+        let visibleName = "Visible-(token)"
+        var inspectedLocal = false
+        let browser = NearbyComputers(localFilter: { service in
+            if service.name == localName {
+                inspectedLocal = true
+                return NearbyComputers.defaultLocalFilter?(service) == true
+            }
+            // The second registration simulates a peer after address classification.
+            return false
+        })
+        var localRegistration: DNSServiceRef?
+        var visibleRegistration: DNSServiceRef?
+        browser.start()
+        defer {
+            if let localRegistration { DNSServiceRefDeallocate(localRegistration) }
+            if let visibleRegistration { DNSServiceRefDeallocate(visibleRegistration) }
+            browser.stop()
+        }
+        let localStatus = DNSServiceRegister(&localRegistration, 0, kDNSServiceInterfaceIndexLocalOnly,
+                                              localName, "_rfb._tcp", "local.", nil, UInt16(15276).bigEndian, 0, nil, nil, nil)
+        let visibleStatus = DNSServiceRegister(&visibleRegistration, 0, kDNSServiceInterfaceIndexLocalOnly,
+                                                visibleName, "_rfb._tcp", "local.", nil, UInt16(15277).bigEndian, 0, nil, nil, nil)
+        try XCTSkipIf(localStatus == kDNSServiceErr_PolicyDenied || visibleStatus == kDNSServiceErr_PolicyDenied,
+                      "Local network permission is required for Bonjour.")
+        XCTAssertEqual(localStatus, DNSServiceErrorType(kDNSServiceErr_NoError))
+        XCTAssertEqual(visibleStatus, DNSServiceErrorType(kDNSServiceErr_NoError))
+        var displayedLocal = false
+        try await waitFor {
+            displayedLocal = displayedLocal || browser.entries.contains { $0.name == localName }
+            return inspectedLocal && browser.entries.contains { $0.name == visibleName }
+        }
+        XCTAssertFalse(displayedLocal)
+        XCTAssertFalse(browser.entries.contains { $0.name == localName })
+        let visible = try XCTUnwrap(browser.entries.first { $0.name == visibleName })
+        XCTAssertNotNil(visible.address)
+        var selected: Computer?
+        browser.select(visible) { selected = $0 }
+        try await waitFor { selected != nil || browser.errorMessage != nil }
+        XCTAssertEqual(selected?.endpoint.port, 15277)
+    }
+    #endif
 
     private func waitFor(_ predicate: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(12)

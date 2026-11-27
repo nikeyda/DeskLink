@@ -134,7 +134,7 @@ struct MacAvailabilityPreferences: View {
     }
 }
 
-private struct MacRemoteAccessPreferences: View {
+struct MacRemoteAccessPreferences: View {
     let access: MacRemoteAccess
     @State private var automatic = true
     @State private var service: MacAccessService = .ssh
@@ -144,6 +144,10 @@ private struct MacRemoteAccessPreferences: View {
 
     var body: some View {
         Form {
+            Section {
+                Text("设置这台 Mac 的外部地址，然后把连接链接交给你的其他设备。")
+                    .foregroundStyle(.secondary)
+            }
             Section {
                 Picker("端口映射", selection: $automatic) {
                     Text("自动").tag(true)

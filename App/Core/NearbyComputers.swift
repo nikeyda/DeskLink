@@ -2,28 +2,107 @@ import Foundation
 import Network
 import Observation
 import dnssd
+import Darwin
 
 struct NearbyComputer: Identifiable {
     let service: NetService
-    var id: String { service.domain + "/" + service.type + "/" + service.name }
+    var address: String? = nil
+    var id: String { Self.id(for: service) }
     var name: String { service.name }
+
+    static func id(for service: NetService) -> String {
+        service.domain + "/" + service.type + "/" + service.name
+    }
+}
+
+enum NearbyLocalIdentity {
+    static func matches(_ service: NetService) -> Bool {
+        let addresses = (service.addresses ?? []).compactMap { data in
+            data.withUnsafeBytes { bytes -> String? in
+                guard bytes.count >= MemoryLayout<sockaddr>.size,
+                      let address = bytes.bindMemory(to: sockaddr.self).baseAddress,
+                      Int(address.pointee.sa_len) <= bytes.count else { return nil }
+                return numericHost(address)
+            }
+        }
+        if !addresses.isEmpty {
+            let local = interfaceAddresses()
+            if addresses.allSatisfy(local.contains) { return true }
+        }
+        let current = ProcessInfo.processInfo.hostName.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard current.lowercased().hasSuffix(".local") else { return false }
+        return service.hostName?.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            .caseInsensitiveCompare(current) == .orderedSame
+    }
+
+    private static func interfaceAddresses() -> Set<String> {
+        var first: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&first) == 0, let first else { return [] }
+        defer { freeifaddrs(first) }
+        var addresses: Set<String> = []
+        var next: UnsafeMutablePointer<ifaddrs>? = first
+        while let interface = next?.pointee {
+            next = interface.ifa_next
+            if let address = interface.ifa_addr, let host = numericHost(address) { addresses.insert(host) }
+        }
+        return addresses
+    }
+
+    private static func numericHost(_ address: UnsafePointer<sockaddr>) -> String? {
+        let family = Int32(address.pointee.sa_family)
+        let size: Int
+        switch family {
+        case AF_INET: size = MemoryLayout<sockaddr_in>.size
+        case AF_INET6: size = MemoryLayout<sockaddr_in6>.size
+        default: return nil
+        }
+        guard Int(address.pointee.sa_len) >= size else { return nil }
+        var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        guard getnameinfo(address, socklen_t(size), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 else {
+            return nil
+        }
+        return String(decoding: host.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
 }
 
 @MainActor @Observable
 final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
+    private enum Discovery {
+        case resolving(NetService)
+        case hidden
+        case visible(NearbyComputer)
+    }
+
     private(set) var entries: [NearbyComputer] = []
+    private(set) var isSearching = false
     var errorMessage: String?
     private(set) var searchError: NWError?
     var needsLocalNetworkAccess: Bool { searchError == .dns(DNSServiceErrorType(kDNSServiceErr_PolicyDenied)) }
     private var browser: NWBrowser?
+    private var discovery: [String: Discovery] = [:]
     private var resolving: NetService?
     private var selection: ((Computer) -> Void)?
+    private let isLocalComputer: ((NetService) -> Bool)?
+
+    static var defaultLocalFilter: ((NetService) -> Bool)? {
+        #if targetEnvironment(macCatalyst)
+        NearbyLocalIdentity.matches
+        #else
+        nil
+        #endif
+    }
+
+    init(localFilter: ((NetService) -> Bool)? = NearbyComputers.defaultLocalFilter) {
+        isLocalComputer = localFilter
+        super.init()
+    }
 
     func start() {
         guard browser == nil else { return }
         entries = []
         errorMessage = nil
         searchError = nil
+        isSearching = true
         let browser = NWBrowser(for: .bonjour(type: "_rfb._tcp", domain: "local."), using: .tcp)
         self.browser = browser
         browser.stateUpdateHandler = { [weak self, weak browser] state in
@@ -42,7 +121,7 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
                     let entry = NearbyComputer(service: service)
                     found[entry.id] = entry
                 }
-                self.entries = found.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+                self.updateDiscovered(found)
             }
         }
         browser.start(queue: .main)
@@ -51,7 +130,7 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
     func stop() {
         browser?.cancel()
         browser = nil
-        entries = []
+        clearDiscovered()
         cancelSelection()
     }
 
@@ -62,15 +141,16 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
 
     func select(_ entry: NearbyComputer, completion: @escaping (Computer) -> Void) {
         cancelSelection()
-        resolving = entry.service
+        guard entries.contains(where: { $0.id == entry.id }) else { return }
+        let service = NetService(domain: entry.service.domain, type: entry.service.type, name: entry.name)
+        resolving = service
         selection = completion
-        entry.service.delegate = self
-        entry.service.resolve(withTimeout: 8)
+        service.delegate = self
+        service.resolve(withTimeout: 8)
     }
 
     private func cancelSelection() {
-        resolving?.delegate = nil
-        resolving?.stop()
+        if let resolving { stopResolving(resolving) }
         resolving = nil
         selection = nil
     }
@@ -79,20 +159,34 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
         switch state {
         case .waiting(let error), .failed(let error):
             searchError = error
-            entries = []
+            clearDiscovered()
             cancelSelection()
         case .ready:
             searchError = nil
+            if discovery.isEmpty { isSearching = false }
         default: break
         }
     }
 
     func netServiceDidResolveAddress(_ sender: NetService) {
-        guard sender === resolving else { return }
+        let endpoint = Self.endpoint(for: sender)
+        if sender !== resolving {
+            guard let endpoint, isLocalComputer?(sender) != true else {
+                completeDiscovery(sender, result: .hidden)
+                return
+            }
+            completeDiscovery(sender, result: .visible(NearbyComputer(service: sender, address: endpoint.address)))
+            return
+        }
         let action = selection
         defer { cancelSelection() }
-        guard let host = sender.hostName, let port = UInt16(exactly: sender.port), port > 0,
-              let endpoint = try? Endpoint(address: host, defaultPort: port) else {
+        guard isLocalComputer?(sender) != true else {
+            discovery[NearbyComputer.id(for: sender)] = .hidden
+            publishDiscovered()
+            errorMessage = String(localized: "这台电脑是本机。请选择另一台电脑。")
+            return
+        }
+        guard let endpoint else {
             errorMessage = URLError(.cannotFindHost).localizedDescription
             return
         }
@@ -102,9 +196,72 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
     }
 
     func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {
-        guard sender === resolving else { return }
+        guard sender === resolving else {
+            completeDiscovery(sender, result: .hidden)
+            return
+        }
         errorMessage = Self.description(errorDict)
         cancelSelection()
+    }
+
+    private func updateDiscovered(_ found: [String: NearbyComputer]) {
+        guard isLocalComputer != nil else {
+            entries = sorted(found.values)
+            isSearching = false
+            return
+        }
+        for id in Array(discovery.keys) where found[id] == nil {
+            if case .resolving(let service) = discovery.removeValue(forKey: id) { stopResolving(service) }
+        }
+        for (id, entry) in found where discovery[id] == nil {
+            discovery[id] = .resolving(entry.service)
+            entry.service.delegate = self
+            entry.service.resolve(withTimeout: 5)
+        }
+        publishDiscovered()
+    }
+
+    private func completeDiscovery(_ sender: NetService, result: Discovery) {
+        let id = NearbyComputer.id(for: sender)
+        guard case .resolving(let service) = discovery[id], service === sender else { return }
+        stopResolving(sender)
+        discovery[id] = result
+        publishDiscovered()
+    }
+
+    private func publishDiscovered() {
+        entries = sorted(discovery.values.compactMap {
+            if case .visible(let entry) = $0 { return entry }
+            return nil
+        })
+        isSearching = discovery.values.contains {
+            if case .resolving = $0 { return true }
+            return false
+        }
+    }
+
+    private func clearDiscovered() {
+        for case .resolving(let service) in discovery.values { stopResolving(service) }
+        discovery.removeAll()
+        entries = []
+        isSearching = false
+    }
+
+    private func stopResolving(_ service: NetService) {
+        service.delegate = nil
+        service.stop()
+    }
+
+    private func sorted(_ entries: some Sequence<NearbyComputer>) -> [NearbyComputer] {
+        entries.sorted {
+            let order = $0.name.localizedStandardCompare($1.name)
+            return order == .orderedSame ? $0.id < $1.id : order == .orderedAscending
+        }
+    }
+
+    private static func endpoint(for service: NetService) -> Endpoint? {
+        guard let host = service.hostName, let port = UInt16(exactly: service.port), port > 0 else { return nil }
+        return try? Endpoint(address: host.trimmingCharacters(in: CharacterSet(charactersIn: ".")), defaultPort: port)
     }
 
     private static func description(_ error: [String: NSNumber]) -> String {

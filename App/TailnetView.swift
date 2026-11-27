@@ -21,8 +21,14 @@ struct TailnetView: View {
         Group {
             if directory.account == nil {
                 ContentUnavailableView {
-                    Label("Tailscale", systemImage: "network")
-                } actions: { Button("连接") { editing = true } }
+                    Label("访问 Tailscale 设备", systemImage: "point.3.connected.trianglepath.dotted")
+                } description: {
+                    Text("关联账户后，可在这里查看和连接同一 Tailscale 网络中的设备。")
+                } actions: {
+                    Button("关联账户") { editing = true }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("tailnet.linkAccount")
+                }
             } else {
                 let results = directory.devicesInSelectedFolder.filter(matches)
                 List {
