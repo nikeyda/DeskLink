@@ -194,7 +194,7 @@ struct LibraryWindow: View {
     @AppStorage("library.favoriteOrder") private var favoriteOrder = ComputerOrder.manual
     @AppStorage("library.recentOrder") private var recentOrder = ComputerOrder.lastConnected
     @AppStorage("library.linkOrder") private var linkOrder = ComputerOrder.lastConnected
-    @State private var sessionToEdit: Computer?
+    @State private var sessionToEdit: EditorRequest?
     @State private var queuedRoute: ConnectionRoute?
     @State private var openedInitialRequest = false
     @State private var settings = false
@@ -291,11 +291,11 @@ struct LibraryWindow: View {
     var body: some View {
         Group {
             if let activeSession {
-                SessionScreen(request: activeSession, library: library, preferences: preferences, pasteboard: pasteboard) { edit in
-                    sessionToEdit = edit ? activeSession.computer : nil
+                SessionScreen(request: activeSession, library: library, preferences: preferences, pasteboard: pasteboard) { recoveryEditor in
+                    sessionToEdit = recoveryEditor
                     self.activeSession = nil
                     #if targetEnvironment(macCatalyst)
-                    if !edit, isConnectionWindow, queuedRoute == nil, pendingArchives.isEmpty,
+                    if recoveryEditor == nil, isConnectionWindow, queuedRoute == nil, pendingArchives.isEmpty,
                        let scene = windowSource.scene {
                         UIApplication.shared.requestSceneSessionDestruction(scene.session, options: nil)
                     }
@@ -362,7 +362,7 @@ struct LibraryWindow: View {
                         #endif
                         open(startupRequest)
                     } else if let sessionToEdit {
-                        editor = EditorRequest(purpose: .connect, computer: sessionToEdit)
+                        editor = sessionToEdit
                         self.sessionToEdit = nil
                     } else if let queuedRoute {
                         self.queuedRoute = nil

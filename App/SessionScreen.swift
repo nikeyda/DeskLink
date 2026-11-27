@@ -8,7 +8,7 @@ struct SessionScreen: View {
     private let pasteboard: UIPasteboard
     private let preferences: UserDefaults
     @State private var sharesClipboard: Bool
-    let close: (Bool) -> Void
+    let close: (EditorRequest?) -> Void
     @Environment(\.displayScale) private var scale
     @Environment(\.scenePhase) private var phase
     @Environment(\.appearsActive) private var appearsActive
@@ -143,7 +143,8 @@ struct SessionScreen: View {
         return desktop
     }
 
-    init(request: SessionRequest, library: ConnectionLibrary, preferences: UserDefaults, pasteboard: UIPasteboard, close: @escaping (Bool) -> Void) {
+    init(request: SessionRequest, library: ConnectionLibrary, preferences: UserDefaults, pasteboard: UIPasteboard,
+         close: @escaping (EditorRequest?) -> Void) {
         self.request = request
         self.library = library
         self.pasteboard = pasteboard
@@ -159,12 +160,16 @@ struct SessionScreen: View {
             await trust.verify(host: host, port: port, fingerprint: fingerprint, kind: .rsa)
         }
         configuration.certificateValidationHandler = { await trust.verifyCertificate($0) }
-        if request.computer.viewOnly { configuration.allowsFileTransfers = false }
+        let observing = request.startsInObservation(using: library)
+        if observing {
+            configuration.allowsFileTransfers = false
+            configuration.automaticCurtainMessage = nil
+        }
         if let ssh = request.computer.ssh {
             DesktopSSH.configureTransport(&configuration, settings: ssh, proof: request.sshProof, trust: trust)
         }
         _session = State(initialValue: VNCSession(configuration: configuration))
-        _observing = State(initialValue: request.computer.viewOnly)
+        _observing = State(initialValue: observing)
         _pointerMode = State(initialValue: request.computer.pointerMode(using: preferences))
         _cursorTrackingSpeed = State(initialValue: CursorTrackingSpeed.validated(request.computer.cursorTrackingSpeed))
     }
@@ -183,7 +188,7 @@ struct SessionScreen: View {
                     } else {
                         sessionPicture(deck: deck).overlay {
                             ConnectionStatusOverlay(session: session) {
-                                closeSession(allowAction: false) { close(false) }
+                                closeSession(allowAction: false) { close(nil) }
                             }
                         }
                     }
@@ -302,6 +307,9 @@ struct SessionScreen: View {
             if state.isConnected, !recorded {
                 recorded = true
                 library.recordSuccess(request.computer)
+                if request.remembersObservation, request.initialObservation != nil {
+                    library.rememberObservation(observing, for: request.computer)
+                }
                 if request.rememberPassword {
                     do {
                         try PasswordStore.write(request.password, for: request.computer, synchronize: request.synchronizeCredentials)
@@ -362,7 +370,7 @@ struct SessionScreen: View {
         .modifier(ScreenshotExporter(export: screenshot))
         .onDisappear { closeSession(allowAction: phase != .background) {} }
         .confirmationDialog("文件传输进行中", isPresented: $confirmClose, titleVisibility: .visible) {
-            Button("断开连接", role: .destructive) { closeSession(allowAction: true) { close(false) } }
+            Button("断开连接", role: .destructive) { closeSession(allowAction: true) { close(nil) } }
             Button("取消", role: .cancel) {}
         }
         .alert(hostTrust.prompt?.kind == .tls ? "TLS" : "主机指纹", isPresented: Binding(get: { hostTrust.prompt != nil }, set: { _ in }), presenting: hostTrust.prompt) { identity in
@@ -409,7 +417,8 @@ struct SessionScreen: View {
                     }
                     Button { toggleObservation() } label: {
                         if compact {
-                            Label("控制", systemImage: "cursorarrow").labelStyle(.iconOnly)
+                            Label(observing ? "仅观察" : "控制", systemImage: observing ? "eye" : "cursorarrow")
+                                .labelStyle(.iconOnly)
                         } else {
                             Label(observing ? "仅观察" : "控制", systemImage: observing ? "eye" : "cursorarrow")
                         }
@@ -746,6 +755,9 @@ struct SessionScreen: View {
             clipboard = nil
         }
         observing.toggle()
+        if recorded, request.remembersObservation, !privacy.locked {
+            library.rememberObservation(observing, for: request.computer)
+        }
         #if targetEnvironment(macCatalyst)
         monitorWindows.setObserving(observing, for: request.id)
         #endif
@@ -768,7 +780,12 @@ struct SessionScreen: View {
 
     private func finish(edit: Bool) {
         if !edit, session.fileTransfers.hasActiveTransfers { confirmClose = true; return }
-        closeSession(allowAction: !edit) { close(edit) }
+        closeSession(allowAction: !edit) {
+            let editor = edit ? EditorRequest(purpose: .connect, computer: request.computer,
+                                              sharedOptions: .init(observe: observing),
+                                              remembersObservation: request.remembersObservation) : nil
+            close(editor)
+        }
     }
 
     private func closeSession(allowAction: Bool, completion: @escaping @MainActor () -> Void) {

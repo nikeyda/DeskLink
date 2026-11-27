@@ -4,6 +4,87 @@ import XCTest
 @MainActor
 final class SessionUITests: XCTestCase {
     #if !targetEnvironment(macCatalyst)
+    func testSavedDesktopRestoresObservationAfterRelaunchWithoutSendingInput() async throws {
+        continueAfterFailure = false
+        let desktop = LocalTestDisplay()
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]
+        app.launch()
+        XCTAssertTrue(app.buttons["library.new"].firstMatch.waitForExistence(timeout: 10))
+
+        let id = UUID().uuidString
+        let file = FileManager.default.temporaryDirectory.appending(path: id + ".screens")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let fixture = """
+            {"filename":"Observe mode fixture","folders":[],"screens":[{
+            "version":6,"id":"\(id)","type":{"saved":{}},"name":"Observe Mode Fixture",
+            "hostname":"127.0.0.1","port":\(port),"clientProtocol":"vnc",
+            "users":[],"authenticationMethod":3,"operatingSystem":6,"startInObserveMode":false,
+            "onDisconnectAction":0,"useSharedClipboard":false,"useSecureConnection":false}]}
+            """
+        try Data(fixture.utf8).write(to: file)
+        app.open(file)
+        let imported = app.alerts["导入完成"]
+        XCTAssertTrue(imported.waitForExistence(timeout: 10))
+        imported.buttons["完成"].tap()
+
+        let row = app.buttons["library.computer." + id].firstMatch
+        let mode = app.buttons["session.mode"].firstMatch
+        let input = app.descendants(matching: .any).matching(identifier: "session.input").firstMatch
+        let desktopCenter = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        func connect(_ expected: String) async throws {
+            XCTAssertTrue(row.waitForExistence(timeout: 8))
+            let frames = desktop.frameCount
+            row.tap()
+            try await waitUntil { desktop.frameCount > frames }
+            try await waitUntil { mode.exists && mode.label == expected }
+        }
+        func disconnect() async throws {
+            let closed = desktop.closedConnections
+            desktop.expectsClientDisconnect = true
+            app.buttons["session.close"].firstMatch.tap()
+            try await waitUntil { desktop.closedConnections > closed && row.isHittable }
+            desktop.expectsClientDisconnect = false
+        }
+
+        try await connect("控制")
+        mode.tap()
+        try await waitUntil { mode.label == "仅观察" }
+        try await disconnect()
+        app.terminate()
+        app.launch()
+
+        app.buttons["library.quick"].firstMatch.tap()
+        applyLink("screens://Observe%20Mode%20Fixture?observe=false", in: app)
+        let framesBeforeLink = desktop.frameCount
+        let submit = app.buttons["connection.submit"].firstMatch
+        XCTAssertTrue(submit.waitForExistence(timeout: 8))
+        submit.tap()
+        try await waitUntil { desktop.frameCount > framesBeforeLink && mode.label == "控制" }
+        try await disconnect()
+
+        try await connect("仅观察")
+        XCTAssertFalse(input.exists)
+        let clicks = desktop.clicks
+        desktopCenter.tap()
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(desktop.clicks, clicks)
+        attachToolbarScreenshot(app, name: "Saved connection reopened in Observe mode")
+        mode.tap()
+        try await waitUntil { mode.label == "控制" && input.exists }
+        desktopCenter.tap()
+        try await waitUntil { desktop.clicks > clicks }
+        try await disconnect()
+        app.terminate()
+        app.launch()
+
+        try await connect("控制")
+        XCTAssertEqual(desktop.acceptedConnections, 4)
+        try await disconnect()
+    }
+
     func testRememberedComputerConnectsFromItsTileAndWidgetURL() async throws {
         let desktop = LocalTestDisplay()
         let port = try await desktop.start()

@@ -45,6 +45,7 @@ struct EditorRequest: Identifiable {
     var link: DesktopLink?
     var sharedOptions = ConnectionRoute.SharedOptions()
     var loadsStoredCredentials = true
+    var remembersObservation = true
 
     @MainActor
     static func connectingToDiscovered(_ computer: Computer, in library: ConnectionLibrary,
@@ -110,6 +111,13 @@ struct SessionRequest: Identifiable {
     var synchronizeCredentials = false
     var sshProof: SSHProof?
     var sshSecretToRemember: String?
+    var initialObservation: Bool?
+    var remembersObservation = true
+
+    @MainActor
+    func startsInObservation(using library: ConnectionLibrary) -> Bool {
+        initialObservation ?? library.startsInObservation(computer)
+    }
 
     static func remembered(for computer: Computer, synchronize: Bool) throws -> Self? {
         if computer.authentication == .macUser, computer.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -303,7 +311,10 @@ struct ConnectionEditor: View {
         let initialLayout = display.layout
         _layout = State(initialValue: initialLayout)
         _rememberMonitor = State(initialValue: display.rememberMonitor != false)
-        _observe = State(initialValue: request.sharedOptions.observe ?? link?.observe ?? c?.viewOnly ?? false)
+        let observation = c.map { computer in
+            request.purpose == .connect ? library.startsInObservation(computer) : computer.viewOnly
+        }
+        _observe = State(initialValue: request.sharedOptions.observe ?? link?.observe ?? observation ?? false)
         _curtainsDisplayOnConnect = State(initialValue: c?.curtainsDisplayOnConnect == true)
         _curtainMessage = State(initialValue: c?.curtainMessage ?? "")
         let dimensions = display.fixedDesktop ?? .standard
@@ -886,7 +897,7 @@ struct ConnectionEditor: View {
         entry.endpoint = endpoint
         entry.username = desktopUsername
         entry.authentication = authentication
-        entry.viewOnly = observe
+        if isSaving || request.purpose == .quick { entry.viewOnly = observe }
         entry.curtainsDisplayOnConnect = curtainsDisplayOnConnect ? true : nil
         entry.curtainMessage = curtainMessage.isEmpty ? nil : curtainMessage
         entry.disconnectAction = disconnectAction
@@ -962,7 +973,9 @@ struct ConnectionEditor: View {
             do {
                 let desktopPassword = authentication.usesPassword ? password : ""
                 var offer = SessionRequest(computer: entry, password: desktopPassword, rememberPassword: remember,
-                                           synchronizeCredentials: synchronizeCredentials)
+                                           synchronizeCredentials: synchronizeCredentials, initialObservation: observe,
+                                           remembersObservation: request.remembersObservation
+                                               && request.purpose == .connect && request.link == nil)
                 if useSSH {
                     if sshUseKey {
                         guard let sshKey else { return }

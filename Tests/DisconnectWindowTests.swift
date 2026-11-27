@@ -20,6 +20,7 @@ final class DisconnectWindowTests: XCTestCase {
 
     func testRemovingObservationAndBackgroundViewsSendsNoDisconnectCommand() async throws {
         try await closeWindow(action: .controlAltDelete, observing: true)
+        try await closeWindow(action: .controlAltDelete, rememberedObservation: true)
         try await closeWindow(action: .bottomRight, phase: .background)
     }
 
@@ -30,6 +31,7 @@ final class DisconnectWindowTests: XCTestCase {
     }
 
     private func closeWindow(action: VNCDisconnectAction?, apple: Bool = false, observing: Bool = false,
+                             rememberedObservation: Bool = false,
                              phase: ScenePhase = .active, expectedPoint: CGPoint? = nil,
                              expectedKeys: [Int] = [], saveScreenshot: Bool = false) async throws {
         let peerHost = ProcessInfo.processInfo.environment["DESKLINK_DISCONNECT_HOST"] ?? "127.0.0.1"
@@ -59,6 +61,7 @@ final class DisconnectWindowTests: XCTestCase {
         computer.viewOnly = observing
         computer.automaticallySharesClipboard = false
         XCTAssertTrue(library.save(computer))
+        if rememberedObservation { library.rememberObservation(true, for: computer) }
         let request = SessionRequest(computer: computer, password: "", rememberPassword: false)
         let session = SessionScreen(request: request, library: library, preferences: defaults, pasteboard: pasteboard) { _ in }
             .environment(AppLock(defaults: defaults))

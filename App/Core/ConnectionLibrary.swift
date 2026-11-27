@@ -451,6 +451,7 @@ final class ConnectionLibrary {
     private(set) var previews: [UUID: SavedDesktopPreview] = [:]
     @ObservationIgnored private var pendingPreviews: [UUID: Task<Void, Never>] = [:]
     private var videoRetryDates: [UUID: Date] = [:]
+    private var lastObserved: Set<UUID> = []
     private let activityWriter: UUID
     let backups: LibraryBackups
     private var loadFailed = false
@@ -482,6 +483,10 @@ final class ConnectionLibrary {
         if let data = try? Data(contentsOf: videoRetryFile),
            let dates = try? PropertyListDecoder().decode([UUID: Date].self, from: data) {
             videoRetryDates = dates
+        }
+        if let data = try? Data(contentsOf: interactionModeFile),
+           let ids = try? PropertyListDecoder().decode(Set<UUID>.self, from: data) {
+            lastObserved = ids
         }
         for computer in archive.computers where computer.saved && computer.savesDisconnectScreenshot == true {
             let url = previewURL(for: computer.id)
@@ -577,6 +582,36 @@ final class ConnectionLibrary {
         return recent.count == 1 ? recent.first : nil
     }
 
+    func startsInObservation(_ computer: Computer) -> Bool {
+        if computer.viewOnly { return true }
+        guard let entry = interactionProfile(for: computer) else { return false }
+        return lastObserved.contains(entry.id)
+    }
+
+    func rememberObservation(_ observing: Bool, for computer: Computer) {
+        guard let entry = interactionProfile(for: computer), !entry.viewOnly else { return }
+        var next = lastObserved
+        if observing { next.insert(entry.id) }
+        else { next.remove(entry.id) }
+        if next != lastObserved { updateLastObserved(next) }
+    }
+
+    private func interactionProfile(for computer: Computer) -> Computer? {
+        guard let entry = existingComputer(matching: computer),
+              entry.hasSameDestination(as: computer),
+              entry.saved || (entry.lastConnected != nil && entry.openedFromLink != true) else { return nil }
+        return entry
+    }
+
+    private var interactionModeFile: URL { file.deletingPathExtension().appendingPathExtension("interaction.plist") }
+
+    private func updateLastObserved(_ next: Set<UUID>) {
+        lastObserved = next
+        do {
+            try PropertyListEncoder().encode(next).write(to: interactionModeFile, options: .atomic)
+        } catch { errorMessage = error.localizedDescription }
+    }
+
     private var videoRetryFile: URL { reportDirectory.appending(path: "video-retry-dates.plist") }
 
     func videoRetryDate(for computer: Computer, now: Date = .now) -> Date? {
@@ -656,6 +691,7 @@ final class ConnectionLibrary {
 
     private func installArchive(_ next: LibraryArchive) {
         let destinations = Dictionary(uniqueKeysWithValues: next.computers.map { ($0.id, $0) })
+        var retained = lastObserved
         let previousRetryCount = videoRetryDates.count
         for previous in archive.computers where previous.savesDisconnectScreenshot == true {
             let next = destinations[previous.id]
@@ -663,11 +699,17 @@ final class ConnectionLibrary {
                 clearPreview(for: previous.id)
             }
         }
-        for previous in archive.computers where destinations[previous.id]?.hasSameDestination(as: previous) != true {
+        for previous in archive.computers {
+            if let updated = destinations[previous.id], updated.hasSameDestination(as: previous) {
+                if updated.viewOnly != previous.viewOnly { retained.remove(previous.id) }
+                continue
+            }
+            retained.remove(previous.id)
             videoRetryDates.removeValue(forKey: previous.id)
             let file = reportDirectory.appending(path: previous.id.uuidString).appendingPathExtension("json")
             try? FileManager.default.removeItem(at: file)
         }
+        if retained != lastObserved { updateLastObserved(retained) }
         if videoRetryDates.count != previousRetryCount { persistVideoRetryDates() }
         archive = next
     }

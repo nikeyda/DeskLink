@@ -3,6 +3,68 @@ import XCTest
 
 final class LibraryTests: XCTestCase {
     @MainActor
+    func testObservationHistoryIsLocalToTheProfileAndSurvivesRestart() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "library.json")
+        let endpoint = try Endpoint(address: "observe.fixture.invalid")
+        var computer = Computer(name: "Work", endpoint: endpoint)
+        computer.username = "fixture"
+        var other = Computer(name: "Personal", endpoint: endpoint)
+        other.username = "other-fixture"
+        let original = ConnectionLibrary(file: file)
+        XCTAssertTrue(original.save(computer))
+        XCTAssertTrue(original.save(other))
+        XCTAssertFalse(original.startsInObservation(computer))
+        let archive = try Data(contentsOf: file)
+        original.rememberObservation(true, for: computer)
+        XCTAssertEqual(try Data(contentsOf: file), archive)
+
+        let reopened = ConnectionLibrary(file: file)
+        XCTAssertTrue(reopened.startsInObservation(computer))
+        XCTAssertFalse(reopened.startsInObservation(other))
+        let override = SessionRequest(computer: computer, password: "", rememberPassword: false, initialObservation: false)
+        XCTAssertFalse(override.startsInObservation(using: reopened))
+        reopened.rememberObservation(false, for: computer)
+        XCTAssertFalse(ConnectionLibrary(file: file).startsInObservation(computer))
+    }
+
+    @MainActor
+    func testObservationHistoryResetsWhenTheDestinationOrExplicitSettingChanges() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "library.json")
+        let library = ConnectionLibrary(file: file)
+        let endpoint = try Endpoint(address: "observe.fixture.invalid")
+        var computer = Computer(endpoint: endpoint)
+        XCTAssertTrue(library.save(computer))
+        library.rememberObservation(true, for: computer)
+        computer.name = "Renamed"
+        XCTAssertTrue(library.save(computer))
+        XCTAssertTrue(library.startsInObservation(computer))
+        computer.endpoint = try Endpoint(address: "other.fixture.invalid")
+        XCTAssertTrue(library.save(computer))
+        XCTAssertFalse(library.startsInObservation(computer))
+        computer.endpoint = endpoint
+        XCTAssertTrue(library.save(computer))
+        XCTAssertFalse(library.startsInObservation(computer))
+
+        library.rememberObservation(true, for: computer)
+        computer.viewOnly = true
+        XCTAssertTrue(library.save(computer))
+        library.rememberObservation(false, for: computer)
+        XCTAssertTrue(library.startsInObservation(computer))
+        computer.viewOnly = false
+        XCTAssertTrue(library.save(computer))
+        XCTAssertFalse(ConnectionLibrary(file: file).startsInObservation(computer))
+
+        library.rememberObservation(true, for: computer)
+        library.remove(computer)
+        XCTAssertTrue(library.save(computer))
+        XCTAssertFalse(ConnectionLibrary(file: file).startsInObservation(computer))
+    }
+
+    @MainActor
     func testDiscoveredConnectionReusesOnlyAnUnambiguousProfileAndKeepsItsDefaultMode() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
