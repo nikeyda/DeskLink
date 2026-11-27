@@ -513,8 +513,9 @@ final class SessionUITests: XCTestCase {
         enter.tap()
     }
 
-    private func selectPinyinGreeting(in app: XCUIApplication, whileComposing: () -> Void = {}) async throws {
-        app.buttons["toolbar.keyboard"].tap()
+    private func selectPinyinGreeting(in app: XCUIApplication, opensKeyboard: Bool = true,
+                                      whileComposing: () -> Void = {}) async throws {
+        if opensKeyboard { app.buttons["toolbar.keyboard"].tap() }
         let keyboard = app.keyboards.firstMatch
         try await waitUntil { keyboard.exists && keyboard.frame.height > 0 }
         for character in "nihao" {
@@ -1235,6 +1236,130 @@ final class SessionUITests: XCTestCase {
         receipt.name = "Remote key press and release events"
         receipt.lifetime = .keepAlways
         add(receipt)
+    }
+
+    func testPortraitSplitSeparatesPicturePointerAndKeyboardAcrossRotation() async throws {
+        let device = XCUIDevice.shared
+        device.orientation = .portrait
+        defer { device.orientation = .portrait }
+        let desktop = LocalTestDisplay()
+        var wire: [(UInt8, CGPoint)] = []
+        desktop.onWirePointer = { wire.append(($0, $1)) }
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        openChart(app, port: port) { self.enablePortraitSplit(in: app) }
+        let trackpad = app.descendants(matching: .any)["session.laptopTrackpad"].firstMatch
+        let keypad = app.descendants(matching: .any)["session.splitKeypad"].firstMatch
+        let tab = app.buttons["toolbar.tab"].firstMatch
+        let keyboard = app.buttons["toolbar.keyboard"].firstMatch
+        try await waitUntil { trackpad.exists && keypad.exists && desktop.frameCount > 0 }
+        XCTAssertLessThan(keypad.frame.maxX, trackpad.frame.minX)
+        XCTAssertGreaterThan(trackpad.frame.minY, app.frame.midY - 80)
+        XCTAssertGreaterThan(trackpad.frame.height, 70)
+        attachToolbarScreenshot(app, name: "Portrait with side-by-side controls")
+
+        let upper = app.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.23))
+        upper.tap()
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertFalse(wire.contains { $0.0 != 0 })
+        wire.removeAll()
+        let left = trackpad.coordinate(withNormalizedOffset: .init(dx: 0.26, dy: 0.48))
+        let right = trackpad.coordinate(withNormalizedOffset: .init(dx: 0.74, dy: 0.48))
+        left.press(forDuration: 0.08, thenDragTo: right, withVelocity: .slow, thenHoldForDuration: 0)
+        try await waitUntil { Set(wire.map { $0.1.x }).count > 1 }
+        XCTAssertFalse(wire.contains { $0.0 != 0 })
+        app.buttons["session.trackpad.leftClick"].tap()
+        try await waitUntil { wire.contains { $0.0 == 1 } }
+        app.buttons["session.trackpad.rightClick"].tap()
+        try await waitUntil { wire.contains { $0.0 == 4 } }
+        tab.tap()
+        try await waitUntil { desktop.keyDowns == [0xFF09] }
+
+        keyboard.tap()
+        let software = app.keyboards.firstMatch
+        try await waitUntil(timeout: 15) { software.exists && software.frame.height > 120 && !trackpad.exists }
+        XCTAssertLessThan(abs(software.frame.minY - keyboard.frame.maxY), 90)
+        attachToolbarScreenshot(app, name: "Portrait with the system keyboard")
+        let greeting: [UInt32] = [0x01004F60, 0x0100597D]
+        try await selectPinyinGreeting(in: app, opensKeyboard: false) {
+            XCTAssertEqual(desktop.keyDowns, [0xFF09])
+        }
+        try await waitUntil { desktop.keyDowns == [0xFF09] + greeting }
+        keyboard.tap()
+        try await waitUntil { trackpad.exists }
+
+        app.buttons["切换全屏幕"].firstMatch.tap()
+        try await waitUntil { !trackpad.exists && !app.buttons["session.close"].exists }
+        let surface = app.descendants(matching: .any)["session.input"].firstMatch
+        XCTAssertTrue(surface.waitForExistence(timeout: 4))
+        surface.tap(withNumberOfTaps: 2, numberOfTouches: 2)
+        try await waitUntil { trackpad.exists }
+
+        device.orientation = .landscapeLeft
+        try await waitUntil { app.frame.width > app.frame.height && !trackpad.exists && tab.isHittable }
+        tab.tap()
+        try await waitUntil { desktop.keyDowns == [0xFF09] + greeting + [0xFF09] }
+        let landscape = XCUIScreen.main.screenshot()
+        XCTAssertGreaterThan(landscape.image.size.width, landscape.image.size.height)
+        let landscapeAttachment = XCTAttachment(screenshot: landscape)
+        landscapeAttachment.name = "Landscape with the regular toolbar"
+        landscapeAttachment.lifetime = .keepAlways
+        add(landscapeAttachment)
+        device.orientation = .portrait
+        try await waitUntil { app.frame.height > app.frame.width && trackpad.exists }
+        XCTAssertEqual(desktop.acceptedConnections, 1)
+    }
+
+    func testPortraitKeyboardAndTrackpadSendsKeysAndLeavesObservationReadOnly() async throws {
+        let device = XCUIDevice.shared
+        device.orientation = .portrait
+        let desktop = LocalTestDisplay()
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        openChart(app, port: port) { self.enablePortraitSplit(in: app, layout: "键盘与触控板") }
+        let trackpad = app.descendants(matching: .any)["session.laptopTrackpad"].firstMatch
+        let keyboard = app.descendants(matching: .any)["session.laptopKeyboard"].firstMatch
+        let letter = app.buttons["a"].firstMatch
+        try await waitUntil { trackpad.exists && keyboard.exists && letter.isHittable && desktop.frameCount > 0 }
+        XCTAssertLessThan(keyboard.frame.maxY, trackpad.frame.minY)
+        attachToolbarScreenshot(app, name: "Portrait with the dedicated keyboard")
+        letter.tap()
+        try await waitUntil { desktop.keyDowns == [0x61] }
+        let mode = app.buttons["session.mode"].firstMatch
+        mode.tap()
+        try await waitUntil { mode.label == "仅观察" && !trackpad.exists && !keyboard.exists }
+        let received = desktop.clicks
+        app.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.56)).tap()
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(desktop.clicks, received)
+        mode.tap()
+        try await waitUntil { trackpad.exists && keyboard.exists && letter.isHittable }
+        letter.tap()
+        try await waitUntil { desktop.keyDowns == [0x61, 0x61] }
+        XCTAssertEqual(desktop.acceptedConnections, 1)
+    }
+
+    private func enablePortraitSplit(in app: XCUIApplication, layout: String? = nil) {
+        app.buttons["library.more"].tap()
+        app.buttons["设置"].firstMatch.tap()
+        let toolbar = app.buttons["preferences.toolbar"]
+        for _ in 0..<4 where !toolbar.isHittable { app.swipeUp() }
+        XCTAssertTrue(toolbar.isHittable)
+        toolbar.tap()
+        let split = app.switches["toolbar.portraitSplit"].firstMatch
+        for _ in 0..<4 where !split.isHittable { app.swipeUp() }
+        XCTAssertTrue(split.isHittable)
+        XCTAssertEqual(split.value as? String, "0")
+        split.coordinate(withNormalizedOffset: .init(dx: 0.94, dy: 0.5)).tap()
+        XCTAssertEqual(split.value as? String, "1")
+        if let layout {
+            app.buttons["toolbar.splitControls"].firstMatch.tap()
+            app.buttons[layout].firstMatch.tap()
+        }
+        app.terminate()
+        app.launch()
     }
 
     func testFloatingToolbarCanCollapseAndStillSendKeysAfterExpanding() async throws {

@@ -43,6 +43,7 @@ struct RemoteInteractionView: UIViewRepresentable {
     var usesFallbackCursor = false
     var swapsHardwareCommandAndControl = false
     var allowsViewportZoom = true
+    var routesDirectTouchesToRemote = true
     var desktopControls: VNCDesktopControls? = nil
     /// Accepts file drops as uploads when set.
     var fileTransfers: VNCFileTransferController? = nil
@@ -91,6 +92,7 @@ struct RemoteInteractionView: UIViewRepresentable {
         uiView.monitorShortcut = monitorShortcut
         uiView.screenshotShortcut = screenshotShortcut
         uiView.allowsViewportZoom = allowsViewportZoom
+        uiView.routesDirectTouchesToRemote = routesDirectTouchesToRemote
         #if os(iOS) && !targetEnvironment(macCatalyst)
         desktopControls?.inputSurface = uiView
         #endif
@@ -145,6 +147,7 @@ private final class RemoteInputObserver {
 @MainActor
 final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
     UIPointerInteractionDelegate {
+    var routesDirectTouchesToRemote = true
     var onViewportChange: ((RemoteViewportState) -> Void)?
     var pencilToolbarAction: ((RemotePencilAction, CGPoint) -> Void)?
     var onKeyboardActiveChange: ((Bool) -> Void)?
@@ -3028,7 +3031,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
     /// Direct touches are left to the touch recognizer, whose catch also
     /// suppresses the accidental click.
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        if touches.contains(where: { $0.type == .direct }) {
+        if routesDirectTouchesToRemote, touches.contains(where: { $0.type == .direct }) {
             stopEdgeScrolling()
             catchMomentumForMultiFingerLanding(touches, event: event)
         }
@@ -4150,6 +4153,31 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
     }
 
     #if os(iOS) && !targetEnvironment(macCatalyst)
+    func handleSeparateTrackpadMotion(_ recognizer: DirectTouchGestureRecognizer) {
+        guard pointerMode == .trackpad, let mode = recognizer.mode else { return }
+        handleTrackpadTouchState(mode: mode, recognizer: recognizer)
+    }
+
+    func handleSeparateTrackpadScroll(_ recognizer: UIPanGestureRecognizer) {
+        guard pointerMode == .trackpad else { return }
+        handleTrackpadScroll(recognizer)
+    }
+
+    func clickSeparateTrackpad(_ button: RemotePointerButton) {
+        guard pointerMode == .trackpad, let point = trackpadWirePoint() else { return }
+        if momentumCatchPending {
+            momentumCatchPending = false
+            momentumCatchTimestamp = 0
+            return
+        }
+        catchMomentumFlingIfActive()
+        lastPointerPoint = point
+        lastKnownFramebufferPoint = point
+        clickWithPointerModifiers {
+            touchHandler.handleClick(button, x: point.x, y: point.y)
+        }
+    }
+
     func jumpFromKeyboardToolbar(at point: CGPoint) {
         guard softwareKeyboardRequested else { return }
         jumpPointer(to: .bottom, from: CGPoint(x: point.x, y: bounds.maxY))
@@ -4828,6 +4856,12 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         return remoteCursor != nil || remoteCursorPresence == .hidden ? .hidden() : nil
     }
 
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard !routesDirectTouchesToRemote, touch.type == .direct else { return true }
+        // In the split layout, fingers on the picture adjust the viewport.
+        return gestureRecognizer === pinchRecognizer || gestureRecognizer === viewportPanRecognizer
+    }
+
     func gestureRecognizer(
         _ gestureRecognizer: UIGestureRecognizer,
         shouldReceive event: UIEvent
@@ -4883,7 +4917,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         // A locked, fitted desktop stays in place during a two-finger gesture.
         // In trackpad mode two fingers scroll the remote desktop.
         if gestureRecognizer === viewportPanRecognizer,
-           pointerMode == .trackpad || !allowsViewportZoom {
+           !allowsViewportZoom || (pointerMode == .trackpad && routesDirectTouchesToRemote) {
             return false
         }
         // Fingers that stopped a fling never hold a button. Failing here,

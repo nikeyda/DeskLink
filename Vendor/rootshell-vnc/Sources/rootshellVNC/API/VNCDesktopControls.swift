@@ -35,6 +35,10 @@ public final class VNCDesktopControls {
     #if os(iOS) && !targetEnvironment(macCatalyst)
     @ObservationIgnored weak var inputSurface: RemoteInputUIView?
 
+    public func clickTrackpad(_ button: RemotePointerButton) {
+        inputSurface?.clickSeparateTrackpad(button)
+    }
+
     /// An upward swipe on the software keyboard's shortcut strip reaches the remote Dock.
     public func movePointerToBottomEdge(at point: CGPoint, in toolbar: UIView) {
         guard let surface = inputSurface, let window = surface.window, toolbar.window === window else { return }

@@ -8,6 +8,8 @@ struct ToolbarPreferences: View {
     @AppStorage("toolbar.buttons") private var stored = DeskToolbarButton.standard
     @AppStorage("toolbar.keyboardTrailing") private var keyboardTrailing = false
     @AppStorage("toolbar.twoFingerToggle") private var twoFingerToggle = true
+    @AppStorage("toolbar.portraitSplit") private var portraitSplit = false
+    @AppStorage("toolbar.splitControls") private var splitControls = DeskSplitControls.sideBySide
     @State private var adding = false
     @State private var selected: Set<DeskToolbarButton> = []
     private var buttons: [DeskToolbarButton] { DeskToolbarButton.buttons(in: stored) }
@@ -28,6 +30,14 @@ struct ToolbarPreferences: View {
                     Text("末尾位置").tag(true)
                 }
                 Toggle("双指双击切换全屏幕", isOn: $twoFingerToggle)
+            }
+            Section("分屏控制") {
+                Toggle("上下分屏", isOn: $portraitSplit)
+                    .accessibilityIdentifier("toolbar.portraitSplit")
+                Picker("控制区布局", selection: $splitControls) {
+                    ForEach(DeskSplitControls.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .accessibilityIdentifier("toolbar.splitControls")
             }
             Section("工具栏按钮") {
                 ForEach(Array(buttons.enumerated()), id: \.offset) { _, button in

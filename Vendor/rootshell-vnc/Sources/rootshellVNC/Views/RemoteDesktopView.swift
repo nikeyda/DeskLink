@@ -100,11 +100,13 @@ public struct RemoteDesktopView: View {
     private var hidesHUD = false
     private var pencilToolbarAction: ((RemotePencilAction, CGPoint) -> Void)?
     private var desktopControls: VNCDesktopControls?
+    private var hostPointerMode: RemotePointerMode?
+    private var hostSuspendsKeyboardCapture = false
     #if canImport(UIKit)
     private var hudAccessory: HUDAccessory?
     private var customHUD: ((AnyView, CGSize) -> AnyView)?
     #endif
-    private let keyboardAvoidanceMode: VNCKeyboardAvoidanceMode
+    private var keyboardAvoidanceMode: VNCKeyboardAvoidanceMode
     /// Edges whose safe area the HUD keeps clear of. A host that covers a
     /// system region (a full-screen takeover over a side rail) drops its edge.
     private let hudSafeAreaEdges: Edge.Set
@@ -275,6 +277,23 @@ public struct RemoteDesktopView: View {
     public func desktopControls(_ controls: VNCDesktopControls?) -> Self {
         var copy = self
         copy.desktopControls = controls
+        return copy
+    }
+
+    /// Keeps the desktop viewport and the host's trackpad on separate panes.
+    public func separateTrackpad(_ enabled: Bool, usesDirectTouch: Bool = false) -> Self {
+        var copy = self
+        if enabled {
+            copy.hostPointerMode = usesDirectTouch ? .direct : .trackpad
+            copy.keyboardAvoidanceMode = .hostManaged
+        }
+        return copy
+    }
+
+    /// Lets a host's local text field own focus while it is presented.
+    public func suspendingKeyboardCapture(_ suspended: Bool) -> Self {
+        var copy = self
+        copy.hostSuspendsKeyboardCapture = suspended
         return copy
     }
 
@@ -589,7 +608,7 @@ public struct RemoteDesktopView: View {
         RemoteInteractionView(
             viewport: $viewport,
             viewportPanningMode: viewportPanningMode,
-            pointerMode: pointerModeSelection.wrappedValue,
+            pointerMode: hostPointerMode ?? pointerModeSelection.wrappedValue,
             pointerSpeed: pointerSpeed,
             cursorHeight: cursorHeight,
             serverRendersCursor: session.activeCursorRendering == .server,
@@ -601,7 +620,7 @@ public struct RemoteDesktopView: View {
             touchHandler: touchHandler,
             keyboardHandler: keyboardHandler,
             keyboardCapture: keyboardCapture,
-            suspendsKeyboardCapture: curtainPromptPresented,
+            suspendsKeyboardCapture: curtainPromptPresented || hostSuspendsKeyboardCapture,
             framebufferOrigin: framebufferOrigin,
             requestPasswordSend: requestPasswordSend,
             requestDictation: requestDictation,
@@ -614,6 +633,7 @@ public struct RemoteDesktopView: View {
             usesFallbackCursor: session.configuration.usesFallbackCursor,
             swapsHardwareCommandAndControl: session.configuration.swapsHardwareCommandAndControl,
             allowsViewportZoom: session.configuration.allowsViewportZoom,
+            routesDirectTouchesToRemote: hostPointerMode != .trackpad,
             desktopControls: desktopControls,
             fileTransfers: session.fileTransfers,
             pencilToolbarAction: pencilToolbarAction,
@@ -1246,6 +1266,23 @@ struct DockedKeyboardInsetReader: UIViewRepresentable {
             guard !parent.metrics.isApproximatelyEqual(to: metrics) else { return }
             parent.metrics = metrics
         }
+    }
+}
+
+/// Reports the overlap of the docked keyboard with the pane it fills.
+public struct VNCDockedKeyboardInsetReader: View {
+    @State private var metrics = DockedKeyboardViewportMetrics()
+    private let onChange: (CGFloat) -> Void
+
+    public init(onChange: @escaping (CGFloat) -> Void) {
+        self.onChange = onChange
+    }
+
+    public var body: some View {
+        DockedKeyboardInsetReader(metrics: $metrics)
+            .onChange(of: metrics.keyboardInset, initial: true) { _, inset in onChange(inset) }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 }
 

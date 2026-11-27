@@ -12,6 +12,7 @@ struct SessionScreen: View {
     @Environment(\.displayScale) private var scale
     @Environment(\.scenePhase) private var phase
     @Environment(\.appearsActive) private var appearsActive
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var keyWindowFocused = false
     @Environment(AppLock.self) private var privacy
     @State private var session: VNCSession
@@ -52,6 +53,7 @@ struct SessionScreen: View {
     @State private var toolbar = DeskToolbarState()
     @State private var toolbarBeforeFullScreen = true
     @AppStorage("toolbar.style") private var toolbarStyle = DeskToolbarStyle.docked
+    @AppStorage("toolbar.portraitSplit") private var portraitSplit = false
     @AppStorage("pencil.doubleTap") private var pencilDoubleTap = RemotePencilAction.secondaryClick
     @AppStorage("pencil.squeeze") private var pencilSqueeze = RemotePencilAction.toggleToolbar
     @AppStorage("toolbar.twoFingerToggle") private var twoFingerToggle = true
@@ -169,109 +171,17 @@ struct SessionScreen: View {
 
     var body: some View {
         GeometryReader { geometry in
+            let deck = sessionDeck(in: geometry)
             VStack(spacing: 0) {
-                if !fullscreen || observing || !session.connectionState.isConnected {
-                    HStack(spacing: 14) {
-                        Button { finish(edit: false) } label: { Label("返回", systemImage: "chevron.backward") }
-                            .labelStyle(.iconOnly)
-                        Button { liveReport = nil; showsConnectionDetails = true } label: {
-                            VStack(alignment: .leading) {
-                                HStack(spacing: 4) {
-                                    Text(request.computer.displayName).font(.headline).lineLimit(1)
-                                    if session.connectionState.isConnected {
-                                        Image(systemName: "info.circle").font(.caption).foregroundStyle(.secondary)
-                                    }
-                                }
-                                if request.computer.displayName != request.computer.endpoint.address {
-                                    Text(request.computer.endpoint.address).font(.caption).foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(!session.connectionState.isConnected)
-                        .accessibilityLabel("连接信息")
-                        .accessibilityValue(request.computer.displayName)
-                        .accessibilityIdentifier("session.info")
-                        Spacer()
-                        if session.connectionState.isConnected {
-                            if session.isCurtained {
-                                Label("屏幕帘幕已开启", systemImage: "eye.slash.fill")
-                                    .labelStyle(.iconOnly)
-                                    .accessibilityIdentifier("session.curtainActive")
-                            }
-                            Button { toggleObservation() } label: {
-                                Label(observing ? "仅观察" : "控制", systemImage: observing ? "eye" : "cursorarrow")
-                            }
-                            .accessibilityIdentifier("session.mode")
-                            #if targetEnvironment(macCatalyst)
-                            MonitorMenu(session: session, select: chooseMonitor, split: showAllMonitorWindows,
-                                        isSplit: monitorGroup != nil).labelStyle(.iconOnly)
-                            if !observing, session.canSendLoginPassword {
-                                PasswordTypingButton(controls: controls) {
-                                    Label("输入用户密码", systemImage: "key.fill").labelStyle(.iconOnly)
-                                }
-                                .accessibilityIdentifier("session.password")
-                            }
-                            if #available(macCatalyst 26, *), !observing {
-                                Button { showsDictation = true } label: { Label("听写", systemImage: "mic").labelStyle(.iconOnly) }
-                                    .accessibilityIdentifier("session.dictation")
-                            }
-                            #else
-                            MonitorMenu(session: session, shortcuts: true, select: chooseMonitor).labelStyle(.iconOnly)
-                            #endif
-                            #if !targetEnvironment(macCatalyst)
-                            if !observing {
-                                Button { toolbar.visible.toggle() } label: {
-                                    Label(toolbar.visible ? "隐藏工具栏" : "显示工具栏", systemImage: "rectangle.bottomthird.inset.filled")
-                                        .labelStyle(.iconOnly)
-                                }.accessibilityIdentifier("toolbar.toggle")
-                            }
-                            if mirrorAvailable {
-                                Toggle(isOn: $mirrorEnabled) {
-                                    Label("镜像到外部显示器", systemImage: "airplayvideo").labelStyle(.iconOnly)
-                                }.toggleStyle(.button)
-                            }
-                            #endif
-                            Button(action: captureScreenshot) {
-                                Label("保存屏幕快照", systemImage: "camera").labelStyle(.iconOnly)
-                            }.accessibilityIdentifier("session.screenshot")
-                            #if !targetEnvironment(macCatalyst)
-                            .keyboardShortcut("r", modifiers: [.shift, .control, .command])
-                            #endif
-                            if !observing, let clipboard {
-                                Menu {
-                                    if let sharing = clipboardSharing {
-                                        Toggle("自动共享剪贴板", isOn: sharing).accessibilityIdentifier("session.sharedClipboard")
-                                        Divider()
-                                    }
-                                    Button("发送剪贴板") { clipboard.sendClipboard() }
-                                        .disabled(!clipboard.canSendClipboard)
-                                    Button("接收剪贴板") { clipboard.getClipboard() }
-                                        .disabled(!clipboard.canGetClipboard)
-                                } label: { Label("共享剪贴板", systemImage: "list.clipboard").labelStyle(.iconOnly) }
-                                .accessibilityIdentifier("session.clipboard")
-                            }
-                            Button { toggleFullScreen() } label: {
-                                Label("切换全屏幕", systemImage: "arrow.up.left.and.arrow.down.right").labelStyle(.iconOnly)
-                            }
-                            Button { finish(edit: false) } label: {
-                                Label("断开连接", systemImage: "xmark.circle").labelStyle(.iconOnly)
-                            }
-                            .accessibilityIdentifier("session.close")
-                            #if !targetEnvironment(macCatalyst)
-                            .keyboardShortcut("c", modifiers: [.shift, .control, .command])
-                            #endif
-                        }
-                    }
-                    .padding(.horizontal).padding(.vertical, 10)
-                    Divider()
+                if deck == nil, !fullscreen || observing || !session.connectionState.isConnected {
+                    sessionHeader()
                 }
                 switch session.connectionState {
                 case .connected, .reconnecting:
                     if privacy.locked {
                         Color.clear
                     } else {
-                        sessionPicture.overlay {
+                        sessionPicture(deck: deck).overlay {
                             ConnectionStatusOverlay(session: session) {
                                 closeSession(allowAction: false) { close(false) }
                             }
@@ -344,8 +254,14 @@ struct SessionScreen: View {
             .onChange(of: geometry.size) { _, newSize in
                 if observing { session.updateRemoteDisplaySize(viewSize: newSize, displayScale: scale) }
             }
+            #if !targetEnvironment(macCatalyst)
+            .background {
+                if deck != nil { Color.black.ignoresSafeArea(.container, edges: .top) }
+            }
+            #endif
         }
         #if !targetEnvironment(macCatalyst)
+        .ignoresSafeArea(.keyboard)
         .onChange(of: VNCKeyRepeat(enabled: repeatKeys, delay: keyDelay, interval: keyInterval), initial: true) { _, value in
             toolbar.keyboard.keyRepeat = value
         }
@@ -459,6 +375,197 @@ struct SessionScreen: View {
         }
         .statusBarHidden(fullscreen)
         .persistentSystemOverlays(fullscreen ? .hidden : .automatic)
+    }
+
+    private func sessionHeader(allowsToolbarToggle: Bool = true, compact: Bool = false) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: compact ? 12 : 14) {
+                Button { finish(edit: false) } label: { Label("返回", systemImage: "chevron.backward") }
+                    .labelStyle(.iconOnly)
+                Button { liveReport = nil; showsConnectionDetails = true } label: {
+                    VStack(alignment: .leading) {
+                        HStack(spacing: 4) {
+                            Text(request.computer.displayName).font(.headline).lineLimit(1)
+                            if session.connectionState.isConnected {
+                                Image(systemName: "info.circle").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        if !compact, request.computer.displayName != request.computer.endpoint.address {
+                            Text(request.computer.endpoint.address).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(!session.connectionState.isConnected)
+                .accessibilityLabel("连接信息")
+                .accessibilityValue(request.computer.displayName)
+                .accessibilityIdentifier("session.info")
+                Spacer()
+                if session.connectionState.isConnected {
+                    if session.isCurtained {
+                        Label("屏幕帘幕已开启", systemImage: "eye.slash.fill")
+                            .labelStyle(.iconOnly)
+                            .accessibilityIdentifier("session.curtainActive")
+                    }
+                    Button { toggleObservation() } label: {
+                        if compact {
+                            Label("控制", systemImage: "cursorarrow").labelStyle(.iconOnly)
+                        } else {
+                            Label(observing ? "仅观察" : "控制", systemImage: observing ? "eye" : "cursorarrow")
+                        }
+                    }
+                    .accessibilityIdentifier("session.mode")
+                    #if targetEnvironment(macCatalyst)
+                    MonitorMenu(session: session, select: chooseMonitor, split: showAllMonitorWindows,
+                                isSplit: monitorGroup != nil).labelStyle(.iconOnly)
+                    if !observing, session.canSendLoginPassword {
+                        PasswordTypingButton(controls: controls) {
+                            Label("输入用户密码", systemImage: "key.fill").labelStyle(.iconOnly)
+                        }
+                        .accessibilityIdentifier("session.password")
+                    }
+                    if #available(macCatalyst 26, *), !observing {
+                        Button { showsDictation = true } label: { Label("听写", systemImage: "mic").labelStyle(.iconOnly) }
+                            .accessibilityIdentifier("session.dictation")
+                    }
+                    #else
+                    MonitorMenu(session: session, shortcuts: true, select: chooseMonitor).labelStyle(.iconOnly)
+                    #endif
+                    #if !targetEnvironment(macCatalyst)
+                    if !observing, allowsToolbarToggle {
+                        Button { toolbar.visible.toggle() } label: {
+                            Label(toolbar.visible ? "隐藏工具栏" : "显示工具栏", systemImage: "rectangle.bottomthird.inset.filled")
+                                .labelStyle(.iconOnly)
+                        }.accessibilityIdentifier("toolbar.toggle")
+                    }
+                    if mirrorAvailable {
+                        Toggle(isOn: $mirrorEnabled) {
+                            Label("镜像到外部显示器", systemImage: "airplayvideo").labelStyle(.iconOnly)
+                        }.toggleStyle(.button)
+                    }
+                    #endif
+                    Button(action: captureScreenshot) {
+                        Label("保存屏幕快照", systemImage: "camera").labelStyle(.iconOnly)
+                    }.accessibilityIdentifier("session.screenshot")
+                    #if !targetEnvironment(macCatalyst)
+                    .keyboardShortcut("r", modifiers: [.shift, .control, .command])
+                    #endif
+                    if !observing, let clipboard {
+                        Menu {
+                            if let sharing = clipboardSharing {
+                                Toggle("自动共享剪贴板", isOn: sharing).accessibilityIdentifier("session.sharedClipboard")
+                                Divider()
+                            }
+                            Button("发送剪贴板") { clipboard.sendClipboard() }
+                                .disabled(!clipboard.canSendClipboard)
+                            Button("接收剪贴板") { clipboard.getClipboard() }
+                                .disabled(!clipboard.canGetClipboard)
+                        } label: { Label("共享剪贴板", systemImage: "list.clipboard").labelStyle(.iconOnly) }
+                        .accessibilityIdentifier("session.clipboard")
+                    }
+                    Button { toggleFullScreen() } label: {
+                        Label("切换全屏幕", systemImage: "arrow.up.left.and.arrow.down.right").labelStyle(.iconOnly)
+                    }
+                    Button { finish(edit: false) } label: {
+                        Label("断开连接", systemImage: "xmark.circle").labelStyle(.iconOnly)
+                    }
+                    .accessibilityIdentifier("session.close")
+                    #if !targetEnvironment(macCatalyst)
+                    .keyboardShortcut("c", modifiers: [.shift, .control, .command])
+                    #endif
+                }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, compact ? 0 : 10)
+            .frame(minHeight: compact ? 44 : nil)
+            if !compact { Divider() }
+        }
+    }
+
+    private func sessionDeck(in geometry: GeometryProxy) -> DeskSessionDeck? {
+        #if !targetEnvironment(macCatalyst)
+        guard !fullscreen, !observing, !privacy.locked else { return nil }
+        switch session.connectionState {
+        case .connected, .reconnecting: break
+        default: return nil
+        }
+
+        let size = geometry.size
+        if #available(iOS 27.1, *) {
+            let divisions = geometry.reservedRegions(kind: .division, options: .includeInactive)
+            if let fold = divisions.first(where: {
+                $0.isActive && $0.frame.width > $0.frame.height
+                    && $0.frame.minY > 0 && $0.frame.maxY < size.height
+            })?.frame {
+                return DeskSessionDeck(divider: fold.minY, size: size, gap: fold.height)
+            }
+            if divisions.isEmpty, horizontalSizeClass == .compact, size.height > size.width,
+               let margins = coverMargins(in: geometry) {
+                return DeskSessionDeck(divider: size.height * 0.51, size: size, coverMargins: margins)
+            }
+        }
+        if portraitSplit, size.height > size.width, size.height >= 580,
+           size.width >= 280 {
+            return DeskSessionDeck(divider: min(size.height * 0.46, size.height - 350), size: size)
+        }
+        #endif
+        return nil
+    }
+
+    #if !targetEnvironment(macCatalyst)
+    @available(iOS 27.1, *)
+    private func coverMargins(in geometry: GeometryProxy) -> EdgeInsets? {
+        let size = geometry.size
+        let safe = geometry.safeAreaInsets
+        // The cover camera sits in a corner, while a conventional phone's
+        // camera cutout is centered on one axis. Work in this view's safe area.
+        let corner = geometry.reservedRegions(kind: .occlusion).first { region in
+            let frame = region.frame
+            return region.isActive && (frame.midX < size.width * 0.24 || frame.midX > size.width * 0.76)
+                && (frame.midY < size.height * 0.28 || frame.midY > size.height * 0.72)
+        }?.frame
+        if let corner {
+            let leading = corner.midX < size.width / 2 ? max(0, corner.maxX + 8) : 0
+            let trailing = corner.midX >= size.width / 2 ? max(0, size.width - corner.minX + 8) : 0
+            return EdgeInsets(top: 0, leading: leading, bottom: 0, trailing: trailing)
+        }
+        // Some presentations already inset the whole view away from the rail.
+        if size.height > size.width, max(safe.leading, safe.trailing) > 20 { return EdgeInsets() }
+        return nil
+    }
+    #endif
+
+    @ViewBuilder private func sessionPicture(deck: DeskSessionDeck?) -> some View {
+        #if targetEnvironment(macCatalyst)
+        if let group = monitorGroup {
+            if let region = session.windowMonitorRegion(for: group.primary) {
+                if observing { VNCMonitorPicture(session: session, region: region) }
+                else { remoteDesktop.showingMonitor(in: region).ignoresSafeArea(.keyboard) }
+            } else if session.connectionState.isConnected, session.hasPresentedCurrentPicture {
+                ProgressView("等待远程画面…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Color.black
+            }
+        } else if observing {
+            ObservedPicture(session: session, showsPlaceholder: false)
+        } else {
+            remoteDesktop.ignoresSafeArea(.keyboard)
+        }
+        #else
+        if observing {
+            ObservedPicture(session: session, showsPlaceholder: false, sizing: request.computer.initialViewportSizing ?? .fit)
+        } else {
+            InteractiveDesktop(desktop: remoteDesktop, session: session, controls: controls, bar: toolbar,
+                               deck: deck, showsSessionHeader: !fullscreen,
+                               holdDuration: gestures.holdDuration, chooseMonitor: chooseMonitor,
+                               startDictation: { showsDictation = true }, captureScreenshot: captureScreenshot,
+                               toggleFullScreen: toggleFullScreen) {
+                sessionHeader(allowsToolbarToggle: false, compact: true)
+            }
+            .ignoresSafeArea(.keyboard)
+        }
+        #endif
     }
 
     @ViewBuilder private func retryActions(_ title: String) -> some View {
@@ -656,35 +763,6 @@ struct SessionScreen: View {
             toolbar.visible = false
         }
         fullscreen.toggle()
-        #endif
-    }
-
-    @ViewBuilder private var sessionPicture: some View {
-        #if targetEnvironment(macCatalyst)
-        if let group = monitorGroup {
-            if let region = session.windowMonitorRegion(for: group.primary) {
-                if observing { VNCMonitorPicture(session: session, region: region) }
-                else { remoteDesktop.showingMonitor(in: region).ignoresSafeArea(.keyboard) }
-            } else if session.connectionState.isConnected, session.hasPresentedCurrentPicture {
-                ProgressView("等待远程画面…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                Color.black
-            }
-        } else if observing {
-            ObservedPicture(session: session, showsPlaceholder: false)
-        } else {
-            remoteDesktop.ignoresSafeArea(.keyboard)
-        }
-        #else
-        if observing {
-            ObservedPicture(session: session, showsPlaceholder: false, sizing: request.computer.initialViewportSizing ?? .fit)
-        } else {
-            InteractiveDesktop(desktop: remoteDesktop, session: session, controls: controls, bar: toolbar,
-                               chooseMonitor: chooseMonitor, startDictation: { showsDictation = true },
-                               captureScreenshot: captureScreenshot)
-                .ignoresSafeArea(.keyboard)
-        }
         #endif
     }
 
