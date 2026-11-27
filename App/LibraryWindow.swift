@@ -656,16 +656,14 @@ struct LibraryWindow: View {
                     Section("附近") {
                         ForEach(local) { item in
                             Button {
-                                nearby.select(item) {
-                                    endUnifiedSearch()
-                                    editor = EditorRequest(purpose: .connect, computer: $0)
-                                }
+                                openNearbySearchResult(item, quality: nil)
                             } label: {
                                 searchLabel(item.name, symbol: "bonjour")
                             }
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("library.search.nearby." + item.id)
                             .contextMenu {
+                                DiscoveredConnectionActions { openNearbySearchResult(item, quality: $0) }
                                 Button("保存到连接库") {
                                     nearby.select(item) {
                                         endUnifiedSearch()
@@ -681,7 +679,7 @@ struct LibraryWindow: View {
                         ForEach(peers) { item in
                             Button {
                                 endUnifiedSearch()
-                                open(item.computer, suggestedSSHPort: item.sshPort)
+                                openDiscovered(item.computer, suggestedSSHPort: item.sshPort, quality: nil)
                             } label: {
                                 searchLabel(item.computer.displayName, address: item.computer.endpoint.address,
                                             folder: item.folder, symbol: "network")
@@ -689,6 +687,10 @@ struct LibraryWindow: View {
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("library.search.tailscale." + item.id)
                             .contextMenu {
+                                DiscoveredConnectionActions(offersHighPerformance: item.offersHighPerformance) { quality in
+                                    endUnifiedSearch()
+                                    openDiscovered(item.computer, suggestedSSHPort: item.sshPort, quality: quality)
+                                }
                                 Button("保存到连接库") {
                                     endUnifiedSearch()
                                     saveDiscovered(item.computer, suggestedSSHPort: item.sshPort)
@@ -758,7 +760,7 @@ struct LibraryWindow: View {
         if page == .tailscale {
             TailnetView(directory: tailnet, archiveFolders: library.archive.screensDirectoryFolders?.tailscale ?? [],
                         search: categorySearch, listLayout: listLayout, gridColumns: gridColumns,
-                        select: open, save: saveDiscovered)
+                        select: openDiscovered, save: saveDiscovered)
         } else if page == .nearby {
             let results = nearby.entries.filter { categorySearch.isEmpty || $0.name.localizedCaseInsensitiveContains(categorySearch) }
             Group {
@@ -851,8 +853,8 @@ struct LibraryWindow: View {
     private func nearbyItem<Content: View>(_ entry: NearbyComputer, cornerRadius: CGFloat,
                                            @ViewBuilder label: () -> Content) -> some View {
         DiscoveredConnectionItem(id: "nearby.computer." + entry.id, selection: $selectedConnection,
-                                 cornerRadius: cornerRadius, endpoint: entry.address.flatMap { try? Endpoint(address: $0) }) {
-            nearby.select(entry) { editor = EditorRequest(purpose: .connect, computer: $0) }
+                                 cornerRadius: cornerRadius, endpoint: entry.address.flatMap { try? Endpoint(address: $0) }) { quality in
+            nearby.select(entry) { openDiscovered($0, suggestedSSHPort: nil, quality: quality) }
         } label: {
             label()
         } actions: {
@@ -1145,8 +1147,7 @@ struct LibraryWindow: View {
     @ViewBuilder private func actions(for item: Computer) -> some View {
         Button("连接") { open(item) }
         Menu("连接模式") {
-            Button("以标准模式连接") { open(item, quality: .standard) }
-            Button("以高性能模式连接") { open(item, quality: .adaptive) }
+            ConnectionModeButtons { quality in open(item.connecting(with: quality, on: .current)) }
             if library.videoRetryDate(for: item) != nil {
                 Button("立即恢复流畅视频与音频") { library.resumeStreaming(for: item) }
             }
@@ -1268,24 +1269,22 @@ struct LibraryWindow: View {
     #endif
 
     private func saveDiscovered(_ entry: Computer, suggestedSSHPort: UInt16? = nil) {
-        let existing = library.existingComputer(matching: entry)
-        editor = EditorRequest(purpose: existing?.saved == true ? .edit : .new, computer: existing ?? entry,
-                               suggestedSSHPort: suggestedSSHPort)
+        guard !privacy.locked else { return }
+        let profile = library.profile(forDiscovered: entry.endpoint)
+        editor = EditorRequest(purpose: profile?.saved == true ? .edit : .new, computer: profile ?? entry,
+                               suggestedSSHPort: suggestedSSHPort, loadsStoredCredentials: profile != nil)
     }
 
-    private func open(_ entry: Computer, quality: PictureQuality) {
-        var copy = entry
-        var display = copy.display(for: .current)
-        display.quality = quality
-        if quality == .adaptive {
-            if display.layout == .single { display.matchWindow = true }
-        } else {
-            if display.layout == .virtualPair { display.layout = .single }
-            display.fixedDesktop = nil
-            display.matchWindow = false
+    private func openNearbySearchResult(_ entry: NearbyComputer, quality: PictureQuality?) {
+        nearby.select(entry) {
+            endUnifiedSearch()
+            openDiscovered($0, suggestedSSHPort: nil, quality: quality)
         }
-        copy.setDisplay(display, for: .current)
-        open(copy)
+    }
+
+    private func openDiscovered(_ entry: Computer, suggestedSSHPort: UInt16?, quality: PictureQuality?) {
+        guard !privacy.locked else { return }
+        editor = .connectingToDiscovered(entry, in: library, suggestedSSHPort: suggestedSSHPort, quality: quality)
     }
 
     private func present(_ route: ConnectionRoute) {

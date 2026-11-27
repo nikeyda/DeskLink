@@ -294,6 +294,21 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
         deviceDisplays?[client.rawValue] ?? inheritedDisplay(for: client)
     }
 
+    func connecting(with quality: PictureQuality, on client: DisplayClient) -> Self {
+        var copy = self
+        var preferences = display(for: client)
+        preferences.quality = quality
+        if quality == .adaptive {
+            if preferences.layout == .single { preferences.matchWindow = true }
+        } else {
+            if preferences.layout == .virtualPair { preferences.layout = .single }
+            preferences.fixedDesktop = nil
+            preferences.matchWindow = false
+        }
+        copy.setDisplay(preferences, for: client)
+        return copy
+    }
+
     mutating func setDisplay(_ value: DesktopDisplayPreferences, for client: DisplayClient, explicit: Bool = false) {
         var profiles = deviceDisplays ?? [:]
         // An explicit phone profile must stay independent of later tablet edits.
@@ -552,6 +567,14 @@ final class ConnectionLibrary {
     func existingComputer(matching computer: Computer) -> Computer? {
         archive.computers.first(where: { $0.id == computer.id }) ??
             archive.computers.first(where: { $0.hasSameDestination(as: computer) })
+    }
+
+    func profile(forDiscovered endpoint: Endpoint) -> Computer? {
+        let matches = archive.computers.filter { $0.endpoint == endpoint }
+        let saved = matches.filter(\.saved)
+        if !saved.isEmpty { return saved.count == 1 ? saved.first : nil }
+        let recent = matches.filter { $0.lastConnected != nil && $0.openedFromLink != true }
+        return recent.count == 1 ? recent.first : nil
     }
 
     private var videoRetryFile: URL { reportDirectory.appending(path: "video-retry-dates.plist") }

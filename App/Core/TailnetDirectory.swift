@@ -52,6 +52,13 @@ struct TailnetDevice: Decodable, Identifiable, Sendable {
     let os: String
     let authorized: Bool?
 
+    var offersHighPerformance: Bool {
+        switch os.lowercased() {
+        case "", "macos", "darwin": true
+        default: false
+        }
+    }
+
     var computer: Computer? {
         guard authorized != false else { return nil }
         guard let address = addresses.compactMap({ try? Endpoint(address: $0) }).first ??
@@ -109,6 +116,7 @@ struct TailnetSearchMatch: Identifiable, Equatable {
     let computer: Computer
     let folder: String?
     let sshPort: UInt16?
+    let offersHighPerformance: Bool
 }
 
 private final class FixedServiceDelegate: NSObject, URLSessionTaskDelegate {
@@ -173,7 +181,8 @@ final class TailnetDirectory {
             let fields: [String?] = [device.hostname, device.name, computer.endpoint.address, folder]
             guard query.matches(fields + device.addresses.map(Optional.some)) else { return nil }
             let sshPort = directoryID(for: device).flatMap { ports(for: $0)?.ssh }
-            return TailnetSearchMatch(id: device.id, computer: computer, folder: folder, sshPort: sshPort)
+            return TailnetSearchMatch(id: device.id, computer: computer, folder: folder,
+                                      sshPort: sshPort, offersHighPerformance: device.offersHighPerformance)
         }
     }
 

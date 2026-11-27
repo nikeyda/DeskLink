@@ -5,7 +5,8 @@ struct DiscoveredConnectionItem<Content: View, Actions: View>: View {
     @Binding var selection: String?
     let cornerRadius: CGFloat
     let endpoint: Endpoint?
-    let connect: () -> Void
+    let offersHighPerformance: Bool
+    let connect: (PictureQuality?) -> Void
     let label: Content
     let actions: Actions
 
@@ -13,18 +14,20 @@ struct DiscoveredConnectionItem<Content: View, Actions: View>: View {
     @State private var outcome: ScreenSharingCheck.Outcome?
 
     init(id: String, selection: Binding<String?>, cornerRadius: CGFloat, endpoint: Endpoint?,
-         connect: @escaping () -> Void, @ViewBuilder label: () -> Content, @ViewBuilder actions: () -> Actions) {
+         offersHighPerformance: Bool = true, connect: @escaping (PictureQuality?) -> Void,
+         @ViewBuilder label: () -> Content, @ViewBuilder actions: () -> Actions) {
         self.id = id
         _selection = selection
         self.cornerRadius = cornerRadius
         self.endpoint = endpoint
+        self.offersHighPerformance = offersHighPerformance
         self.connect = connect
         self.label = label()
         self.actions = actions()
     }
 
     var body: some View {
-        LibraryConnectionItem(id: id, selection: $selection, cornerRadius: cornerRadius, connect: connect) {
+        LibraryConnectionItem(id: id, selection: $selection, cornerRadius: cornerRadius, connect: { connect(nil) }) {
             VStack(alignment: .leading, spacing: 6) {
                 label
                 if let outcome {
@@ -41,6 +44,7 @@ struct DiscoveredConnectionItem<Content: View, Actions: View>: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
+            DiscoveredConnectionActions(offersHighPerformance: offersHighPerformance, connect: connect)
             if endpoint != nil {
                 Button("检查屏幕共享直连", systemImage: "stethoscope") {
                     outcome = nil
@@ -76,5 +80,28 @@ struct DiscoveredConnectionItem<Content: View, Actions: View>: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             .accessibilityIdentifier("discovery.screenSharingResult")
+    }
+}
+
+struct DiscoveredConnectionActions: View {
+    var offersHighPerformance = true
+    let connect: (PictureQuality?) -> Void
+
+    var body: some View {
+        Button("连接") { connect(nil) }
+        if offersHighPerformance {
+            Menu("连接模式") {
+                ConnectionModeButtons { connect($0) }
+            }
+        }
+    }
+}
+
+struct ConnectionModeButtons: View {
+    let connect: (PictureQuality) -> Void
+
+    var body: some View {
+        Button("以标准模式连接") { connect(.standard) }
+        Button("以高性能模式连接") { connect(.adaptive) }
     }
 }

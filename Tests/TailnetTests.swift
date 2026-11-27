@@ -83,6 +83,7 @@ final class TailnetTests: XCTestCase {
         XCTAssertEqual(result.folder, studio.name)
         XCTAssertEqual(result.computer.endpoint.port, 5910)
         XCTAssertEqual(result.sshPort, 2200)
+        XCTAssertFalse(result.offersHighPerformance)
         directory.setHidden(true, device: device)
         XCTAssertTrue(directory.searchMatches(query).isEmpty)
     }
@@ -135,7 +136,9 @@ final class TailnetTests: XCTestCase {
         }
         try await directory.link(account, secret: "test-only-local-node-credential", remember: true)
         XCTAssertEqual(Set(directory.visibleDevices.map(\.id)), ["peer", "named"])
-        XCTAssertEqual(directory.searchMatches(LibrarySearchQuery("Notebook")).map(\.id), ["peer"])
+        let results = directory.searchMatches(LibrarySearchQuery("Notebook"))
+        XCTAssertEqual(results.map(\.id), ["peer"])
+        XCTAssertEqual(results.first?.offersHighPerformance, true)
         XCTAssertEqual(Set(directory.widgetComputers.map(\.name)), ["Notebook", "Name only"])
         XCTAssertEqual(directory.widgetComputers, TailnetDirectory(defaults: defaults).widgetComputers)
     }

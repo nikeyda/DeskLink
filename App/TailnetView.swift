@@ -7,7 +7,7 @@ struct TailnetView: View {
     var search: String
     var listLayout: Bool
     var gridColumns: [GridItem]
-    var select: (Computer, UInt16?) -> Void
+    var select: (Computer, UInt16?, PictureQuality?) -> Void
     var save: (Computer, UInt16?) -> Void
     @State private var selectedDevice: String?
     @State private var editing = false
@@ -199,8 +199,9 @@ struct TailnetView: View {
         let membership = directory.folderID(for: device)
         let folderName = directory.folders.first { $0.id == membership }?.name
         return DiscoveredConnectionItem(id: "tailnet.device." + device.id, selection: $selectedDevice,
-                                        cornerRadius: listLayout ? 8 : 16, endpoint: computer.endpoint) {
-            select(computer, ports?.ssh)
+                                        cornerRadius: listLayout ? 8 : 16, endpoint: computer.endpoint,
+                                        offersHighPerformance: device.offersHighPerformance) { quality in
+            select(computer, ports?.ssh, quality)
         } label: {
             if listLayout {
                 Label {

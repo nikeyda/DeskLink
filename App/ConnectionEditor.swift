@@ -44,6 +44,17 @@ struct EditorRequest: Identifiable {
     var suggestedSSHPort: UInt16?
     var link: DesktopLink?
     var sharedOptions = ConnectionRoute.SharedOptions()
+    var loadsStoredCredentials = true
+
+    @MainActor
+    static func connectingToDiscovered(_ computer: Computer, in library: ConnectionLibrary,
+                                       suggestedSSHPort: UInt16?, quality: PictureQuality?) -> Self {
+        let stored = library.profile(forDiscovered: computer.endpoint)
+        let profile = stored ?? computer
+        let connection = quality.map { profile.connecting(with: $0, on: .current) } ?? profile
+        return Self(purpose: .connect, computer: connection, suggestedSSHPort: suggestedSSHPort,
+                    loadsStoredCredentials: stored != nil)
+    }
 
     static func from(_ link: DesktopLink, in archive: LibraryArchive, allowUnsavedHost: Bool) throws -> Self {
         if link.requestsGuest { throw LinkError.guestUnavailable }
@@ -410,6 +421,7 @@ struct ConnectionEditor: View {
         .onAppear {
             guard !loadedInitialCredentials else { return }
             loadedInitialCredentials = true
+            guard request.loadsStoredCredentials else { return }
             if let name = selectedKeyName { selectNamedKey(name) }
             if request.link?.username != nil || request.link?.password != nil || request.link?.keyName != nil { return }
             guard let original = request.computer else { return }

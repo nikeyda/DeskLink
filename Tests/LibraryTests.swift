@@ -2,6 +2,82 @@ import XCTest
 @testable import DeskLink
 
 final class LibraryTests: XCTestCase {
+    @MainActor
+    func testDiscoveredConnectionReusesOnlyAnUnambiguousProfileAndKeepsItsDefaultMode() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = ConnectionLibrary(file: root.appending(path: "library.json"))
+        let endpoint = try Endpoint(address: "studio.fixture.invalid:15900")
+        var discovered = Computer(name: "Bonjour Studio", endpoint: endpoint)
+        discovered.saved = false
+        var saved = Computer(name: "Work Studio", endpoint: endpoint)
+        saved.authentication = .macUser
+        saved.username = "fixture"
+        saved.viewOnly = true
+        saved.ssh = .init(port: 2222, username: "fixture-tunnel", usesKey: false)
+        saved.setDisplay(.init(remoteAudio: false), for: .current)
+        XCTAssertTrue(library.save(saved))
+        var alternatePort = saved
+        alternatePort.id = UUID()
+        alternatePort.endpoint = try Endpoint(address: "studio.fixture.invalid:15901")
+        XCTAssertTrue(library.save(alternatePort))
+
+        let regular = EditorRequest.connectingToDiscovered(discovered, in: library, suggestedSSHPort: 2200, quality: nil)
+        XCTAssertEqual(regular.computer?.display(for: .current).quality, .standard)
+        let high = EditorRequest.connectingToDiscovered(discovered, in: library, suggestedSSHPort: 2200, quality: .adaptive)
+        let connection = try XCTUnwrap(high.computer)
+        XCTAssertEqual(connection.id, saved.id)
+        XCTAssertEqual(connection.username, "fixture")
+        XCTAssertEqual(connection.ssh, saved.ssh)
+        XCTAssertTrue(connection.viewOnly)
+        XCTAssertTrue(high.loadsStoredCredentials)
+        XCTAssertEqual(high.suggestedSSHPort, 2200)
+        XCTAssertEqual(connection.display(for: .current).quality, .adaptive)
+        XCTAssertTrue(connection.display(for: .current).matchWindow)
+        XCTAssertFalse(connection.display(for: .current).remoteAudio)
+        library.recordSuccess(connection)
+        XCTAssertEqual(library.profile(forDiscovered: endpoint)?.display(for: .current).quality, .standard)
+
+        var secondAccount = saved
+        secondAccount.id = UUID()
+        secondAccount.username = "another-fixture"
+        XCTAssertTrue(library.save(secondAccount))
+        let ambiguous = EditorRequest.connectingToDiscovered(discovered, in: library, suggestedSSHPort: 2200, quality: .standard)
+        XCTAssertEqual(ambiguous.computer?.id, discovered.id)
+        XCTAssertEqual(ambiguous.computer?.username, "")
+        XCTAssertNil(ambiguous.computer?.ssh)
+        XCTAssertFalse(ambiguous.loadsStoredCredentials)
+    }
+
+    @MainActor
+    func testDiscoveredRecentProfileCanReconnectAndStandardModeUsesTheExistingDisplay() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = ConnectionLibrary(file: root.appending(path: "library.json"))
+        let endpoint = try Endpoint(address: "display.fixture.invalid")
+        var discovered = Computer(endpoint: endpoint)
+        discovered.saved = false
+        var recent = discovered
+        recent.id = UUID()
+        recent.username = "recent-fixture"
+        recent.setDisplay(.init(quality: .adaptive, layout: .virtualPair, matchWindow: true, fixedDesktop: .standard),
+                          for: .current)
+        library.recordSuccess(recent)
+        var link = discovered
+        link.openedFromLink = true
+        library.recordSuccess(link)
+
+        let request = EditorRequest.connectingToDiscovered(discovered, in: library, suggestedSSHPort: nil, quality: .standard)
+        let display = try XCTUnwrap(request.computer?.display(for: .current))
+        XCTAssertEqual(request.computer?.id, recent.id)
+        XCTAssertTrue(request.loadsStoredCredentials)
+        XCTAssertEqual(display.quality, .standard)
+        XCTAssertEqual(display.layout, .single)
+        XCTAssertFalse(display.matchWindow)
+        XCTAssertNil(display.fixedDesktop)
+        XCTAssertEqual(library.profile(forDiscovered: endpoint)?.display(for: .current).layout, .virtualPair)
+    }
+
     func testLibraryWindowRequestReadsExistingSavedWindowAndRoundTripsNewDestinations() throws {
         let saved = UUID()
         let encoder = JSONEncoder()

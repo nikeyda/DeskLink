@@ -1,4 +1,7 @@
 import XCTest
+#if !targetEnvironment(macCatalyst)
+import dnssd
+#endif
 
 @MainActor
 final class LibraryClickUITests: XCTestCase {
@@ -76,6 +79,74 @@ final class LibraryClickUITests: XCTestCase {
         if list.exists { list.click() } else { app.buttons["列表"].firstMatch.click() }
     }
     #else
+    func testNearbyContextMenuChoosesAConnectionModeWithoutChangingTheDefault() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]
+        app.launch()
+        let sideEntry = app.descendants(matching: .any).matching(identifier: "library.nearby").firstMatch
+        if !sideEntry.isHittable {
+            let sidebar = app.buttons["ToggleSideBar"].firstMatch
+            let back = app.buttons["BackButton"].firstMatch
+            if sidebar.isHittable { sidebar.tap() }
+            else if back.isHittable { back.tap() }
+        }
+        XCTAssertTrue(sideEntry.waitForExistence(timeout: 8))
+        sideEntry.tap()
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let permission = springboard.alerts.containing(
+            NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS %@", "local network", "本地网络")
+        ).firstMatch
+        if permission.waitForExistence(timeout: 3) {
+            let allow = permission.buttons.matching(NSPredicate(format: "label IN %@", ["Allow", "允许"])).firstMatch
+            XCTAssertTrue(allow.exists)
+            allow.tap()
+        }
+
+        let name = "Telescope mode " + UUID().uuidString.prefix(8)
+        let port: UInt16 = 15279
+        var registration: DNSServiceRef?
+        defer { if let registration { DNSServiceRefDeallocate(registration) } }
+        XCTAssertEqual(DNSServiceRegister(&registration, 0, kDNSServiceInterfaceIndexLocalOnly, name,
+                                          "_rfb._tcp", "local.", nil, port.bigEndian, 0, nil, nil, nil),
+                       DNSServiceErrorType(kDNSServiceErr_NoError))
+        let computer = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@",
+                                                        "nearby.computer.", name)).firstMatch
+        XCTAssertTrue(computer.waitForExistence(timeout: 12))
+
+        func verifyConnectionMode(_ expected: String) {
+            let portField = app.textFields["connection.port"]
+            XCTAssertTrue(portField.waitForExistence(timeout: 8))
+            XCTAssertEqual(portField.value as? String, String(port))
+            let form = app.collectionViews["connection.form"].firstMatch
+            let disclosure = form.buttons["显示器"].firstMatch
+            for _ in 0..<4 where !disclosure.isHittable { form.swipeUp() }
+            XCTAssertTrue(disclosure.isHittable)
+            disclosure.tap()
+            let quality = form.buttons["connection.quality"].firstMatch
+            for _ in 0..<4 where !quality.isHittable { form.swipeUp() }
+            XCTAssertTrue(quality.isHittable, form.debugDescription)
+            XCTAssertTrue(quality.label.hasSuffix(expected), quality.debugDescription)
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "Nearby connection mode — \(expected)"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+        }
+
+        computer.press(forDuration: 0.9)
+        let modes = app.buttons["连接模式"].firstMatch
+        XCTAssertTrue(modes.waitForExistence(timeout: 8))
+        modes.tap()
+        let adaptive = app.buttons["以高性能模式连接"].firstMatch
+        XCTAssertTrue(adaptive.waitForExistence(timeout: 5))
+        adaptive.tap()
+        verifyConnectionMode("高性能")
+        app.buttons["取消"].firstMatch.tap()
+        XCTAssertTrue(computer.waitForExistence(timeout: 8))
+        computer.tap()
+        verifyConnectionMode("标准")
+    }
+
     func testTouchOpensSavedConnectionOnTheFirstTap() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
