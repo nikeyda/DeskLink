@@ -15,7 +15,7 @@ struct HiddenSidebarItems: OptionSet {
     static let linkSection: Self = [.links, .recent, .favorites]
 }
 
-private enum CollectionPage: Hashable {
+enum CollectionPage: Codable, Hashable {
     case all, recent, links, favorites, nearby, tailscale, folder(String), linkFolder(String)
 
     var title: Text {
@@ -61,6 +61,29 @@ private enum CollectionPage: Hashable {
     }
 }
 
+enum LibraryWindowRequest: Codable, Hashable {
+    case connection(UUID)
+    case quickConnect
+    case collection(CollectionPage)
+
+    init(from decoder: Decoder) throws {
+        let value = try decoder.singleValueContainer()
+        // Saved windows in existing installations persist a UUID.
+        if let id = try? value.decode(UUID.self) { self = .connection(id) }
+        else if (try? value.decode(String.self)) == "quickConnect" { self = .quickConnect }
+        else { self = .collection(try value.decode(CollectionPage.self)) }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var value = encoder.singleValueContainer()
+        switch self {
+        case .connection(let id): try value.encode(id)
+        case .quickConnect: try value.encode("quickConnect")
+        case .collection(let page): try value.encode(page)
+        }
+    }
+}
+
 struct ArchiveDocument: FileDocument {
     static let type = UTType(exportedAs: "local.nikey.desklink.archive", conformingTo: .json)
     static let screensType = UTType(importedAs: "com.edovia.screens5.archive", conformingTo: .data)
@@ -103,7 +126,7 @@ struct LibraryWindow: View {
     @Bindable var library: ConnectionLibrary
     let preferences: UserDefaults
     let pasteboard: UIPasteboard
-    var initialComputer: UUID?
+    var initialRequest: LibraryWindowRequest?
     @State private var page: CollectionPage? = .all
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.scenePhase) private var scenePhase
@@ -139,7 +162,7 @@ struct LibraryWindow: View {
     @AppStorage("library.linkOrder") private var linkOrder = ComputerOrder.lastConnected
     @State private var sessionToEdit: Computer?
     @State private var queuedRoute: ConnectionRoute?
-    @State private var openedInitialComputer = false
+    @State private var openedInitialRequest = false
     @State private var settings = false
     @State private var downloads = false
     @State private var historicalReport: ConnectionReport?
@@ -243,12 +266,12 @@ struct LibraryWindow: View {
                 #endif
                 .onAppear {
                     #if targetEnvironment(macCatalyst)
-                    availability.libraryStartup.libraryAppeared(restoringConnection: initialComputer != nil)
+                    availability.libraryStartup.libraryAppeared(openingRequestedContent: initialRequest != nil)
                     #endif
                     importPendingArchives()
-                    if !openedInitialComputer, let initialComputer {
-                        openedInitialComputer = true
-                        present(.saved(initialComputer))
+                    if !openedInitialRequest, let initialRequest {
+                        openedInitialRequest = true
+                        open(initialRequest)
                     } else if let sessionToEdit {
                         editor = EditorRequest(purpose: .connect, computer: sessionToEdit)
                         self.sessionToEdit = nil
@@ -388,6 +411,11 @@ struct LibraryWindow: View {
         .onOpenURL { url in
             #if targetEnvironment(macCatalyst)
             availability.libraryStartup.openRequestedContent()
+            if let request = MacStatusMenu.request(for: url) {
+                if activeSession != nil { openWindow(id: "desklink-library", value: request) }
+                else { open(request) }
+                return
+            }
             #endif
             do {
                 if url.isFileURL && ["desklink", "screens"].contains(url.pathExtension.lowercased()) {
@@ -825,7 +853,7 @@ struct LibraryWindow: View {
             }
         }
         if supportsMultipleWindows {
-            Button("在新窗口中连接") { openWindow(value: item.id) }
+            Button("在新窗口中连接") { openWindow(value: LibraryWindowRequest.connection(item.id)) }
         }
         if item.lastConnected != nil {
             Button("上次连接信息") {
@@ -888,6 +916,16 @@ struct LibraryWindow: View {
         if case let .folder(name) = page { editor = EditorRequest(purpose: .new, folder: name) }
         else { editor = EditorRequest(purpose: .new) }
     }
+
+    private func open(_ request: LibraryWindowRequest) {
+        switch request {
+        case .connection(let id): present(.saved(id))
+        case .quickConnect: present(.quick)
+        case .collection(let destination):
+            if hiddenItems.isDisjoint(with: destination.sidebarItem) { page = destination }
+        }
+    }
+
     private func open(_ entry: Computer, suggestedSSHPort: UInt16? = nil) {
         guard !privacy.locked else { queuedRoute = .saved(entry.id); return }
         if entry.saved || entry.lastConnected != nil,

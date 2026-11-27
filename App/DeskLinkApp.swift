@@ -68,8 +68,8 @@ struct DeskLinkApp: App {
     }
 
     private var libraryScene: some Scene {
-        WindowGroup(id: "desklink-library", for: UUID.self) { $computerID in
-            LibraryWindow(library: library, preferences: preferences, pasteboard: pasteboard, initialComputer: computerID)
+        WindowGroup(id: "desklink-library", for: LibraryWindowRequest.self) { $request in
+            LibraryWindow(library: library, preferences: preferences, pasteboard: pasteboard, initialRequest: request)
                 .environment(library)
                 .environment(tailnet)
                 .environment(sync)
@@ -77,6 +77,7 @@ struct DeskLinkApp: App {
                 #if targetEnvironment(macCatalyst)
                 .environment(monitorWindows)
                 .environment(availability)
+                .onAppear { availability.statusMenu.attach(library: library, privacy: privacy) }
                 #endif
                 .defaultAppStorage(preferences)
                 #if DEBUG && !targetEnvironment(macCatalyst)

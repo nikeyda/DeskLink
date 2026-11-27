@@ -21,8 +21,8 @@ final class MacLibraryStartup: NSObject {
         }
     }
 
-    func libraryAppeared(restoringConnection: Bool) {
-        if restoringConnection {
+    func libraryAppeared(openingRequestedContent: Bool) {
+        if openingRequestedContent {
             openRequestedContent()
         } else if state == .waitingForLibrary {
             state = .waitingForWindow

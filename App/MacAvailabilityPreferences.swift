@@ -9,10 +9,12 @@ final class MacAvailability {
     private static let keepAwakeKey = "mac.keepAwake"
     let remoteAccess: MacRemoteAccess
     let libraryStartup: MacLibraryStartup
+    let statusMenu: MacStatusMenu
 
     init(defaults: UserDefaults) {
         self.defaults = defaults
         libraryStartup = MacLibraryStartup(defaults: defaults)
+        statusMenu = MacStatusMenu(defaults: defaults)
         remoteAccess = MacRemoteAccess(defaults: defaults)
         if defaults.bool(forKey: Self.keepAwakeKey) { assertion = IdleSleepAssertion() }
     }
@@ -37,6 +39,7 @@ struct MacAvailabilityPreferences: View {
     @Environment(MacAvailability.self) private var availability
     @Environment(\.scenePhase) private var phase
     @AppStorage(MacLibraryStartup.preference) private var hideLibraryOnLaunch = false
+    @AppStorage(MacStatusMenu.preference) private var showStatusMenu = false
     @State private var loginStatus = SMAppService.mainApp.status
     @State private var loginError: String?
 
@@ -53,6 +56,9 @@ struct MacAvailabilityPreferences: View {
             if let loginError { Text(loginError).foregroundStyle(.red) }
             Toggle("启动时隐藏连接库", isOn: $hideLibraryOnLaunch)
                 .accessibilityIdentifier("preferences.hideLibraryOnLaunch")
+            Toggle("在菜单栏中显示", isOn: $showStatusMenu)
+                .accessibilityIdentifier("preferences.showStatusMenu")
+                .onChange(of: showStatusMenu) { availability.statusMenu.setVisible(showStatusMenu) }
             Toggle("保持这台 Mac 唤醒", isOn: $availability.keepAwake)
                 .accessibilityIdentifier("preferences.keepMacAwake")
             NavigationLink("异网接入") { MacRemoteAccessPreferences(access: availability.remoteAccess) }

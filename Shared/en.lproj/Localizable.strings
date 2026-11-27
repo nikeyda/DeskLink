@@ -4,6 +4,10 @@
 "外观" = "Appearance";
 "侧栏" = "Sidebar";
 "启动时隐藏连接库" = "Hide Connection Library on Launch";
+"在菜单栏中显示" = "Show in Menu Bar";
+"打开连接库" = "Open Connection Library";
+"在连接库中查看" = "View in Connection Library";
+"快速连接…" = "Quick Connect…";
 "显示在侧栏" = "Show in Sidebar";
 "附近" = "Nearby";
 "所有链接" = "All Links";

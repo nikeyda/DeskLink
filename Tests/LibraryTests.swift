@@ -2,6 +2,18 @@ import XCTest
 @testable import DeskLink
 
 final class LibraryTests: XCTestCase {
+    func testLibraryWindowRequestReadsExistingSavedWindowAndRoundTripsNewDestinations() throws {
+        let saved = UUID()
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        let existing = try encoder.encode(saved)
+        XCTAssertEqual(try decoder.decode(LibraryWindowRequest.self, from: existing), .connection(saved))
+        XCTAssertEqual(try encoder.encode(LibraryWindowRequest.connection(saved)), existing)
+        for request in [LibraryWindowRequest.quickConnect, .collection(.favorites), .collection(.folder("Studio"))] {
+            XCTAssertEqual(try decoder.decode(LibraryWindowRequest.self, from: encoder.encode(request)), request)
+        }
+    }
+
     func testAppleMediaEncryptionBeforeAndAfterTheFirstPicture() {
         XCTAssertEqual(ConnectionReport.encryptionLabel(.none, usesSSH: false, awaitingHighPerformancePicture: true), "正在协商")
         XCTAssertEqual(ConnectionReport.encryptionLabel(.none, usesSSH: false, awaitingHighPerformancePicture: false), "未加密")
