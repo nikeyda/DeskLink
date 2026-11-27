@@ -17,7 +17,6 @@ enum DesktopAuthentication: Int, Codable, CaseIterable, Sendable {
     var usesUsername: Bool { self == .automatic || self == .macUser || self == .raspberryPiRSA }
 }
 
-enum PictureQuality: String, Codable, CaseIterable, Sendable { case standard, adaptive, lossless }
 enum ColorDepth: Int, Codable, CaseIterable, Sendable { case low = 8, medium = 16, full = 32 }
 enum DisplayLayout: String, Codable, CaseIterable, Sendable { case single, combined, virtualPair }
 

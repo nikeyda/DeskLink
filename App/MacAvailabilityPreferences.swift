@@ -189,9 +189,13 @@ struct MacRemoteAccessPreferences: View {
                     case .ready(let endpoint):
                         LabeledContent("外部主机", value: endpoint.host)
                         LabeledContent("外部端口", value: String(endpoint.port))
-                        if let link = access.configuration?.service.link(to: endpoint) {
-                            ShareLink("分享连接链接", item: link)
-                                .accessibilityIdentifier("remoteAccess.share")
+                        if let service = access.configuration?.service,
+                           let link = service.link(to: endpoint), let observationLink = service.link(to: endpoint, observe: true) {
+                            Menu("分享连接链接", systemImage: "square.and.arrow.up") {
+                                ShareLink("打开连接", item: link)
+                                ShareLink("以仅观察打开", item: observationLink)
+                            }
+                            .accessibilityIdentifier("remoteAccess.share")
                         }
                     }
                     Button(automatic ? "关闭自动端口映射" : "停用手动地址") { access.apply(nil) }

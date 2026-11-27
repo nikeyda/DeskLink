@@ -154,6 +154,41 @@ final class SSHAndRouteTests: XCTestCase {
         }
     }
 
+    func testSharedOptionsKeepTheExactDesktopAndTunnelPorts() throws {
+        let target = try Endpoint(address: "[2001:db8::12]:5907")
+        for quality in PictureQuality.allCases {
+            let options = ConnectionRoute.SharedOptions(observe: true, quality: quality)
+            let url = try XCTUnwrap(ConnectionRoute.sharing(target, sshPort: 2243, server: "GATEWAY.fixture.invalid", options: options))
+            let expected = ConnectionRoute.sharedAddress(target, sshPort: 2243, server: "gateway.fixture.invalid", options: options)
+            XCTAssertEqual(try ConnectionRoute(url: url), expected)
+            let authority = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+            XCTAssertNil(authority.user)
+            XCTAssertNil(authority.password)
+        }
+        let confirmControl = try XCTUnwrap(URL(string: "desklink://host.fixture.invalid?observe=0"))
+        XCTAssertEqual(try ConnectionRoute(url: confirmControl),
+                       .sharedAddress(try Endpoint(address: "host.fixture.invalid"), sshPort: nil, server: nil,
+                                      options: .init(observe: false)))
+    }
+
+    func testSharedScopedIPv6AndMalformedOptions() throws {
+        let local = try Endpoint(address: "[fe80::17%en0]:5912")
+        let plain = try XCTUnwrap(ConnectionRoute.sharing(local, sshPort: nil))
+        XCTAssertEqual(plain.absoluteString, "desklink://[fe80::17%25en0]:5912")
+        XCTAssertEqual(try ConnectionRoute(url: plain), .address(local))
+        let shared = try XCTUnwrap(ConnectionRoute.sharing(local, sshPort: nil, options: .init(observe: true)))
+        XCTAssertEqual(try ConnectionRoute(url: shared),
+                       .sharedAddress(local, sshPort: nil, server: nil, options: .init(observe: true)))
+        for suffix in ["observe=maybe", "observe=true&observe=false", "quality=other", "quality=",
+                       "observe=true&server=unbound.invalid", "observe=true&ssh=0", "observe=true&password=secret",
+                       "observe=true&username=reader", "observe=true&guest=true"] {
+            let url = try XCTUnwrap(URL(string: "desklink://desktop.invalid?" + suffix))
+            XCTAssertThrowsError(try ConnectionRoute(url: url), suffix)
+        }
+        XCTAssertNil(ConnectionRoute.sharing(local, sshPort: nil, server: "unbound.invalid"))
+        XCTAssertNil(ConnectionRoute.sharing(local, sshPort: 0))
+    }
+
     func testShortcutAndHostLinksRemainDistinct() throws {
         let id = UUID()
         XCTAssertEqual(try ConnectionRoute(url: ConnectionRoute.savedURL(id)), .saved(id))

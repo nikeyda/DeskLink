@@ -9,12 +9,13 @@ enum MacAccessService: String, Codable, CaseIterable {
 
     var port: UInt16 { self == .ssh ? 22 : 5900 }
 
-    func link(to endpoint: Endpoint) -> URL? {
+    func link(to endpoint: Endpoint, observe: Bool = false) -> URL? {
+        let options = ConnectionRoute.SharedOptions(observe: observe ? true : nil)
         if self == .ssh {
             guard let desktop = try? Endpoint(address: endpoint.host) else { return nil }
-            return ConnectionRoute.sharing(desktop, sshPort: endpoint.port)
+            return ConnectionRoute.sharing(desktop, sshPort: endpoint.port, options: options)
         }
-        return ConnectionRoute.sharing(endpoint, sshPort: nil)
+        return ConnectionRoute.sharing(endpoint, sshPort: nil, options: options)
     }
 }
 

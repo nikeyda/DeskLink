@@ -20,10 +20,18 @@ import dnssd
         XCTAssertEqual(reopened.status, .ready(external))
         let ssh = try XCTUnwrap(reopened.configuration?.service.link(to: external))
         XCTAssertEqual(try ConnectionRoute(url: ssh), .secureAddress(try Endpoint(address: "2001:db8::10"), sshPort: 42422))
+        let observingSSH = try XCTUnwrap(reopened.configuration?.service.link(to: external, observe: true))
+        XCTAssertEqual(try ConnectionRoute(url: observingSSH),
+                       .sharedAddress(try Endpoint(address: "2001:db8::10"), sshPort: 42422, server: nil,
+                                      options: .init(observe: true)))
         reopened.apply(.manual(.screenSharing, external))
         let vnc = try XCTUnwrap(reopened.configuration?.service.link(to: external))
         XCTAssertEqual(try ConnectionRoute(url: vnc), .address(external))
-        let links = try JSONEncoder().encode(["ssh": ssh.absoluteString, "direct": vnc.absoluteString])
+        let observingVNC = try XCTUnwrap(reopened.configuration?.service.link(to: external, observe: true))
+        XCTAssertEqual(try ConnectionRoute(url: observingVNC),
+                       .sharedAddress(external, sshPort: nil, server: nil, options: .init(observe: true)))
+        let links = try JSONEncoder().encode(["ssh": ssh.absoluteString, "direct": vnc.absoluteString,
+                                             "sshObserve": observingSSH.absoluteString, "directObserve": observingVNC.absoluteString])
         let fixture = XCTAttachment(data: links, uniformTypeIdentifier: "public.json")
         fixture.name = "mac-remote-access-links.json"
         fixture.lifetime = .keepAlways

@@ -43,6 +43,7 @@ struct EditorRequest: Identifiable {
     var initialSSHServer: String?
     var suggestedSSHPort: UInt16?
     var link: DesktopLink?
+    var sharedOptions = ConnectionRoute.SharedOptions()
 
     static func from(_ link: DesktopLink, in archive: LibraryArchive, allowUnsavedHost: Bool) throws -> Self {
         if link.requestsGuest { throw LinkError.guestUnavailable }
@@ -279,7 +280,7 @@ struct ConnectionEditor: View {
         _username = State(initialValue: desktopUser)
         _password = State(initialValue: link?.sshPort == nil ? link?.password ?? "" : "")
         let display = (c?.display(for: .current) ?? DesktopDisplayPreferences()).resolved(for: .current)
-        let offeredQuality = display.quality
+        let offeredQuality = request.sharedOptions.quality ?? display.quality
         _quality = State(initialValue: offeredQuality)
         _colorDepth = State(initialValue: display.colorDepth ?? .full)
         _framebuffer = State(initialValue: c?.framebufferQuality ?? FramebufferQuality())
@@ -289,14 +290,14 @@ struct ConnectionEditor: View {
         let initialLayout = display.layout
         _layout = State(initialValue: initialLayout)
         _rememberMonitor = State(initialValue: display.rememberMonitor != false)
-        _observe = State(initialValue: link?.observe ?? c?.viewOnly ?? false)
+        _observe = State(initialValue: request.sharedOptions.observe ?? link?.observe ?? c?.viewOnly ?? false)
         _curtainsDisplayOnConnect = State(initialValue: c?.curtainsDisplayOnConnect == true)
         _curtainMessage = State(initialValue: c?.curtainMessage ?? "")
         let dimensions = display.fixedDesktop ?? .standard
         let initialSizing: DesktopSizing
         if initialLayout == .combined { initialSizing = .physical }
         else if initialLayout == .virtualPair || display.fixedDesktop != nil { initialSizing = .fixed }
-        else if display.matchWindow { initialSizing = .dynamic }
+        else if display.matchWindow || request.sharedOptions.quality == .adaptive { initialSizing = .dynamic }
         else { initialSizing = .physical }
         _sizing = State(initialValue: initialSizing)
         _customWidth = State(initialValue: String(dimensions.width))
@@ -601,6 +602,7 @@ struct ConnectionEditor: View {
                     Text(VNCConfiguration.VideoQualityMode.adaptive.title).tag(PictureQuality.adaptive)
                     Text(VNCConfiguration.VideoQualityMode.fullQuality.title).tag(PictureQuality.lossless)
                 }
+                .accessibilityIdentifier("connection.quality")
                 if quality != .adaptive {
                     Picker("颜色深度", selection: $colorDepth) {
                         Text("低").tag(ColorDepth.low)

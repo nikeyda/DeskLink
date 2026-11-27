@@ -1169,7 +1169,10 @@ struct LibraryWindow: View {
                 }
             }
         }
-        if let url = ConnectionRoute.sharing(item.endpoint, sshPort: item.ssh?.port, server: item.ssh?.server) {
+        let quality = item.display(for: .current).resolved(for: .current).quality
+        let options = ConnectionRoute.SharedOptions(observe: item.viewOnly ? true : nil,
+                                                    quality: quality == .standard ? nil : quality)
+        if let url = ConnectionRoute.sharing(item.endpoint, sshPort: item.ssh?.port, server: item.ssh?.server, options: options) {
             ShareLink(item: url) { Label("链接", systemImage: "square.and.arrow.up") }
         }
         Button("删除", role: .destructive) { deletion = item }
@@ -1273,6 +1276,9 @@ struct LibraryWindow: View {
         case .address(let endpoint): return EditorRequest(purpose: .quick, initialAddress: endpoint.address)
         case .secureAddress(let endpoint, let port, let server):
             return EditorRequest(purpose: .quick, initialAddress: endpoint.address, initialSSHPort: port, initialSSHServer: server)
+        case .sharedAddress(let endpoint, let port, let server, let options):
+            return EditorRequest(purpose: .quick, initialAddress: endpoint.address, initialSSHPort: port,
+                                 initialSSHServer: server, sharedOptions: options)
         case .desktopLink(let link):
             #if targetEnvironment(macCatalyst)
             return try EditorRequest.from(link, in: library.archive, allowUnsavedHost: true)
