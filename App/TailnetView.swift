@@ -25,11 +25,13 @@ struct TailnetView: View {
                 ContentUnavailableView {
                     Label("访问 Tailscale 设备", systemImage: "point.3.connected.trianglepath.dotted")
                 } description: {
-                    Text("关联 Tailscale 账户以发现设备。连接前，请让两台设备加入同一网络，并在远端开启屏幕共享或 VNC。")
+                    Text("先让这台设备和要控制的电脑加入同一 Tailscale 网络，并在远端开启屏幕共享或 VNC。关联后，这里会显示可用的设备目录。")
                 } actions: {
-                    Button("关联账户") { editing = true }
+                    Button("关联设备目录") { editing = true }
                         .buttonStyle(.borderedProminent)
                         .accessibilityIdentifier("tailnet.linkAccount")
+                    Link("设置 Tailscale", destination: URL(string: "https://tailscale.com/docs/install")!)
+                        .accessibilityIdentifier("tailnet.setup")
                 }
             } else {
                 devicesCollection
@@ -389,9 +391,9 @@ private struct TailnetLogin: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("Tailnet ID", text: $tailnet)
-                    TextField("Client ID", text: $identifier)
-                    SecureField("Client Secret", text: $secret)
+                    TextField("Tailnet ID", text: $tailnet).accessibilityIdentifier("tailnet.login.tailnet")
+                    TextField("Client ID", text: $identifier).accessibilityIdentifier("tailnet.login.client")
+                    SecureField("Client Secret", text: $secret).accessibilityIdentifier("tailnet.login.secret")
                     Toggle("记住凭据", isOn: $remember)
                 } footer: {
                     VStack(alignment: .leading, spacing: 6) {
@@ -404,7 +406,7 @@ private struct TailnetLogin: View {
             }
             .autocorrectionDisabled()
             .textInputAutocapitalization(.never)
-            .navigationTitle("Tailscale")
+            .navigationTitle("关联 Tailscale 目录")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -417,7 +419,9 @@ private struct TailnetLogin: View {
                             } catch is CancellationError {
                             } catch { self.error = TailnetDirectory.authErrorMessage(error) }
                         }
-                    }.disabled(directory.loading || secret.isEmpty || (try? TailnetAccount(tailnet: tailnet, clientID: identifier)) == nil)
+                    }
+                    .disabled(directory.loading || secret.isEmpty || (try? TailnetAccount(tailnet: tailnet, clientID: identifier)) == nil)
+                    .accessibilityIdentifier("tailnet.login.submit")
                 }
             }
         }

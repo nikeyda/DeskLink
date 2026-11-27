@@ -15,6 +15,24 @@ import XCTest
         XCTAssertNil(nearby.searchError)
     }
 
+    func testLocalIdentityAcceptsShortBonjourHostAndDoesNotGuessFromAnotherDomain() {
+        let localAddresses: Set<String> = ["192.0.2.12"]
+        XCTAssertTrue(NearbyLocalIdentity.matches(host: "studio-Mac.LOCAL.", addresses: [], localHost: "Studio-Mac",
+                                                 localAddresses: localAddresses))
+        XCTAssertFalse(NearbyLocalIdentity.matches(host: "studio-mac.local.", addresses: ["192.0.2.15"],
+                                                  localHost: "studio-mac.example.org", localAddresses: localAddresses))
+        XCTAssertTrue(NearbyLocalIdentity.matches(host: "renamed.local.", addresses: ["192.0.2.12"],
+                                                 localHost: "studio-mac.example.org", localAddresses: localAddresses))
+    }
+
+    func testNearbySearchMatchesTheDisplayNameAndResolvedAddress() {
+        let service = NetService(domain: "local.", type: "_rfb._tcp.", name: "Design Computer")
+        let entry = NearbyComputer(service: service, address: "studio-mac.local:5900")
+        XCTAssertTrue(entry.matches(LibrarySearchQuery("design studio-mac")))
+        XCTAssertTrue(entry.matches(LibrarySearchQuery("5900")))
+        XCTAssertFalse(entry.matches(LibrarySearchQuery("studio-mac 5901")))
+    }
+
     func testLocalBonjourComputerAppearsResolvesAndDisappears() async throws {
         let name = "Telescope-" + UUID().uuidString
         let port: UInt16 = 15276
@@ -51,8 +69,8 @@ import XCTest
     #if targetEnvironment(macCatalyst)
     func testThisMacIsNotPublishedWhileOtherDiscoveredResultsRemainUsable() async throws {
         let token = UUID().uuidString.prefix(8)
-        let localName = "Local-(token)"
-        let visibleName = "Visible-(token)"
+        let localName = "Local-\(token)"
+        let visibleName = "Visible-\(token)"
         var inspectedLocal = false
         let browser = NearbyComputers(localFilter: { service in
             if service.name == localName {
@@ -91,6 +109,33 @@ import XCTest
         browser.select(visible) { selected = $0 }
         try await waitFor { selected != nil || browser.errorMessage != nil }
         XCTAssertEqual(selected?.endpoint.port, 15277)
+    }
+
+    func testBuiltInScreenSharingStaysOutOfTheDefaultMacBrowser() async throws {
+        guard let name = ProcessInfo.processInfo.environment["DESKLINK_LIVE_SCREEN_SHARING_NAME"] else {
+            throw XCTSkip("Set DESKLINK_LIVE_SCREEN_SHARING_NAME to the Mac's advertised Screen Sharing service.")
+        }
+        let unfiltered = NearbyComputers(localFilter: nil)
+        let browser = NearbyComputers()
+        unfiltered.start()
+        browser.start()
+        defer {
+            unfiltered.stop()
+            browser.stop()
+        }
+        try await waitFor { unfiltered.entries.contains { $0.name == name } }
+        let service = try XCTUnwrap(unfiltered.entries.first { $0.name == name })
+        var resolved: Computer?
+        unfiltered.select(service) { resolved = $0 }
+        let deadline = Date().addingTimeInterval(12)
+        repeat {
+            XCTAssertFalse(browser.entries.contains { $0.id == service.id })
+            if resolved != nil, !browser.isSearching { break }
+            try await Task.sleep(for: .milliseconds(100))
+        } while Date() < deadline
+        XCTAssertEqual(resolved?.endpoint.port, 5900)
+        XCTAssertNil(browser.searchError)
+        XCTAssertFalse(browser.isSearching)
     }
     #endif
 

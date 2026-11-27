@@ -10,6 +10,10 @@ struct NearbyComputer: Identifiable {
     var id: String { Self.id(for: service) }
     var name: String { service.name }
 
+    func matches(_ query: LibrarySearchQuery) -> Bool {
+        query.matches([name, address])
+    }
+
     static func id(for service: NetService) -> String {
         service.domain + "/" + service.type + "/" + service.name
     }
@@ -25,14 +29,18 @@ enum NearbyLocalIdentity {
                 return numericHost(address)
             }
         }
-        if !addresses.isEmpty {
-            let local = interfaceAddresses()
-            if addresses.allSatisfy(local.contains) { return true }
-        }
-        let current = ProcessInfo.processInfo.hostName.trimmingCharacters(in: CharacterSet(charactersIn: "."))
-        guard current.lowercased().hasSuffix(".local") else { return false }
-        return service.hostName?.trimmingCharacters(in: CharacterSet(charactersIn: "."))
-            .caseInsensitiveCompare(current) == .orderedSame
+        return matches(host: service.hostName, addresses: addresses, localHost: ProcessInfo.processInfo.hostName,
+                       localAddresses: addresses.isEmpty ? [] : interfaceAddresses())
+    }
+
+    static func matches(host: String?, addresses: [String], localHost: String, localAddresses: Set<String>) -> Bool {
+        if !addresses.isEmpty && addresses.allSatisfy(localAddresses.contains) { return true }
+        let dots = CharacterSet(charactersIn: ".")
+        var current = localHost.trimmingCharacters(in: dots).lowercased()
+        guard !current.isEmpty else { return false }
+        // A Mac can report an unqualified hostname while Bonjour appends .local.
+        if !current.contains(".") { current += ".local" }
+        return current.hasSuffix(".local") && host?.trimmingCharacters(in: dots).lowercased() == current
     }
 
     static func interfaceAddresses() -> Set<String> {

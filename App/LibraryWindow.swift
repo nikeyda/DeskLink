@@ -582,32 +582,16 @@ struct LibraryWindow: View {
 
     private var librarySidebar: some View {
         List(selection: $page) {
-            if !hiddenItems.contains(.nearby) {
-                Label("附近", systemImage: "bonjour")
-                    .badge(nearbyCount)
-                    .accessibilityValue(nearbyCount == 0 ? "" : nearbyCount.formatted())
-                    .accessibilityIdentifier("library.nearby")
-                    .tag(CollectionPage.nearby)
-            }
-            if !hiddenItems.contains(.tailscale) {
-                #if targetEnvironment(macCatalyst)
-                Label {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Tailscale")
-                        Text(tailnet.account?.tailnet ?? String(localized: "未关联"))
-                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                } icon: { Image(systemName: "point.3.connected.trianglepath.dotted") }
-                .tag(CollectionPage.tailscale)
-                .accessibilityIdentifier("library.tailscale")
-                #else
-                Label("Tailscale", systemImage: "network").tag(CollectionPage.tailscale)
-                #endif
-            }
             #if targetEnvironment(macCatalyst)
-            Label("异网接入", systemImage: "antenna.radiowaves.left.and.right")
-                .tag(CollectionPage.remoteAccess)
-                .accessibilityIdentifier("library.remoteAccess")
+            if !hiddenItems.isSuperset(of: [.nearby, .tailscale]) {
+                Section("发现设备") {
+                    nearbySidebarRow
+                    tailscaleSidebarRow
+                }
+            }
+            #else
+            nearbySidebarRow
+            tailscaleSidebarRow
             #endif
             if !hiddenItems.isSuperset(of: .linkSection) {
                 Section("链接") {
@@ -632,6 +616,13 @@ struct LibraryWindow: View {
                     .accessibilityIdentifier("library.all")
                 folderRows(in: .custom)
             }
+            #if targetEnvironment(macCatalyst)
+            Section("共享本机") {
+                Label("异网接入", systemImage: "antenna.radiowaves.left.and.right")
+                    .tag(CollectionPage.remoteAccess)
+                    .accessibilityIdentifier("library.remoteAccess")
+            }
+            #endif
         }
         #if !targetEnvironment(macCatalyst)
         .navigationTitle(AppName.display)
@@ -639,10 +630,34 @@ struct LibraryWindow: View {
         .navigationSplitViewColumnWidth(min: 165, ideal: 205, max: 290)
     }
 
+    @ViewBuilder private var nearbySidebarRow: some View {
+        if !hiddenItems.contains(.nearby) {
+            Label("附近", systemImage: "bonjour")
+                .badge(nearbyCount)
+                .accessibilityValue(nearbyCount == 0 ? "" : nearbyCount.formatted())
+                .accessibilityIdentifier("library.nearby")
+                .tag(CollectionPage.nearby)
+        }
+    }
+
+    @ViewBuilder private var tailscaleSidebarRow: some View {
+        if !hiddenItems.contains(.tailscale) {
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Tailscale")
+                    Text(verbatim: tailnet.account?.tailnet ?? String(localized: "未关联"))
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+            } icon: { Image(systemName: "point.3.connected.trianglepath.dotted") }
+            .tag(CollectionPage.tailscale)
+            .accessibilityIdentifier("library.tailscale")
+        }
+    }
+
     @ViewBuilder private var unifiedResults: some View {
         let query = unifiedQuery
         let stored = query.storedMatches(in: library.archive.computers)
-        let local = hiddenItems.contains(.nearby) ? [] : nearby.entries.filter { query.matches([$0.name]) }
+        let local = hiddenItems.contains(.nearby) ? [] : nearby.entries.filter { $0.matches(query) }
         let peers = hiddenItems.contains(.tailscale) ? [] : tailnet.searchMatches(query)
         if stored.isEmpty && local.isEmpty && peers.isEmpty {
             emptySearch
@@ -658,7 +673,7 @@ struct LibraryWindow: View {
                             Button {
                                 openNearbySearchResult(item, quality: nil)
                             } label: {
-                                searchLabel(item.name, symbol: "bonjour")
+                                searchLabel(item.name, address: item.address, symbol: "desktopcomputer")
                             }
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("library.search.nearby." + item.id)
@@ -762,7 +777,8 @@ struct LibraryWindow: View {
                         search: categorySearch, listLayout: listLayout, gridColumns: gridColumns,
                         select: openDiscovered, save: saveDiscovered)
         } else if page == .nearby {
-            let results = nearby.entries.filter { categorySearch.isEmpty || $0.name.localizedCaseInsensitiveContains(categorySearch) }
+            let query = LibrarySearchQuery(categorySearch)
+            let results = nearby.entries.filter { $0.matches(query) }
             Group {
                 if let error = nearby.searchError {
                     ContentUnavailableView {
@@ -786,7 +802,7 @@ struct LibraryWindow: View {
                     }
                 } else if results.isEmpty && nearby.isSearching {
                     ProgressView("正在查找附近的电脑…")
-                } else if results.isEmpty && !categorySearch.isEmpty && !nearby.entries.isEmpty {
+                } else if results.isEmpty && !query.isEmpty && !nearby.entries.isEmpty {
                     emptySearch
                 } else if results.isEmpty {
                     ContentUnavailableView {
@@ -1068,11 +1084,32 @@ struct LibraryWindow: View {
         return page != .nearby && page != .tailscale
     }
 
+    private var showsDiscoveryLayout: Bool {
+        page == .nearby || (page == .tailscale && tailnet.account != nil)
+    }
+
     private var libraryToolbarItems: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             Button { editor = EditorRequest(purpose: .quick) } label: { Label("快速连接", systemImage: "bolt") }
                 .keyboardShortcut("k", modifiers: .command)
                 .accessibilityIdentifier("library.quick")
+            #if targetEnvironment(macCatalyst)
+            if page == .nearby && !nearby.entries.isEmpty {
+                Button { nearby.retry() } label: { Label("重新查找附近的电脑", systemImage: "arrow.clockwise") }
+                    .accessibilityIdentifier("nearby.refresh")
+            }
+            if showsDiscoveryLayout {
+                Menu {
+                    Picker("显示方式", selection: $listLayout) {
+                        Label("网格", systemImage: "square.grid.2x2").tag(false)
+                        Label("列表", systemImage: "list.bullet").tag(true)
+                    }
+                } label: {
+                    Label("显示方式", systemImage: listLayout ? "list.bullet" : "square.grid.2x2")
+                }
+                .accessibilityIdentifier("library.discoveryLayout")
+            }
+            #endif
             Button { newEntry() } label: { Label("新建连接", systemImage: "plus") }
                 .accessibilityIdentifier("library.new")
             Button { downloads = true } label: { Label("文件传输", systemImage: "arrow.up.arrow.down") }
@@ -1086,7 +1123,12 @@ struct LibraryWindow: View {
                         showFolder = true
                     } label: { Label("新建文件夹", systemImage: "folder.badge.plus") }
                 }
-                if supportsLibraryOrganization || page == .nearby || (page == .tailscale && tailnet.account != nil) {
+                #if targetEnvironment(macCatalyst)
+                let offersLayoutInMenu = supportsLibraryOrganization
+                #else
+                let offersLayoutInMenu = supportsLibraryOrganization || showsDiscoveryLayout
+                #endif
+                if offersLayoutInMenu {
                     Button { listLayout.toggle() } label: {
                         Label(listLayout ? "网格" : "列表", systemImage: listLayout ? "square.grid.2x2" : "list.bullet")
                     }

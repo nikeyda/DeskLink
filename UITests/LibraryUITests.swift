@@ -276,6 +276,39 @@ final class LibraryUITests: XCTestCase {
         add(capture)
     }
 
+    func testDiscoveryDistinguishesTailscaleSetupFromDirectoryAuthorization() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]
+        app.launch()
+
+        #if targetEnvironment(macCatalyst)
+        selectCollection("library.nearby", in: app)
+        let layout = app.buttons["library.discoveryLayout"].firstMatch
+        XCTAssertTrue(layout.waitForExistence(timeout: 8))
+        layout.click()
+        let listItem = app.menuItems["列表"].firstMatch
+        if listItem.exists { listItem.click() } else { app.buttons["列表"].firstMatch.click() }
+        attachLibraryScreenshot(app, name: "Mac Nearby discovery")
+        #endif
+
+        selectCollection("library.tailscale", in: app)
+        let link = app.buttons["tailnet.linkAccount"].firstMatch
+        XCTAssertTrue(link.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "tailnet.setup").firstMatch.exists)
+        #if targetEnvironment(macCatalyst)
+        XCTAssertTrue(layout.waitForNonExistence(timeout: 5))
+        #endif
+        attachLibraryScreenshot(app, name: "Tailscale discovery setup")
+        link.tap()
+        XCTAssertTrue(app.textFields["tailnet.login.tailnet"].firstMatch.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.textFields["tailnet.login.client"].firstMatch.exists)
+        XCTAssertTrue(app.secureTextFields["tailnet.login.secret"].firstMatch.exists)
+        XCTAssertFalse(app.buttons["tailnet.login.submit"].firstMatch.isEnabled)
+        app.buttons["取消"].firstMatch.tap()
+        XCTAssertTrue(link.waitForExistence(timeout: 5))
+    }
+
     #if targetEnvironment(simulator)
     func testOpeningScreensDirectoryArchiveReportsPreservedFolders() throws {
         let app = XCUIApplication()
