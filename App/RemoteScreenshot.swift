@@ -38,7 +38,9 @@ struct RemoteScreenshot: FileDocument {
         guard let encoder = CGImageDestinationCreateWithData(output, UTType.png.identifier as CFString, 1, nil) else {
             throw CocoaError(.fileWriteUnknown)
         }
-        CGImageDestinationAddImage(encoder, image, nil)
+        // Screenshots use one image pixel per point without resampling the remote framebuffer.
+        let properties = [kCGImagePropertyDPIWidth as String: 72, kCGImagePropertyDPIHeight as String: 72]
+        CGImageDestinationAddImage(encoder, image, properties as CFDictionary)
         guard CGImageDestinationFinalize(encoder) else { throw CocoaError(.fileWriteUnknown) }
         return output as Data
     }

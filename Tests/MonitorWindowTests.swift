@@ -33,6 +33,9 @@ import RFBProtocol
         func decoded(_ screen: RemoteScreenshot) throws -> CGImage {
             let source = try XCTUnwrap(CGImageSourceCreateWithData(screen.data as CFData, nil))
             XCTAssertEqual(CGImageSourceGetType(source) as String?, "public.png")
+            let properties = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any])
+            XCTAssertEqual(properties[kCGImagePropertyDPIWidth as String] as? Double, 72)
+            XCTAssertEqual(properties[kCGImagePropertyDPIHeight as String] as? Double, 72)
             return try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
         }
         let context = CIContext()
@@ -49,10 +52,15 @@ import RFBProtocol
         XCTAssertEqual(pixel(all, x: 8, yFromTop: 2), [0, 0, 0, 255])
         XCTAssertEqual(pixel(all, x: 8, yFromTop: 16), [0, 0, 255, 255])
         XCTAssertEqual(pixel(all, x: 48, yFromTop: 4), [255, 0, 0, 255])
-        let child = try decoded(RemoteScreenshot(frame: stream, region: right))
+        let childScreenshot = try RemoteScreenshot(frame: stream, region: right)
+        let child = try decoded(childScreenshot)
         XCTAssertEqual(child.width, 32)
         XCTAssertEqual(child.height, 16)
         XCTAssertEqual(pixel(child, x: 1, yFromTop: 1), [255, 0, 0, 255])
+        let attachment = XCTAttachment(data: childScreenshot.data, uniformTypeIdentifier: "public.png")
+        attachment.name = "Remote screenshot native pixels"
+        attachment.lifetime = .keepAlways
+        add(attachment)
         let standardCrop = CGRect(x: 0, y: 8, width: 32, height: 16)
         let standard = try decoded(RemoteScreenshot(frame: .image(all), region: standardCrop))
         XCTAssertEqual(standard.width, 32)
