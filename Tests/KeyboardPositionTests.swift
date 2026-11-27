@@ -1,4 +1,5 @@
 import XCTest
+import RFBProtocol
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -251,6 +252,54 @@ import UIKit
         XCTAssertEqual(hex(down), "1001e30284353ff6fd16a6c14942bbfb0592")
         XCTAssertEqual(hex(up), "1001fa07d8b50b9c107ee92c7f174df3e81d")
         XCTAssertEqual(cipher.keyMessage(down: true, keysym: 0x61), AppleEncryptedInput.keyMessage(down: true, keysym: 0x61, key: key))
+    }
+
+    func testHardwareAndSoftwareLegacyModesSendTheirOwnRFBKeysyms() {
+        @MainActor
+        final class Mapping {
+            var hardwareLegacy = true
+            var softwareLegacy = false
+        }
+        let mapping = Mapping()
+        var packets: [Data] = []
+        let handler = KeyboardInputHandler(
+            sendKeyEvent: { down, symbol in
+                packets.append(ClientMessage.keyEvent(downFlag: down, key: symbol).serialize())
+            }, usesLegacyHardwareMapping: { mapping.hardwareLegacy },
+            usesLegacySoftwareMapping: { mapping.softwareLegacy }
+        ).notifyingKeyDown {}
+        let keyboard = HardwareKeyboardController(keyboardHandler: handler)
+        keyboard.keyRepeat = VNCKeyRepeat(enabled: false)
+
+        XCTAssertTrue(keyboard.press(usage: 0x1A, keysym: 0x0100_03C9))
+        mapping.hardwareLegacy = false
+        XCTAssertTrue(keyboard.release(usage: 0x1A))
+        handler.typeText("ω")
+        mapping.softwareLegacy = true
+        XCTAssertTrue(keyboard.press(usage: 0x1A, keysym: 0x0100_03C9))
+        keyboard.releaseAll()
+        handler.typeText("яĄ€🙂\t")
+        mapping.hardwareLegacy = true
+        handler.typeHardwareText("€")
+        mapping.softwareLegacy = false
+        handler.typeText("€")
+
+        func tap(_ bytes: [UInt8]) -> [Data] {
+            [Data([4, 1, 0, 0] + bytes), Data([4, 0, 0, 0] + bytes)]
+        }
+        let expected: [[UInt8]] = [
+            [0, 0, 0x07, 0xF9],     // Hardware ω with Legacy enabled.
+            [1, 0, 0x03, 0xC9],     // Software ω with Unicode enabled.
+            [1, 0, 0x03, 0xC9],     // Hardware ω with Unicode enabled.
+            [0, 0, 0x06, 0xD1],     // Legacy Cyrillic, Latin-2 and Euro keysyms.
+            [0, 0, 0x01, 0xA1],
+            [0, 0, 0x20, 0xAC],
+            [1, 1, 0xF6, 0x42],     // Character with no legacy alias.
+            [0, 0, 0xFF, 0x09],     // Tab remains a navigation key.
+            [0, 0, 0x20, 0xAC],     // Committed hardware text uses Hardware mode.
+            [1, 0, 0x20, 0xAC],
+        ]
+        XCTAssertEqual(packets, expected.flatMap { tap($0) })
     }
 
     func testTigerVNCFirstKeyCompatibilityIsOptInAndSurvivesArchive() throws {

@@ -2,12 +2,6 @@ import Foundation
 import RFBTransport
 import rootshellVNC
 
-private enum ScreensHardwareKeyboardMode: Int {
-    case keystrokes = 0
-    case unicode = 1
-    case legacy = 2
-}
-
 private extension FramebufferQuality.Scope {
     init?(screensPolicy: Int) {
         switch screensPolicy {
@@ -140,6 +134,8 @@ struct ScreensArchive: Decodable {
         let adaptiveQualityMode: Int?
         let desktopDisplayPreferences: ClientDisplayProfiles?
         let hardwareKeyboardMode: Int?
+        let softwareKeyboardMode: Int?
+        let useLegacyKeyboardSystem: Bool?
         let permuteCmdAndCtrlModifierKeys: Bool?
         let showLocalCursor: Bool?
         let useFallbackCursor: Bool?
@@ -224,11 +220,11 @@ struct ScreensArchive: Decodable {
                 }
                 result.pcScrollSpeed = speed == .standard ? nil : speed
             }
-            let keyboardMode = hardwareKeyboardMode.flatMap(ScreensHardwareKeyboardMode.init(rawValue:))
-            result.usesMacHardwareKeyPositions = operatingSystem == 1 && (keyboardMode == nil || keyboardMode == .keystrokes)
-            // Keep the legacy selection for export. Sessions currently use
-            // character input when a legacy profile is opened.
-            result.screensLegacyHardwareMapping = keyboardMode == .legacy ? true : nil
+            let oldMode: DesktopKeyboardMode? = useLegacyKeyboardSystem == true ? .legacy : nil
+            let hardwareDefault: DesktopKeyboardMode = operatingSystem == 1 ? .keystrokes : .unicode
+            let hardware = hardwareKeyboardMode.flatMap(DesktopKeyboardMode.init(rawValue:)) ?? oldMode ?? hardwareDefault
+            result.hardwareKeyboardMode = hardware == .keystrokes && operatingSystem != 1 ? .unicode : hardware
+            result.softwareKeyboardMode = softwareKeyboardMode.flatMap(DesktopKeyboardMode.init(rawValue:)) ?? oldMode
             result.viewOnly = startInObserveMode
             // The application-wide clipboard preference still applies when sharing was permitted.
             result.automaticallySharesClipboard = useSharedClipboard ? nil : false
@@ -344,10 +340,9 @@ extension ScreensArchive {
             record["port"] = Int(computer.endpoint.port)
             record["operatingSystem"] = system
             record["authenticationMethod"] = authentication
-            let keyboardMode: ScreensHardwareKeyboardMode
-            if system == 1 && computer.usesMacHardwareKeyPositions == true { keyboardMode = .keystrokes }
-            else { keyboardMode = computer.screensLegacyHardwareMapping == true ? .legacy : .unicode }
-            record["hardwareKeyboardMode"] = keyboardMode.rawValue
+            let hardware = computer.hardwareKeyboardMode
+            record["hardwareKeyboardMode"] = (system != 1 && hardware == .keystrokes ? .unicode : hardware).rawValue
+            record["softwareKeyboardMode"] = (computer.softwareKeyboardMode ?? .unicode).rawValue
             func user(_ name: String?, role: String) -> [String: Any] {
                 let identity = "local.nikey.desklink/screens/" + id + "/" + role + "/" + (name ?? "")
                 var entry: [String: Any] = ["id": UUID.derived(from: identity).uuidString, "username": NSNull()]

@@ -546,8 +546,9 @@ final class HardwareKeyboardController {
         }
         // Dead keys and some JIS keys produce no local character before composition.
         let target = remoteUsage ?? usage
-        let positionOnly = keysym == 0 && keyboardHandler.forwardsPhysicalKey(usage: target)
-        guard let transition = state.press(usage: usage, keysym: keysym, allowEmptyKeysym: positionOnly) else {
+        let usesPosition = keyboardHandler.forwardsPhysicalKey(usage: target)
+        let remoteKeysym = usesPosition ? keysym : keyboardHandler.hardwareKeysym(keysym)
+        guard let transition = state.press(usage: usage, keysym: remoteKeysym, allowEmptyKeysym: usesPosition) else {
             // UIKit and UIKeyCommand can both report OS repeat callbacks. The
             // controller owns repeat timing, so duplicate begins are consumed.
             return state.contains(usage)
@@ -555,7 +556,7 @@ final class HardwareKeyboardController {
         remappedUsages[usage] = remoteUsage
         send(transition, usage: usage)
         // A physical-key host is a USB keyboard; the remote OS repeats held keys.
-        if keyRepeat.enabled, Self.isRepeatable(target), !keyboardHandler.forwardsPhysicalKey(usage: target) {
+        if keyRepeat.enabled, Self.isRepeatable(target), !usesPosition {
             startRepeat(for: usage)
         }
         return true

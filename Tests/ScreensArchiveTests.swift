@@ -320,6 +320,7 @@ final class ScreensArchiveTests: XCTestCase {
             let saved = try LibraryArchive.read(imported.encoded())
             let computer = try XCTUnwrap(saved.computers.first)
             XCTAssertEqual(computer.configuration.usesMacHardwareKeyPositions, usesPositions)
+            XCTAssertEqual(computer.configuration.usesLegacyHardwareKeyboardMapping, wireMode == 2)
             let exported = try ScreensArchive.export(saved, knownMacs: [], sharedClipboard: false)
             let document = try XCTUnwrap(JSONSerialization.jsonObject(with: exported) as? [String: Any])
             let entries = try XCTUnwrap(document["screens"] as? [[String: Any]])
@@ -330,6 +331,33 @@ final class ScreensArchiveTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(ScreensArchive.convert(unspecified).computers.first).configuration.usesMacHardwareKeyPositions)
         let pc = try modified(fixture: "screens-generic") { $0["hardwareKeyboardMode"] = 0 }
         XCTAssertFalse(try XCTUnwrap(ScreensArchive.convert(pc).computers.first).configuration.usesMacHardwareKeyPositions)
+    }
+
+    func testHardwareAndSoftwareKeyboardModesAreIndependentAcrossArchives() throws {
+        let input = try modified {
+            $0["hardwareKeyboardMode"] = 1
+            $0["softwareKeyboardMode"] = 2
+            $0["useLegacyKeyboardSystem"] = true
+        }
+        let imported = try ScreensArchive.convert(input)
+        let native = try LibraryArchive.read(imported.encoded())
+        let computer = try XCTUnwrap(native.computers.first)
+        XCTAssertEqual(computer.hardwareKeyboardMode, .unicode)
+        XCTAssertFalse(computer.configuration.usesLegacyHardwareKeyboardMapping)
+        XCTAssertTrue(computer.configuration.usesLegacySoftwareKeyboardMapping)
+        let exported = try ScreensArchive.export(native, knownMacs: [], sharedClipboard: false)
+        let roundTrip = try XCTUnwrap(ScreensArchive.convert(exported).computers.first)
+        XCTAssertEqual(roundTrip.hardwareKeyboardMode, .unicode)
+        XCTAssertEqual(roundTrip.softwareKeyboardMode, .legacy)
+
+        let old = try modified {
+            $0.removeValue(forKey: "hardwareKeyboardMode")
+            $0.removeValue(forKey: "softwareKeyboardMode")
+            $0["useLegacyKeyboardSystem"] = true
+        }
+        let upgraded = try XCTUnwrap(ScreensArchive.convert(old).computers.first)
+        XCTAssertEqual(upgraded.hardwareKeyboardMode, .legacy)
+        XCTAssertEqual(upgraded.softwareKeyboardMode, .legacy)
     }
 
     func testPerComputerCursorAndDragDelaySurviveBothArchiveFormats() throws {

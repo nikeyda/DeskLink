@@ -175,7 +175,9 @@ extension Computer {
         case .raspberryPiRSA: .rsaAES
         }
         configuration.preparesTigerVNCKeyboard = preparesTigerVNCKeyboard == true
-        configuration.usesMacHardwareKeyPositions = usesMacHardwareKeyPositions == true
+        configuration.usesMacHardwareKeyPositions = hardwareKeyboardMode == .keystrokes
+        configuration.usesLegacyHardwareKeyboardMapping = hardwareKeyboardMode == .legacy
+        configuration.usesLegacySoftwareKeyboardMapping = softwareKeyboardMode == .legacy
         configuration.swapsHardwareCommandAndControl = swapsHardwareCommandAndControl == true
         let localCursor = showsLocalCursor ?? (preferences.object(forKey: "connection.clientCursor") as? Bool ?? true)
         configuration.cursorRendering = localCursor && !configuration.disabledPortableCodecs.contains(.cursor) ? .client : .server
@@ -230,7 +232,10 @@ struct ConnectionEditor: View {
     @State private var touchHoldDuration: TimeInterval?
     @AppStorage("gesture.holdDuration") private var defaultHoldDuration = RemoteTouchGestureConfiguration.defaultHoldDuration
     @State private var preparesTigerVNCKeyboard: Bool
-    @State private var macHardwareKeyPositions: Bool
+    @State private var hardwareKeyboardMode: DesktopKeyboardMode
+    #if !targetEnvironment(macCatalyst)
+    @State private var legacySoftwareKeyboard: Bool
+    #endif
     @State private var swapsHardwareCommandAndControl: Bool
     @State private var momentumScrolling: Bool
     @State private var allowsRemoteBell: Bool
@@ -309,7 +314,10 @@ struct ConnectionEditor: View {
         _usesFallbackCursor = State(initialValue: c?.usesFallbackCursor == true)
         _touchHoldDuration = State(initialValue: c?.touchHoldDuration)
         _preparesTigerVNCKeyboard = State(initialValue: c?.preparesTigerVNCKeyboard == true)
-        _macHardwareKeyPositions = State(initialValue: c.map { $0.usesMacHardwareKeyPositions == true } ?? true)
+        _hardwareKeyboardMode = State(initialValue: c?.hardwareKeyboardMode ?? .keystrokes)
+        #if !targetEnvironment(macCatalyst)
+        _legacySoftwareKeyboard = State(initialValue: c?.softwareKeyboardMode == .legacy)
+        #endif
         _swapsHardwareCommandAndControl = State(initialValue: c?.swapsHardwareCommandAndControl == true)
         _momentumScrolling = State(initialValue: c?.momentumScrolling != false)
         _allowsRemoteBell = State(initialValue: c?.allowsRemoteBell != false)
@@ -720,12 +728,21 @@ struct ConnectionEditor: View {
                 }
                 .disabled(observe)
                 .accessibilityIdentifier("connection.pcScrollSpeed")
-                Picker("Mac 实体键盘", selection: $macHardwareKeyPositions) {
-                    Text("按远端键位输入").tag(true)
-                    Text("发送本地字符").tag(false)
+                Picker("实体键盘", selection: $hardwareKeyboardMode) {
+                    Text("按远端键位输入（Mac）").tag(DesktopKeyboardMode.keystrokes)
+                    Text("发送本地字符").tag(DesktopKeyboardMode.unicode)
+                    Text("旧版键盘映射").tag(DesktopKeyboardMode.legacy)
                 }
                 .disabled(observe)
                 .accessibilityIdentifier("connection.hardwareKeyboard")
+                #if !targetEnvironment(macCatalyst)
+                Picker("屏幕键盘", selection: $legacySoftwareKeyboard) {
+                    Text("发送本地字符").tag(false)
+                    Text("旧版键盘映射").tag(true)
+                }
+                .disabled(observe)
+                .accessibilityIdentifier("connection.softwareKeyboard")
+                #endif
                 Toggle(isOn: $preparesTigerVNCKeyboard) {
                     VStack(alignment: .leading) {
                         Text("兼容 TigerVNC 首字输入")
@@ -879,8 +896,12 @@ struct ConnectionEditor: View {
         entry.usesFallbackCursor = usesFallbackCursor ? true : nil
         entry.touchHoldDuration = touchHoldDuration
         entry.preparesTigerVNCKeyboard = preparesTigerVNCKeyboard ? true : nil
-        entry.usesMacHardwareKeyPositions = macHardwareKeyPositions
-        if macHardwareKeyPositions { entry.screensLegacyHardwareMapping = nil }
+        entry.hardwareKeyboardMode = hardwareKeyboardMode
+        #if !targetEnvironment(macCatalyst)
+        if legacySoftwareKeyboard != (entry.softwareKeyboardMode == .legacy) {
+            entry.softwareKeyboardMode = legacySoftwareKeyboard ? .legacy : .unicode
+        }
+        #endif
         entry.swapsHardwareCommandAndControl = swapsHardwareCommandAndControl ? true : nil
         entry.framebufferQuality = framebuffer == FramebufferQuality() ? nil : framebuffer
         entry.disabledVNCCodecs = disabledVNCCodecs.isEmpty ? nil : disabledVNCCodecs.sorted()

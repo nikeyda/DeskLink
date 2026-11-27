@@ -196,7 +196,9 @@ public struct RemoteDesktopView: View {
                 if down { onRemoteInput?() }
                 session.sendKeyEvent(downFlag: down, key: keysym, macKeyCode: session.macKeyCode(forHardwareUsage: usage))
             },
-            physicalKeySupported: { [session] in session.macKeyCode(forHardwareUsage: $0) != nil })
+            physicalKeySupported: { [session] in session.macKeyCode(forHardwareUsage: $0) != nil },
+            usesLegacyHardwareMapping: { [session] in session.configuration.usesLegacyHardwareKeyboardMapping },
+            usesLegacySoftwareMapping: { [session] in session.configuration.usesLegacySoftwareKeyboardMapping })
     }
 
     /// Reads the server's reported state, never a local optimistic one, so the

@@ -308,6 +308,9 @@ public struct VNCConfiguration: Sendable {
 
     /// Match physical keyboard positions to the input source on a compatible Mac.
     public var usesMacHardwareKeyPositions = false
+    /// Prefer classic keysyms for symbols with a pre-Unicode RFB representation.
+    public var usesLegacyHardwareKeyboardMapping = false
+    public var usesLegacySoftwareKeyboardMapping = false
     public var swapsHardwareCommandAndControl = false
     /// Work around an Xvnc 1.15 keymap reset on the first Unicode key press.
     public var preparesTigerVNCKeyboard = false

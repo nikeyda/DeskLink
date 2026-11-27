@@ -1473,7 +1473,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         isTypingText = true
         defer { isTypingText = false }
         hardwareKeyboard.whileShiftIsReleased {
-            keyboardHandler.typeText(text)
+            keyboardHandler.typeHardwareText(text)
         }
     }
 

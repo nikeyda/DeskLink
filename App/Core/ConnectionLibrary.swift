@@ -21,6 +21,12 @@ enum PictureQuality: String, Codable, CaseIterable, Sendable { case standard, ad
 enum ColorDepth: Int, Codable, CaseIterable, Sendable { case low = 8, medium = 16, full = 32 }
 enum DisplayLayout: String, Codable, CaseIterable, Sendable { case single, combined, virtualPair }
 
+enum DesktopKeyboardMode: Int, Codable, Sendable {
+    case keystrokes = 0
+    case unicode = 1
+    case legacy = 2
+}
+
 struct DesktopDimensions: Codable, Equatable, Sendable {
     let width: Int
     let height: Int
@@ -133,8 +139,20 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
     var disabledVNCCodecs: [Int32]?
     var screensOperatingSystem: Int?
     var screensAuthenticationMethod: Int?
-    var screensLegacyHardwareMapping: Bool?
+    private var screensLegacyHardwareMapping: Bool?
+    var softwareKeyboardMode: DesktopKeyboardMode?
     private var selectedDesktopAuthentication: DesktopAuthentication?
+
+    var hardwareKeyboardMode: DesktopKeyboardMode {
+        get {
+            if usesMacHardwareKeyPositions == true { return .keystrokes }
+            return screensLegacyHardwareMapping == true ? .legacy : .unicode
+        }
+        set {
+            usesMacHardwareKeyPositions = newValue == .keystrokes
+            screensLegacyHardwareMapping = newValue == .legacy ? true : nil
+        }
+    }
 
     var authentication: DesktopAuthentication {
         get {

@@ -86,6 +86,8 @@ public struct KeyboardInputHandler {
     /// convention (`Alt_L` = Command, `Meta_L` = Option). Read live so it
     /// reflects the negotiated server once the handshake completes.
     private let usesAppleModifierConvention: @MainActor () -> Bool
+    private let usesLegacyHardwareMapping: @MainActor () -> Bool
+    private let usesLegacySoftwareMapping: @MainActor () -> Bool
 
     /// Whether Option should currently be sent as `Meta_L`/`Meta_R` (Apple)
     /// instead of `Alt_L`/`Alt_R` (standard X11).
@@ -119,13 +121,17 @@ public struct KeyboardInputHandler {
         usesAppleModifierConvention: @escaping @MainActor () -> Bool = { false },
         sendPhysicalKeyEvent: PhysicalKeyEventHandler? = nil,
         commandPlatform: (@MainActor () -> RemoteCommandPlatform)? = nil,
-        physicalKeySupported: (@MainActor (UInt32) -> Bool)? = nil
+        physicalKeySupported: (@MainActor (UInt32) -> Bool)? = nil,
+        usesLegacyHardwareMapping: @escaping @MainActor () -> Bool = { false },
+        usesLegacySoftwareMapping: @escaping @MainActor () -> Bool = { false }
     ) {
         self.sendKeyEvent = sendKeyEvent
         self.usesAppleModifierConvention = usesAppleModifierConvention
         self.sendPhysicalKeyEvent = sendPhysicalKeyEvent
         self.commandPlatformOverride = commandPlatform
         self.physicalKeySupported = physicalKeySupported
+        self.usesLegacyHardwareMapping = usesLegacyHardwareMapping
+        self.usesLegacySoftwareMapping = usesLegacySoftwareMapping
     }
 
     private let sendPhysicalKeyEvent: PhysicalKeyEventHandler?
@@ -147,11 +153,17 @@ public struct KeyboardInputHandler {
             },
             usesAppleModifierConvention: usesAppleModifierConvention,
             sendPhysicalKeyEvent: physical,
-            commandPlatform: commandPlatformOverride, physicalKeySupported: physicalKeySupported)
+            commandPlatform: commandPlatformOverride, physicalKeySupported: physicalKeySupported,
+            usesLegacyHardwareMapping: usesLegacyHardwareMapping,
+            usesLegacySoftwareMapping: usesLegacySoftwareMapping)
     }
 
     func forwardsPhysicalKey(usage: UInt32) -> Bool {
         sendPhysicalKeyEvent != nil && physicalKeySupported?(usage) != false
+    }
+
+    func hardwareKeysym(_ keysym: UInt32) -> UInt32 {
+        usesLegacyHardwareMapping() ? LegacyKeysyms.preferredAlias(for: keysym) : keysym
     }
 
     /// A hardware key transition whose HID usage is known.
@@ -191,14 +203,19 @@ public struct KeyboardInputHandler {
     ///
     /// - Parameter character: The character that was typed.
     public func handleKeyTap(_ character: Character) {
-        let keysym = Self.keysymForCharacter(character)
-        sendKeyEvent(true, keysym)
-        sendKeyEvent(false, keysym)
+        handleKeyTap(character, supplementalModifiers: [])
     }
 
     /// Type committed text without touching either computer's clipboard.
     public func typeText(_ text: String) {
         for character in RemoteTextInputDocument.keyTaps(for: text) { handleKeyTap(character) }
+    }
+
+    /// A hardware Option or dead-key sequence committed a local character.
+    func typeHardwareText(_ text: String) {
+        for character in RemoteTextInputDocument.keyTaps(for: text) {
+            handleKeysymTap(hardwareKeysym(Self.keysymForCharacter(character)), supplementalModifiers: [])
+        }
     }
 
     /// Handle a complete key tap with modifiers supplied by a container UI.
@@ -210,8 +227,9 @@ public struct KeyboardInputHandler {
         _ character: Character,
         supplementalModifiers: VNCKeyboardModifiers
     ) -> Bool {
-        handleKeysymTap(
-            Self.keysymForCharacter(character),
+        let keysym = Self.keysymForCharacter(character)
+        return handleKeysymTap(
+            usesLegacySoftwareMapping() ? LegacyKeysyms.preferredAlias(for: keysym) : keysym,
             supplementalModifiers: supplementalModifiers)
     }
 
