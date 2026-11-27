@@ -5,16 +5,21 @@ import Observation
 @MainActor @Observable
 final class AppLock {
     private let defaults: UserDefaults
-    private let authenticate: @MainActor (LAContext) async throws -> Bool
+    private let authenticate: @MainActor (LAContext, LAPolicy) async throws -> Bool
     private var context: LAContext?
+    private var attemptedAutomaticUnlock = false
     private(set) var enabled: Bool
     private(set) var passwordProtection: Bool
     private(set) var locked: Bool
     private(set) var authenticating = false
     var error: String?
 
-    init(defaults: UserDefaults = .standard, authenticate: @escaping @MainActor (LAContext) async throws -> Bool = { context in
-        try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "身份验证")
+    init(defaults: UserDefaults = .standard, authenticate: @escaping @MainActor (LAContext, LAPolicy) async throws -> Bool = { context, policy in
+        if policy == .deviceOwnerAuthenticationWithBiometrics {
+            guard context.canEvaluatePolicy(policy, error: nil) else { return false }
+            context.localizedFallbackTitle = ""
+        }
+        return try await context.evaluatePolicy(policy, localizedReason: "身份验证")
     }) {
         self.defaults = defaults
         self.authenticate = authenticate
@@ -39,6 +44,7 @@ final class AppLock {
         context?.invalidate()
         context = nil
         authenticating = false
+        attemptedAutomaticUnlock = false
         if enabled { locked = true }
     }
 
@@ -59,7 +65,14 @@ final class AppLock {
         locked = false
     }
 
-    private func verify() async -> Bool {
+    func unlockAutomatically() async {
+        guard locked, !authenticating, !attemptedAutomaticUnlock else { return }
+        attemptedAutomaticUnlock = true
+        guard await verify(using: .deviceOwnerAuthenticationWithBiometrics) else { return }
+        locked = false
+    }
+
+    private func verify(using policy: LAPolicy = .deviceOwnerAuthentication) async -> Bool {
         guard !authenticating else { return false }
         let attempt = LAContext()
         context = attempt
@@ -70,10 +83,10 @@ final class AppLock {
             attempt.invalidate()
         }
         do {
-            let success = try await authenticate(attempt)
+            let success = try await authenticate(attempt, policy)
             return context === attempt && success
         } catch {
-            guard context === attempt else { return false }
+            guard context === attempt, policy == .deviceOwnerAuthentication else { return false }
             let code = (error as? LAError)?.code
             if code != .userCancel && code != .appCancel && code != .systemCancel { self.error = error.localizedDescription }
             return false

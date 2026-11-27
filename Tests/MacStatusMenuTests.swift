@@ -85,7 +85,7 @@ final class MacStatusMenuTests: XCTestCase {
         link.linkFolder = "Lab"
         XCTAssertTrue(library.save(link))
 
-        let privacy = AppLock(defaults: defaults, authenticate: { _ in true })
+        let privacy = AppLock(defaults: defaults, authenticate: { _, _ in true })
         let status = MacStatusMenu(defaults: defaults)
         status.attach(library: library, privacy: privacy)
         status.setVisible(true)

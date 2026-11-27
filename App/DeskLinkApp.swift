@@ -124,7 +124,17 @@ struct DeskLinkApp: App {
         #if targetEnvironment(macCatalyst)
         .handlesExternalEvents(matching: ["*"])
         #endif
-        .onChange(of: phase) { _, phase in if phase == .background { privacy.lock() } }
+        .onChange(of: phase, initial: true) { _, phase in
+            if phase == .background { privacy.lock() }
+            #if os(iOS) && !targetEnvironment(macCatalyst)
+            if phase == .active {
+                Task {
+                    guard UIApplication.shared.applicationState == .active else { return }
+                    await privacy.unlockAutomatically()
+                }
+            }
+            #endif
+        }
         .commands {
             SharedClipboardCommands()
             #if targetEnvironment(macCatalyst)
