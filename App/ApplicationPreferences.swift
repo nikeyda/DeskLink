@@ -34,6 +34,7 @@ struct ApplicationPreferences: View {
                     Toggle("自动重新连接", isOn: $reconnect)
                     Toggle("允许文件传输", isOn: $transfers).accessibilityIdentifier("preferences.transfers")
                     Toggle("新连接默认共享剪贴板", isOn: $sharedClipboard).accessibilityIdentifier("preferences.sharedClipboard")
+                    ClipboardNotificationPreferences()
                     #if targetEnvironment(macCatalyst)
                     Picker("连接标签页", selection: $connectionTabs) {
                         Text("遵循系统设置").tag(MacConnectionTabs.system)

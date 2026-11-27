@@ -1074,6 +1074,7 @@ public final class VNCSession {
         case content(VNCClipboardContent)
         case key(down: Bool, keysym: UInt32)
         case pointer(buttonMask: UInt8)
+        case manualRequestFailed
         case requestFailed(UInt32)
         case requestStarted(UInt32, changeNotice: Bool, localUploadPending: Bool = false)
         case reply(UInt32, VNCClipboardContent?)
@@ -1249,6 +1250,8 @@ public final class VNCSession {
     private var hasSentKeyDown = false
     @ObservationIgnored
     private var pendingClipboardUploads = 0
+    @ObservationIgnored
+    private var clipboardUploadReceipts: [UUID: (VNCManualClipboardResult) -> Void] = [:]
     private let diagnostics = ConnectionDiagnostics()
     private let logger = VNCLogger(category: "Session")
     /// GPU renderer for Standard-mode (including Apple Adaptive DCT) updates.
@@ -2076,7 +2079,14 @@ public final class VNCSession {
     /// Send clipboard content to the VNC server. Representations the server
     /// cannot receive are dropped; see ``clipboardContentSupport``.
     public func sendClipboard(_ content: VNCClipboardContent) {
-        guard connectionState.isConnected, transportSession != nil else { return }
+        sendClipboard(content, completion: nil)
+    }
+
+    func sendClipboard(_ content: VNCClipboardContent, completion: ((VNCManualClipboardResult) -> Void)?) {
+        guard connectionState.isConnected, transportSession != nil else {
+            completion?(.sendFailed)
+            return
+        }
 
         if isTraceEnabled {
             diagnostics.protocolTrace.recordSent(
@@ -2086,8 +2096,13 @@ public final class VNCSession {
             )
         }
 
+        let receipt = completion.map { callback in
+            let id = UUID()
+            clipboardUploadReceipts[id] = callback
+            return id
+        }
         pendingClipboardUploads += 1
-        enqueueInput(.clipboard(content))
+        enqueueInput(.clipboard(content, receipt: receipt))
     }
 
     /// Request the current remote clipboard from a capable server.
@@ -4185,15 +4200,24 @@ public final class VNCSession {
                     try? await transport.sendScrollEvent(event)
                 case .gesture(let event):
                     try? await transport.sendGestureEvent(event)
-                case .clipboard(let content):
+                case .clipboard(let content, let receipt):
+                    let result: VNCManualClipboardResult
                     do {
-                        try await transport.sendClipboard(content)
+                        switch try await transport.sendClipboardWithDisposition(content) {
+                        case .sent: result = .sent
+                        case .advertised: result = .advertised
+                        case .unsupported: result = .sendFailed
+                        }
                     } catch {
+                        result = .sendFailed
                         self.logger.warning(
                             "Failed to send clipboard: "
                                 + error.localizedDescription)
                     }
-                    if self.inputGeneration == generation { self.pendingClipboardUploads -= 1 }
+                    if self.inputGeneration == generation {
+                        self.pendingClipboardUploads -= 1
+                        if let receipt { self.clipboardUploadReceipts.removeValue(forKey: receipt)?(result) }
+                    }
                 case .fileTransfer(let message):
                     do {
                         try await transport.sendAppleFileTransferMessage(message)
@@ -4215,6 +4239,9 @@ public final class VNCSession {
                     do {
                         try await transport.requestRemoteClipboard()
                     } catch {
+                        if self.transportSession === transport {
+                            self.notifyClipboardObservers(.manualRequestFailed)
+                        }
                         self.logger.warning(
                             "Failed to request remote clipboard: "
                                 + error.localizedDescription)
@@ -4414,6 +4441,9 @@ public final class VNCSession {
         inputQueue.removeAll()
         hasSentKeyDown = false
         pendingClipboardUploads = 0
+        let failedUploads = clipboardUploadReceipts.values
+        clipboardUploadReceipts.removeAll()
+        for completion in failedUploads { completion(.sendFailed) }
     }
 
     /// A suspended app keeps its socket open, so the Mac removes a Standard

@@ -19,6 +19,15 @@ public enum VNCClipboardTransferDirection: Sendable {
     case remoteToDevice
 }
 
+/// Result of an explicit Send or Get Clipboard command, without its contents.
+public enum VNCManualClipboardResult: Sendable, Equatable {
+    case sent
+    case advertised
+    case received
+    case sendFailed
+    case receiveFailed
+}
+
 /// The latest remote clipboard written to the device and the pane that
 /// wrote it, shared by every pane on the same pasteboard.
 @MainActor
@@ -254,6 +263,9 @@ public final class VNCClipboardSynchronizer {
     @ObservationIgnored
     public var onTransfer: ((VNCClipboardTransferDirection, String) -> Void)?
 
+    @ObservationIgnored
+    public var onManualTransferResult: ((VNCManualClipboardResult) -> Void)?
+
     public var hasRemoteClipboard: Bool { latestRemoteContent != nil }
 
     /// Whether Get Clipboard can either request the current value from the
@@ -277,6 +289,12 @@ public final class VNCClipboardSynchronizer {
     private let canSend: () -> Bool
     @ObservationIgnored
     private let send: (VNCClipboardContent) -> Void
+    @ObservationIgnored
+    private let sendWithReceipt: ((VNCClipboardContent, @escaping (VNCManualClipboardResult) -> Void) -> Void)?
+    @ObservationIgnored
+    private let manualReceiveTimeout: Duration
+    @ObservationIgnored
+    private var manualReceive: (id: UUID, timeout: Task<Void, Never>)?
     @ObservationIgnored
     private let contentSupport: () -> VNCClipboardContentSupport
     @ObservationIgnored
@@ -426,6 +444,10 @@ public final class VNCClipboardSynchronizer {
             send: { [weak session] content in
                 session?.sendClipboard(content)
             },
+            sendWithReceipt: { [weak session] content, completion in
+                guard let session else { completion(.sendFailed); return }
+                session.sendClipboard(content, completion: completion)
+            },
             contentSupport: { [weak session] in
                 session?.clipboardContentSupport ?? .plainText
             },
@@ -467,6 +489,8 @@ public final class VNCClipboardSynchronizer {
         clipboard: any VNCClipboardProviding,
         canSend: @escaping () -> Bool,
         send: @escaping (VNCClipboardContent) -> Void,
+        sendWithReceipt: ((VNCClipboardContent, @escaping (VNCManualClipboardResult) -> Void) -> Void)? = nil,
+        manualReceiveTimeout: Duration = .seconds(15),
         contentSupport: @escaping () -> VNCClipboardContentSupport = { .all },
         canRequestRemoteClipboard: @escaping () -> Bool = { false },
         requestRemoteClipboard: @escaping () -> Void = {},
@@ -483,6 +507,8 @@ public final class VNCClipboardSynchronizer {
         self.clipboard = clipboard
         self.canSend = canSend
         self.send = send
+        self.sendWithReceipt = sendWithReceipt
+        self.manualReceiveTimeout = manualReceiveTimeout
         self.contentSupport = contentSupport
         self.canRequestRemoteClipboard = canRequestRemoteClipboard
         self.requestRemoteClipboard = requestRemoteClipboard
@@ -505,6 +531,7 @@ public final class VNCClipboardSynchronizer {
     isolated deinit {
         monitoringTask?.cancel()
         normalizationTask?.cancel()
+        manualReceive?.timeout.cancel()
         if let clipboardChangeObserver {
             notificationCenter.removeObserver(clipboardChangeObserver)
         }
@@ -526,23 +553,44 @@ public final class VNCClipboardSynchronizer {
     /// Send the device's clipboard to the remote server, keeping every
     /// representation the server can receive.
     public func sendClipboard() {
-        guard !invalidated, canSend(),
-              let content = clipboard.readContent(for: contentSupport()) else { return }
+        guard !invalidated else { return }
+        guard canSend(), let content = clipboard.readContent(for: contentSupport()) else {
+            onManualTransferResult?(.sendFailed)
+            return
+        }
         observedLocalChangeCount = clipboard.changeCount
         syncedLocalContent = (content, clipboard.changeCount)
-        transmit(content)
+        transmit(content, manual: true)
     }
 
     /// Request the current clipboard from a server that supports requests, or
     /// put the most recently published value on the device.
     public func getClipboard() {
-        guard !invalidated else { return }
+        guard !invalidated, manualReceive == nil else { return }
+        let id = UUID()
+        let delay = manualReceiveTimeout
+        manualReceive = (id, Task { [weak self] in
+            do { try await Task.sleep(for: delay) }
+            catch { return }
+            self?.finishManualReceive(id, succeeded: false)
+        })
         if canSend(), canRequestRemoteClipboard() {
             pendingManualGet = true
             requestRemoteClipboard()
         } else if let latestRemoteContent {
             applyRemoteContent(latestRemoteContent, automatic: false)
+        } else {
+            finishManualReceive(id, succeeded: false)
         }
+    }
+
+    private func finishManualReceive(_ id: UUID, succeeded: Bool) {
+        guard manualReceive?.id == id else { return }
+        manualReceive?.timeout.cancel()
+        manualReceive = nil
+        pendingManualGet = false
+        manualAppleRequestID = nil
+        if !invalidated { onManualTransferResult?(succeeded ? .received : .receiveFailed) }
     }
 
     /// The Apple server can batch its change notices. Fetch on release of a
@@ -668,6 +716,7 @@ public final class VNCClipboardSynchronizer {
     public func invalidate() {
         guard !invalidated else { return }
         invalidated = true
+        if let manualReceive { finishManualReceive(manualReceive.id, succeeded: false) }
         cancelRemoteCopy()
         monitoringTask?.cancel()
         monitoringTask = nil
@@ -706,7 +755,12 @@ public final class VNCClipboardSynchronizer {
             remotePointerWillSend(buttonMask: mask)
         case .content(let content):
             receiveRemoteClipboardContent(content)
+        case .manualRequestFailed:
+            if let manualReceive { finishManualReceive(manualReceive.id, succeeded: false) }
         case .requestFailed(let id):
+            if manualAppleRequestID == id, let manualReceive {
+                finishManualReceive(manualReceive.id, succeeded: false)
+            }
             if case .requested(id) = remoteBaseline {
                 remoteBaseline = .unknown
             }
@@ -765,6 +819,8 @@ public final class VNCClipboardSynchronizer {
             if let content {
                 latestRemoteContent = content
                 applyRemoteContent(content, automatic: false)
+            } else if let manualReceive {
+                finishManualReceive(manualReceive.id, succeeded: false)
             }
         } else if let request = copyRequest, request.id == id {
             copyRequest = nil
@@ -923,8 +979,16 @@ public final class VNCClipboardSynchronizer {
         hostIsFocused && hostWindowIsActive && applicationIsActive
     }
 
-    private func transmit(_ content: VNCClipboardContent) {
-        send(content)
+    private func transmit(_ content: VNCClipboardContent, manual: Bool = false) {
+        if manual, let sendWithReceipt {
+            sendWithReceipt(content) { [weak self] result in
+                guard let self, !self.invalidated else { return }
+                self.onManualTransferResult?(result)
+            }
+        } else {
+            send(content)
+            if manual { onManualTransferResult?(.sent) }
+        }
         // The Apple encoder can reduce an upload to fit the wire limit.
         // The next click samples what the server actually stored.
         remoteBaseline = .unknown
@@ -979,12 +1043,14 @@ public final class VNCClipboardSynchronizer {
         _ content: VNCClipboardContent, automatic: Bool, copy: RemoteCopy? = nil
     ) {
         supersedePendingApply()
+        let receipt = automatic ? nil : manualReceive?.id
         if automatic, let synced = syncedLocalContent,
            synced.changeCount == clipboard.changeCount, synced.content == content {
             return
         }
         guard VNCClipboardImageNormalizer.needsNormalization(content) else {
             writeRemoteContent(content, original: content, copy: copy)
+            if let receipt { finishManualReceive(receipt, succeeded: true) }
             return
         }
 
@@ -999,6 +1065,7 @@ public final class VNCClipboardSynchronizer {
             guard let self, !Task.isCancelled, !self.invalidated,
                   self.applyGeneration == generation,
                   self.clipboard.changeCount == localChangeCount else { return }
+            if let receipt, self.manualReceive?.id != receipt { return }
             self.normalizationTask = nil
             if let copy {
                 guard self.ownsRemoteCopy(copy) else { return }
@@ -1010,6 +1077,7 @@ public final class VNCClipboardSynchronizer {
                 return
             }
             self.writeRemoteContent(normalized, original: content, copy: copy)
+            if let receipt { self.finishManualReceive(receipt, succeeded: true) }
         }
     }
 
@@ -1146,6 +1214,7 @@ public final class VNCClipboardSynchronizer {
 
     private func clearRemoteCache() {
         cancelRemoteCopy()
+        if let manualReceive { finishManualReceive(manualReceive.id, succeeded: false) }
         ordinaryRequest = nil
         manualAppleRequestID = nil
         latestRemoteContent = nil

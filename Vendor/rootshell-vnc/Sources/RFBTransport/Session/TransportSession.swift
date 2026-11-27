@@ -1461,9 +1461,17 @@ public actor TransportSession {
             AppleClipboardProtocol.packedScrapMessageType) == true
     }
 
+    package enum ClipboardSendDisposition: Sendable {
+        case sent, advertised, unsupported
+    }
+
     /// Send clipboard content as richly as the server's clipboard protocol
     /// allows; legacy servers get the plain text, or nothing for images.
     public func sendClipboard(_ content: ClipboardContent) async throws {
+        _ = try await sendClipboardWithDisposition(content)
+    }
+
+    package func sendClipboardWithDisposition(_ content: ClipboardContent) async throws -> ClipboardSendDisposition {
         if Self.shouldUseApplePackedClipboard(
             capabilities: appleServerCapabilities) {
             // Compressing a large image must not hold the actor's read loop.
@@ -1471,11 +1479,14 @@ public actor TransportSession {
                 try AppleClipboardProtocol.packedMessage(content)
             }.value
             try await sendClientPayload(payload)
+            return .sent
         } else if extendedClipboard != nil {
-            try await sendExtendedClipboard(content)
+            return try await sendExtendedClipboard(content)
         } else if let text = content.plainText {
             try await sendClientPayload(ClientMessage.clientCutText(text).serialize())
+            return .sent
         }
+        return .unsupported
     }
 
     public func sendClipboardText(_ text: String) async throws {
@@ -3758,33 +3769,38 @@ public actor TransportSession {
 
     /// Provide small data directly when the server allows it; otherwise
     /// announce the formats and answer the server's request later.
-    private func sendExtendedClipboard(_ content: ClipboardContent) async throws {
-        guard let accepted = extendedClipboard?.acceptedFormats else { return }
+    private func sendExtendedClipboard(_ content: ClipboardContent) async throws -> ClipboardSendDisposition {
+        guard let accepted = extendedClipboard?.acceptedFormats else { return .unsupported }
         let outgoing = await Task.detached(priority: .userInitiated) {
             ExtendedClipboardProtocol.encode(content, accepting: accepted)
         }.value
-        guard let state = extendedClipboard else { return }
+        guard let state = extendedClipboard else { return .unsupported }
         extendedClipboard?.outgoing = outgoing
 
         let fitsUnsolicited = outgoing.allSatisfy {
             $0.value.count <= Int(state.serverMaximumSizes[$0.key] ?? 0)
         }
         let message: ExtendedClipboardProtocol.Message
+        let disposition: ClipboardSendDisposition
         if !outgoing.isEmpty, state.serverActions.contains(.provide), fitsUnsolicited {
             message = .provide(outgoing)
+            disposition = .sent
         } else if !outgoing.isEmpty, state.serverActions.contains(.notify) {
             message = .notify(ExtendedClipboardProtocol.Formats(bits: outgoing.keys))
+            disposition = .advertised
         } else {
             // None of our formats or actions are accepted: legacy text only.
             if let text = content.plainText {
                 try await sendClientPayload(ClientMessage.clientCutText(text).serialize())
+                return .sent
             }
-            return
+            return .unsupported
         }
         let payload = try await Task.detached(priority: .userInitiated) {
             try ExtendedClipboardProtocol.clientMessage(message)
         }.value
         try await sendClientPayload(payload)
+        return disposition
     }
 
     // MARK: - Action execution

@@ -41,6 +41,53 @@ import RFBProtocol
         XCTAssertTrue(VNCSystemClipboard(pasteboard: board).allowsAutomaticRead)
     }
 
+    func testManualReceiveReportsRichContentOnlyAfterWritingIt() {
+        let board = PermissionClipboard()
+        var results: [VNCManualClipboardResult] = []
+        let controller = VNCClipboardSynchronizer(clipboard: board, canSend: { true },
+            send: { _ in }, canRequestRemoteClipboard: { true },
+            observesApplicationLifecycle: false, automaticallyMonitors: false)
+        defer { controller.invalidate() }
+        controller.onManualTransferResult = { result in
+            if result == .received { XCTAssertNotNil(board.writtenContent) }
+            results.append(result)
+        }
+
+        let rich = ClipboardContent(items: [[.init(type: ClipboardType.png, data: Data([1, 2, 3]))]])
+        controller.getClipboard()
+        controller.handleClipboardEvent(.requestStarted(11, changeNotice: false))
+        controller.handleClipboardEvent(.reply(11, rich))
+        XCTAssertEqual(board.writtenContent, rich)
+        XCTAssertEqual(results, [.received])
+
+        controller.getClipboard()
+        controller.handleClipboardEvent(.requestStarted(12, changeNotice: false))
+        controller.handleClipboardEvent(.reply(12, nil))
+        XCTAssertEqual(results, [.received, .receiveFailed])
+
+        controller.getClipboard()
+        controller.handleClipboardEvent(.manualRequestFailed)
+        XCTAssertEqual(results, [.received, .receiveFailed, .receiveFailed])
+    }
+
+    func testExpiredManualReceiveCannotWriteItsLateAppleReply() async throws {
+        let board = PermissionClipboard()
+        let controller = VNCClipboardSynchronizer(clipboard: board, canSend: { true },
+            send: { _ in }, manualReceiveTimeout: .milliseconds(30), canRequestRemoteClipboard: { true },
+            observesApplicationLifecycle: false, automaticallyMonitors: false)
+        defer { controller.invalidate() }
+        let expired = expectation(description: "Manual receive times out")
+        controller.onManualTransferResult = { result in
+            XCTAssertEqual(result, .receiveFailed)
+            expired.fulfill()
+        }
+        controller.getClipboard()
+        controller.handleClipboardEvent(.requestStarted(23, changeNotice: false))
+        await fulfillment(of: [expired], timeout: 2)
+        controller.handleClipboardEvent(.reply(23, .text("late fixture")))
+        XCTAssertNil(board.writtenContent)
+    }
+
     func testManualOnlyPasteboardDoesNotReadAfterDenialOrForegrounding() {
         let board = PermissionClipboard()
         board.allowsAutomaticRead = false

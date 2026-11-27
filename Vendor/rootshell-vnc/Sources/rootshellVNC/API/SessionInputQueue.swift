@@ -16,7 +16,7 @@ enum SessionInputEvent: Sendable, Equatable {
     case pointer(buttonMask: UInt8, x: UInt16, y: UInt16)
     case scroll(AppleScrollEvent)
     case gesture(AppleGestureEvent)
-    case clipboard(ClipboardContent)
+    case clipboard(ClipboardContent, receipt: UUID? = nil)
     /// A prebuilt file-transfer message kept in order with pointer input.
     case fileTransfer(Data)
     case clipboardRequest

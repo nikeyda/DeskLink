@@ -5,6 +5,7 @@ import rootshellVNC
 
 @main
 struct DeskLinkApp: App {
+    @UIApplicationDelegateAdaptor(TelescopeNotificationDelegate.self) private var notificationDelegate
     @State private var library: ConnectionLibrary
     @State private var tailnet: TailnetDirectory
     @State private var sync: LibrarySync

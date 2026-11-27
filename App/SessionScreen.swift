@@ -6,6 +6,7 @@ struct SessionScreen: View {
     let request: SessionRequest
     let library: ConnectionLibrary
     private let pasteboard: UIPasteboard
+    private let preferences: UserDefaults
     @State private var sharesClipboard: Bool
     let close: (Bool) -> Void
     @Environment(\.displayScale) private var scale
@@ -141,6 +142,7 @@ struct SessionScreen: View {
         self.request = request
         self.library = library
         self.pasteboard = pasteboard
+        self.preferences = preferences
         let clipboardEnabled = preferences.object(forKey: "connection.sharedClipboard") as? Bool ?? true
         _sharesClipboard = State(initialValue: clipboardEnabled && request.computer.automaticallySharesClipboard != false)
         self.close = close
@@ -595,6 +597,15 @@ struct SessionScreen: View {
     private func attachClipboard() {
         guard !privacy.locked, !closing, !stopped else { return }
         let controller = VNCClipboardSynchronizer(session: session, pasteboard: pasteboard)
+        let computer = request.computer.displayName
+        let preferences = preferences
+        controller.onManualTransferResult = { [weak privacy] result in
+            Task { @MainActor in
+                await ClipboardNotifications.post(result, computer: computer, preferences: preferences, canPresent: {
+                    privacy?.locked == false
+                })
+            }
+        }
         controller.setHostWindowActive(windowIsActive)
         controller.sharedClipboardEnabled = sharesClipboard
         clipboard = controller
