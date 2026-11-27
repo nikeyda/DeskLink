@@ -1,4 +1,5 @@
 import XCTest
+import RFBProtocol
 import RFBTransport
 import NIOSSH
 import Security
@@ -18,6 +19,75 @@ final class SSHWireTests: XCTestCase {
         let encryptedPEM: String
         let encryptedPEMVariants: [String]?
         let openSSHCipherVariants: [String: String]?
+    }
+
+    func testSSHLoginAndHostIdentityFailuresRemainDistinctAtTheSessionBoundary() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let port = env["DESKLINK_SSH_PORT"].flatMap(UInt16.init), let pin = env["DESKLINK_SSH_PIN"] else {
+            throw XCTSkip("Requires the loopback SSH chart.")
+        }
+        let suite = "Telescope.SSHRecovery." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let pinKey = "ssh.trusted.\(peerHost):\(port)"
+        let settings = SSHSettings(port: port, username: "fixture")
+        let trust = HostTrust(defaults: defaults)
+        let credentials = VNCCredentials(host: peerHost, password: "")
+
+        for (pinnedIdentity, password, expected) in [
+            (pin, "rejected-fixture", VNCProtocolError.sshAuthenticationFailed),
+            ("SHA256:other-test-host", "chart-test-only", .sshHostIdentityRejected)
+        ] {
+            defaults.set(pinnedIdentity, forKey: pinKey)
+            var configuration = VNCConfiguration()
+            DesktopSSH.configureTransport(&configuration, settings: settings, proof: .password(password), trust: trust)
+            let session = VNCSession(configuration: configuration)
+            defer { session.disconnect() }
+            do {
+                try await session.connect(credentials: credentials)
+                XCTFail("The isolated peer opened a rejected connection.")
+            } catch {
+                XCTAssertEqual(session.lastError, expected)
+                XCTAssertTrue(SessionConnectionFailure(session.lastError, setupRequiresEditing: false).needsEditing)
+                XCTAssertNil(trust.prompt)
+                XCTAssertEqual(defaults.string(forKey: pinKey), pinnedIdentity)
+            }
+        }
+
+        defaults.set(pin, forKey: pinKey)
+        var configuration = VNCConfiguration()
+        DesktopSSH.configureTransport(&configuration, settings: settings, proof: .password("chart-test-only"), trust: trust)
+        let session = VNCSession(configuration: configuration)
+        defer { session.disconnect() }
+        try await session.connect(credentials: credentials)
+        try await until { session.hasPresentedCurrentPicture }
+        XCTAssertNil(session.lastError)
+    }
+
+    func testSSHLoginRejectionStopsAutomaticRecoveryAfterAnEstablishedSession() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let port = env["DESKLINK_SSH_PORT"].flatMap(UInt16.init), let pin = env["DESKLINK_SSH_PIN"] else {
+            throw XCTSkip("Requires the loopback SSH chart.")
+        }
+        let suite = "Telescope.SSHReconnect." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(pin, forKey: "ssh.trusted.\(peerHost):\(port)")
+        let trust = HostTrust(defaults: defaults)
+        let attempts = SSHRecoveryFixture(settings: .init(port: port, username: "fixture"), trust: trust)
+        var configuration = VNCConfiguration()
+        configuration.transportProvider = { host, desktopPort in
+            await attempts.connection(host: host, desktopPort: desktopPort)
+        }
+        let session = VNCSession(configuration: configuration)
+        defer { session.disconnect() }
+        try await session.connect(credentials: .init(host: peerHost, password: ""))
+        try await until { session.hasPresentedCurrentPicture }
+        await attempts.closeFirst()
+        try await until { session.lastError == .sshAuthenticationFailed && session.connectionState.canConnect }
+        let connectionCount = await attempts.count
+        XCTAssertEqual(connectionCount, 2)
+        XCTAssertTrue(SessionConnectionFailure(session.lastError, setupRequiresEditing: false).needsEditing)
     }
 
     func testOnlyAnOptedInLocalSocketBypassesSSH() async throws {
@@ -380,6 +450,28 @@ final class SSHWireTests: XCTestCase {
         while !(await predicate()) && Date() < deadline { try await Task.sleep(for: .milliseconds(40)) }
         guard await predicate() else { throw URLError(.timedOut) }
     }
+}
+
+private actor SSHRecoveryFixture {
+    let settings: SSHSettings
+    let trust: HostTrust
+    private var initial: DesktopSSH?
+    private(set) var count = 0
+
+    init(settings: SSHSettings, trust: HostTrust) {
+        self.settings = settings
+        self.trust = trust
+    }
+
+    func connection(host: String, desktopPort: UInt16) -> DesktopSSH {
+        count += 1
+        let password = count == 1 ? "chart-test-only" : "rejected-fixture"
+        let transport = DesktopSSH(host: host, desktopPort: desktopPort, settings: settings, proof: .password(password), trust: trust)
+        if count == 1 { initial = transport }
+        return transport
+    }
+
+    func closeFirst() async { await initial?.close() }
 }
 
 private actor FixtureMediaRoutes {

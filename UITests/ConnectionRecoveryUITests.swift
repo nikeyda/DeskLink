@@ -3,6 +3,52 @@ import XCTest
 #if !targetEnvironment(macCatalyst)
 @MainActor
 final class ConnectionRecoveryUITests: XCTestCase {
+    func testRejectedSSHLoginReopensTheFormAndConnectsWithTheCorrectedPassword() throws {
+        continueAfterFailure = false
+        let env = ProcessInfo.processInfo.environment
+        guard let port = env["DESKLINK_SSH_PORT"].flatMap(UInt16.init), let pin = env["DESKLINK_SSH_PIN"] else {
+            throw XCTSkip("Requires the loopback SSH chart.")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]
+        app.launch()
+        app.open(try XCTUnwrap(URL(string: "ssh://fixture:rejected-fixture@127.0.0.1:\(port)")))
+        let submit = app.buttons["connection.submit"].firstMatch
+        XCTAssertTrue(submit.waitForExistence(timeout: 12))
+        submit.tap()
+        let fingerprint = app.alerts["主机指纹"].firstMatch
+        XCTAssertTrue(fingerprint.waitForExistence(timeout: 10))
+        XCTAssertTrue(fingerprint.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", pin)).firstMatch.exists)
+        fingerprint.buttons["确认"].tap()
+
+        let failure = app.descendants(matching: .any).matching(identifier: "session.failureTitle").firstMatch
+        XCTAssertTrue(failure.waitForExistence(timeout: 12))
+        XCTAssertEqual(failure.label, "SSH 登录失败")
+        XCTAssertFalse(app.buttons["session.reconnect"].exists)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "SSH login failure opens credential editing"
+        capture.lifetime = .keepAlways
+        add(capture)
+
+        app.buttons["session.editConnection"].firstMatch.tap()
+        XCTAssertTrue(submit.waitForExistence(timeout: 8))
+        let form = app.collectionViews["connection.form"].firstMatch
+        let password = form.secureTextFields["connection.sshPassword"].firstMatch
+        for _ in 0..<5 where !password.isHittable { form.swipeUp() }
+        XCTAssertTrue(password.isHittable, form.debugDescription)
+        XCTAssertEqual(form.textFields["connection.sshUsername"].value as? String, "fixture")
+        XCTAssertFalse((password.value as? String)?.contains("•") == true)
+        password.tap()
+        password.typeText("chart-test-only")
+        submit.tap()
+        let info = app.buttons["session.info"].firstMatch
+        XCTAssertTrue(info.wait(for: \.isEnabled, toEqual: true, timeout: 15))
+        info.tap()
+        let route = app.descendants(matching: .any)["details.route"].firstMatch
+        XCTAssertTrue(route.waitForExistence(timeout: 8))
+        XCTAssertEqual(route.value as? String, "SSH 隧道")
+    }
+
     func testRetryAfterTheFirstHandshakeClosesOpensTheSameConnection() async throws {
         continueAfterFailure = false
         let desktop = LocalTestDisplay()

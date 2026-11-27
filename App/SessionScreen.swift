@@ -783,7 +783,8 @@ struct SessionScreen: View {
         closeSession(allowAction: !edit) {
             let editor = edit ? EditorRequest(purpose: .connect, computer: request.computer,
                                               sharedOptions: .init(observe: observing),
-                                              remembersObservation: request.remembersObservation) : nil
+                                              remembersObservation: request.remembersObservation,
+                                              rejectedSSHCredential: session.lastError == .sshAuthenticationFailed) : nil
             close(editor)
         }
     }

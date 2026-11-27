@@ -46,6 +46,7 @@ struct EditorRequest: Identifiable {
     var sharedOptions = ConnectionRoute.SharedOptions()
     var loadsStoredCredentials = true
     var remembersObservation = true
+    var rejectedSSHCredential = false
 
     @MainActor
     static func connectingToDiscovered(_ computer: Computer, in library: ConnectionLibrary,
@@ -356,7 +357,7 @@ struct ConnectionEditor: View {
         _sshUser = State(initialValue: tunnelUser)
         _sshPassword = State(initialValue: link?.sshPort != nil && link?.keyName == nil ? link?.password ?? "" : "")
         _sshUseKey = State(initialValue: link?.keyName != nil || c?.ssh?.usesKey == true)
-        _selectedKeyName = State(initialValue: link?.keyName ?? c?.ssh?.keyName)
+        _selectedKeyName = State(initialValue: request.rejectedSSHCredential ? nil : link?.keyName ?? c?.ssh?.keyName)
         if let initial, let link, link.password != nil || link.keyName != nil {
             var owner = Computer(endpoint: initial)
             owner.username = desktopUser
@@ -443,7 +444,7 @@ struct ConnectionEditor: View {
                 password = stored
                 remember = true
             }
-            if let ssh = original.ssh, ssh.keyName == nil,
+            if !request.rejectedSSHCredential, let ssh = original.ssh, ssh.keyName == nil,
                let stored = try? PasswordStore.read(original, kind: ssh.usesKey ? .sshKey : .sshPassword, synchronize: synchronizeCredentials) {
                 restoredSSH = original
                 if ssh.usesKey { sshKey = stored } else { sshPassword = stored }
@@ -604,6 +605,7 @@ struct ConnectionEditor: View {
                         .id(keyImportID)
                 } else {
                     SecureField("密码", text: $sshPassword).textContentType(.password)
+                        .accessibilityIdentifier("connection.sshPassword")
                 }
                 if !authentication.usesPassword {
                     Toggle("记住 SSH 凭据", isOn: $remember).accessibilityIdentifier("connection.rememberSSH")

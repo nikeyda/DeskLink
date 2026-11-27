@@ -8,13 +8,13 @@ struct SupportDiagnostics: Encodable {
 
             init(_ error: VNCProtocolError?) {
                 switch error {
-                case .authenticationFailed: self = .authentication
+                case .authenticationFailed, .sshAuthenticationFailed: self = .authentication
                 case .unsupportedVersion: self = .unsupportedVersion
                 case .unsupportedEncoding: self = .unsupportedEncoding
                 case .unexpectedMessage, .protocolViolation: self = .protocolError
                 case .connectionClosed: self = .closed
                 case .timeout: self = .timeout
-                case .ioError: self = .transport
+                case .ioError, .sshHostIdentityRejected: self = .transport
                 case nil: self = .unknown
                 }
             }

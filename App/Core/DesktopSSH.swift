@@ -119,13 +119,13 @@ private final class ServerIdentity: NIOSSHClientServerAuthenticationDelegate, Se
     func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
         let parts = String(openSSHPublicKey: hostKey).split(separator: " ")
         guard parts.count >= 2, let wire = Data(base64Encoded: String(parts[1])) else {
-            validationCompletePromise.fail(URLError(.serverCertificateUntrusted))
+            validationCompletePromise.fail(VNCProtocolError.sshHostIdentityRejected)
             return
         }
         let digest = Data(SHA256.hash(data: wire)).base64EncodedString().replacingOccurrences(of: "=", with: "")
         Task {
             if await verify("SHA256:" + digest) { validationCompletePromise.succeed(()) }
-            else { validationCompletePromise.fail(URLError(.serverCertificateUntrusted)) }
+            else { validationCompletePromise.fail(VNCProtocolError.sshHostIdentityRejected) }
         }
     }
 }
@@ -160,7 +160,7 @@ private final class LoginProof: NIOSSHClientUserAuthenticationDelegate {
                 proof = nil
             }
         default:
-            nextChallengePromise.fail(URLError(.userAuthenticationRequired))
+            nextChallengePromise.fail(VNCProtocolError.sshAuthenticationFailed)
             return
         }
         nextChallengePromise.succeed(.init(username: username, serviceName: "", offer: offer))
@@ -236,6 +236,8 @@ final class SSHInput: Sendable {
     }
 
     func setHandler(_ handler: FailureHandler?) { state.withLock { $0.handler = handler } }
+
+    var failure: VNCProtocolError? { state.withLock { $0.error } }
 }
 
 private final class DesktopChannel: ChannelDuplexHandler {
@@ -271,7 +273,15 @@ private final class DesktopChannel: ChannelDuplexHandler {
 
 private final class SSHFailureHandler: ChannelInboundHandler {
     typealias InboundIn = ByteBuffer
-    func errorCaught(context: ChannelHandlerContext, error: Error) { context.close(promise: nil) }
+    let input: SSHInput
+
+    init(input: SSHInput) { self.input = input }
+
+    func errorCaught(context: ChannelHandlerContext, error: Error) {
+        // Pending child channels otherwise fail with a generic close error.
+        if let error = error as? VNCProtocolError { input.finish(error, notify: false) }
+        context.close(promise: nil)
+    }
 }
 
 /// One authenticated SSH channel carries the selected desktop session.
@@ -303,14 +313,14 @@ actor DesktopSSH: RFBConnection {
             }
         }
         configuration.transportProvider = { host, port in
-            guard let proof else { throw URLError(.userAuthenticationRequired) }
+            guard let proof else { throw VNCProtocolError.sshAuthenticationFailed }
             return DesktopSSH(host: host, desktopPort: port, settings: settings, proof: proof, trust: trust)
         }
     }
 
     func connect() async throws {
         guard !closed else { throw VNCProtocolError.connectionClosed }
-        let settings = settings, trust = trust, proof = proof
+        let settings = settings, trust = trust, proof = proof, input = input
         let server = settings.server ?? host
         let desktopHost = settings.server == nil ? "127.0.0.1" : host
         let verifier = ServerIdentity { fingerprint in
@@ -327,14 +337,14 @@ actor DesktopSSH: RFBConnection {
                     }
                     let pipeline = channel.pipeline.syncOperations
                     try pipeline.addHandler(NIOSSHHandler(role: .client(role), allocator: channel.allocator, inboundChildChannelInitializer: nil))
-                    try pipeline.addHandler(SSHFailureHandler())
+                    try pipeline.addHandler(SSHFailureHandler(input: input))
                 }
             }
-        let transport = try await bootstrap.connect(host: server, port: Int(settings.port)).get()
-        guard !closed else { try? await transport.close(); throw VNCProtocolError.connectionClosed }
-        parent = transport
-        let input = input, destinationPort = desktopPort
+        let destinationPort = desktopPort
         do {
+            let transport = try await bootstrap.connect(host: server, port: Int(settings.port)).get()
+            guard !closed else { try? await transport.close(); throw VNCProtocolError.connectionClosed }
+            parent = transport
             let child = try await transport.eventLoop.flatSubmit {
                 let handler: NIOSSHHandler
                 let address: SocketAddress
@@ -352,7 +362,8 @@ actor DesktopSSH: RFBConnection {
             guard !closed else { try? await child.close(); throw VNCProtocolError.connectionClosed }
             desktop = child
         } catch {
-            try? await transport.close()
+            if let parent { try? await parent.close() }
+            if let failure = input.failure { throw failure }
             throw error
         }
     }

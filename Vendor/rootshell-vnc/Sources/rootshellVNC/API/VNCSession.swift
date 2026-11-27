@@ -4197,7 +4197,8 @@ public final class VNCSession {
         case .connectionClosed, .timeout, .ioError, .protocolViolation,
              .unexpectedMessage:
             return true
-        case .authenticationFailed, .unsupportedVersion, .unsupportedEncoding:
+        case .authenticationFailed, .sshAuthenticationFailed, .sshHostIdentityRejected,
+             .unsupportedVersion, .unsupportedEncoding:
             return false
         }
     }

@@ -25,9 +25,9 @@ class ChartLogin(paramiko.ServerInterface):
         return "publickey" if username in self.authorized_keys else "password"
 
     def check_auth_password(self, username, password):
-        if username == "fixture" and password == "chart-test-only":
-            return paramiko.AUTH_SUCCESSFUL
-        return paramiko.AUTH_FAILED
+        accepted = username == "fixture" and password == "chart-test-only"
+        record(self.log, "passwordAttempt", accepted=accepted)
+        return paramiko.AUTH_SUCCESSFUL if accepted else paramiko.AUTH_FAILED
 
     def check_auth_publickey(self, username, key):
         if self.authorized_keys.get(username) == key.get_base64():

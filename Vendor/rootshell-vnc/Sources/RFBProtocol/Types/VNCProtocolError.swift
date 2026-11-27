@@ -12,6 +12,12 @@ public enum VNCProtocolError: Error, Sendable, Equatable, LocalizedError {
     /// Authentication failed, with an optional reason from the server.
     case authenticationFailed(String)
 
+    /// The SSH tunnel could not authenticate its user.
+    case sshAuthenticationFailed
+
+    /// The client rejected the SSH gateway's identity.
+    case sshHostIdentityRejected
+
     /// A generic protocol violation with a human-readable description.
     case protocolViolation(String)
 
@@ -38,6 +44,10 @@ public enum VNCProtocolError: Error, Sendable, Equatable, LocalizedError {
             return "The server's RFB protocol version is not supported."
         case .authenticationFailed(let reason):
             return "Authentication failed: \(reason)"
+        case .sshAuthenticationFailed:
+            return "The SSH server rejected the login credentials."
+        case .sshHostIdentityRejected:
+            return "The SSH host identity was not accepted."
         case .protocolViolation(let detail):
             return "Protocol violation: \(detail)"
         case .unsupportedEncoding(let id):
