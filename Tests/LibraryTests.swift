@@ -349,6 +349,46 @@ final class LibraryTests: XCTestCase {
     }
 
     @MainActor
+    func testMovingFolderMembershipKeepsTheOtherScopeAndRecentActivity() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "library.json")
+        let library = ConnectionLibrary(file: file)
+        let connected = Date(timeIntervalSince1970: 123)
+        var dual = Computer(endpoint: try Endpoint(address: "dual.fixture.invalid"))
+        dual.openedFromLink = true
+        var link = Computer(endpoint: try Endpoint(address: "link.fixture.invalid"))
+        link.saved = false
+        link.openedFromLink = true
+        XCTAssertTrue(library.save(dual))
+        XCTAssertTrue(library.save(link))
+        library.recordSuccess(dual, now: connected)
+        XCTAssertTrue(library.addFolder("Studio"))
+        XCTAssertTrue(library.addFolder("Away", in: .links))
+
+        XCTAssertTrue(library.move(dual.id, toFolder: "Studio", in: .custom))
+        XCTAssertTrue(library.move(dual.id, toFolder: "Away", in: .links))
+        XCTAssertTrue(library.move(dual.id, toFolder: nil, in: .custom))
+        let moved = try XCTUnwrap(library.archive.computers.first { $0.id == dual.id })
+        XCTAssertNil(moved.folder)
+        XCTAssertEqual(moved.linkFolder, "Away")
+        XCTAssertEqual(moved.lastConnected, connected)
+        XCTAssertEqual(moved.totalConnections, 1)
+
+        let current = library.archive
+        let backups = try library.backups.list().map(\.id)
+        XCTAssertFalse(library.move(dual.id, toFolder: "Away", in: .links))
+        XCTAssertFalse(library.move(dual.id, toFolder: "Studio", in: .links))
+        XCTAssertFalse(library.move(link.id, toFolder: "Studio", in: .custom))
+        XCTAssertFalse(library.move(UUID(), toFolder: "Away", in: .links))
+        XCTAssertEqual(try library.backups.list().map(\.id), backups)
+        XCTAssertEqual(ConnectionLibrary(file: file).archive, current)
+        XCTAssertTrue(library.move(link.id, toFolder: "Away", in: .links))
+        library.remove(link)
+        XCTAssertFalse(library.move(link.id, toFolder: "Away", in: .links))
+    }
+
+    @MainActor
     func testBackupPreservesLegacyLibraryContainingOnlyLinkFolders() throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

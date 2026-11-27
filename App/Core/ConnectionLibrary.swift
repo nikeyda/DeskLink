@@ -84,7 +84,13 @@ struct DesktopDisplayPreferences: Codable, Equatable, Sendable {
     }
 }
 
-enum LibraryFolderScope: CaseIterable, Sendable { case custom, links }
+enum LibraryFolderScope: String, Codable, CaseIterable, Sendable {
+    case custom, links
+
+    func includes(_ computer: Computer) -> Bool {
+        self == .custom ? computer.saved : computer.isLink
+    }
+}
 
 enum CursorTrackingSpeed {
     static let range = 0.5...2.0
@@ -706,6 +712,15 @@ final class ConnectionLibrary {
 
     func remove(_ computer: Computer) {
         change { $0.computers.removeAll { $0.id == computer.id } }
+    }
+
+    @discardableResult
+    func move(_ id: UUID, toFolder folder: String?, in scope: LibraryFolderScope) -> Bool {
+        if let folder, !archive.folders(in: scope).contains(folder) { return false }
+        guard var item = archive.computers.first(where: { $0.id == id }),
+              scope.includes(item), item.folder(in: scope) != folder else { return false }
+        item.setFolder(folder, in: scope)
+        return save(item)
     }
 
     func move(_ source: UUID, to target: UUID, within visible: Set<UUID>) -> Bool {

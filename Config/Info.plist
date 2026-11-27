@@ -44,6 +44,9 @@
         <key>UTTypeDescription</key><string>远程随航归档</string>
         <key>UTTypeConformsTo</key><array><string>public.json</string></array>
         <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>desklink</string></array></dict>
+    </dict><dict>
+        <key>UTTypeIdentifier</key><string>local.nikey.desklink.connection-drag</string>
+        <key>UTTypeConformsTo</key><array><string>public.json</string></array>
     </dict></array>
     <key>UTImportedTypeDeclarations</key>
     <array><dict>

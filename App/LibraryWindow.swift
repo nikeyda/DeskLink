@@ -1,7 +1,18 @@
 import SwiftUI
+import CoreTransferable
 import UniformTypeIdentifiers
 
 private let vncLocationType = UTType(filenameExtension: "vncloc") ?? UTType(importedAs: "com.apple.vnc-internet-location")
+
+private struct LibraryConnectionDrag: Codable, Transferable {
+    let computerID: UUID
+    let scope: LibraryFolderScope
+
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: UTType(exportedAs: "local.nikey.desklink.connection-drag", conformingTo: .json))
+            .visibility(.ownProcess)
+    }
+}
 
 struct HiddenSidebarItems: OptionSet {
     static let preferenceKey = "library.hiddenSidebarItems"
@@ -539,7 +550,8 @@ struct LibraryWindow: View {
             if !hiddenItems.isSuperset(of: .linkSection) {
                 Section("链接") {
                     if !hiddenItems.contains(.links) {
-                        Label("所有链接", systemImage: "link").tag(CollectionPage.links)
+                        folderDropTarget(Label("所有链接", systemImage: "link"), folder: nil, scope: .links)
+                            .tag(CollectionPage.links)
                             .accessibilityIdentifier("library.links")
                     }
                     if !hiddenItems.contains(.recent) {
@@ -553,7 +565,8 @@ struct LibraryWindow: View {
                 }
             }
             Section("自定义连接") {
-                Label("所有连接", systemImage: "rectangle.on.rectangle").tag(CollectionPage.all)
+                folderDropTarget(Label("所有连接", systemImage: "rectangle.on.rectangle"), folder: nil, scope: .custom)
+                    .tag(CollectionPage.all)
                     .accessibilityIdentifier("library.all")
                 folderRows(in: .custom)
             }
@@ -785,7 +798,7 @@ struct LibraryWindow: View {
     ) -> some View {
         let folder = (page ?? .all).displayedFolder(for: item)
         return HStack(spacing: 8) {
-            LibraryConnectionItem(id: "library.computer." + item.id.uuidString, selection: $selectedConnection) {
+            let row = LibraryConnectionItem(id: "library.computer." + item.id.uuidString, selection: $selectedConnection) {
                 open(item)
             } label: {
                 HStack(spacing: 8) {
@@ -816,6 +829,7 @@ struct LibraryWindow: View {
                 .contentShape(Rectangle())
             }
             .contextMenu { actions(for: item) }
+            connectionDrag(row, item: item)
             if reservesVideoSpace {
                 Color.clear.frame(width: 44, height: 44)
                     .overlay { resumeVideoButton(for: item) }
@@ -843,13 +857,36 @@ struct LibraryWindow: View {
             open(item)
         } label: { label() }
             .contextMenu { actions(for: item) }
-        if page != .recent, order.wrappedValue == .manual {
-            button.draggable(item.id.uuidString)
-                .dropDestination(for: String.self) { ids, _ in
-                    guard ids.count == 1, let source = ids.first.flatMap(UUID.init(uuidString:)) else { return false }
-                    return library.move(source, to: item.id, within: Set(entries.map(\.id)))
+        connectionDrag(button, item: item)
+    }
+
+    @ViewBuilder private func connectionDrag<Content: View>(_ content: Content, item: Computer) -> some View {
+        let scope = page == .recent && !item.isLink ? .custom : (page ?? .all).folderScope
+        if scope.includes(item) {
+            let draggable = content.draggable(LibraryConnectionDrag(computerID: item.id, scope: scope))
+            if page != .recent, order.wrappedValue == .manual {
+                draggable.dropDestination(for: LibraryConnectionDrag.self) { items, _ in
+                    guard items.count == 1, let source = items.first, source.scope == scope else { return false }
+                    return library.move(source.computerID, to: item.id, within: Set(entries.map(\.id)))
                 }
-        } else { button }
+            } else {
+                draggable
+            }
+        } else {
+            content
+        }
+    }
+
+    private func folderDropTarget<Content: View>(
+        _ content: Content, folder: String?, scope: LibraryFolderScope
+    ) -> some View {
+        content
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .dropDestination(for: LibraryConnectionDrag.self) { items, _ in
+                guard items.count == 1, let source = items.first, source.scope == scope else { return false }
+                return library.move(source.computerID, toFolder: folder, in: scope)
+            }
     }
 
     private var gridColumns: [GridItem] {
@@ -966,7 +1003,8 @@ struct LibraryWindow: View {
 
     private func folderRows(in scope: LibraryFolderScope) -> some View {
         ForEach(library.archive.folders(in: scope), id: \.self) { name in
-            Label(name, systemImage: "folder").tag(CollectionPage.folder(name, in: scope))
+            folderDropTarget(Label(name, systemImage: "folder"), folder: name, scope: scope)
+                .tag(CollectionPage.folder(name, in: scope))
                 .accessibilityIdentifier((scope == .links ? "library.linkFolder." : "library.folder.") + name)
                 .contextMenu {
                     Button("重命名文件夹") {
@@ -1023,17 +1061,17 @@ struct LibraryWindow: View {
         }
         if item.saved, !library.archive.folders.isEmpty {
             Menu("移到文件夹") {
-                Button("所有连接") { var copy = item; copy.folder = nil; library.save(copy) }
+                Button("所有连接") { library.move(item.id, toFolder: nil, in: .custom) }
                 ForEach(library.archive.folders, id: \.self) { name in
-                    Button(name) { var copy = item; copy.folder = name; library.save(copy) }
+                    Button(name) { library.move(item.id, toFolder: name, in: .custom) }
                 }
             }
         }
         if item.isLink, !library.archive.folders(in: .links).isEmpty {
             Menu("移到链接文件夹") {
-                Button("所有链接") { var copy = item; copy.linkFolder = nil; library.save(copy) }
+                Button("所有链接") { library.move(item.id, toFolder: nil, in: .links) }
                 ForEach(library.archive.folders(in: .links), id: \.self) { name in
-                    Button(name) { var copy = item; copy.linkFolder = name; library.save(copy) }
+                    Button(name) { library.move(item.id, toFolder: name, in: .links) }
                 }
             }
         }
