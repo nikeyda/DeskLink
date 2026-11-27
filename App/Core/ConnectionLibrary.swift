@@ -6,6 +6,16 @@ import rootshellVNC
 import UIKit
 #endif
 
+enum DesktopAuthentication: Int, Codable, CaseIterable, Sendable {
+    case automatic = 0
+    case vncPassword = 2
+    case unauthenticated = 3
+    case raspberryPiRSA = 5
+
+    var usesPassword: Bool { self != .unauthenticated }
+    var usesUsername: Bool { self == .automatic || self == .raspberryPiRSA }
+}
+
 enum PictureQuality: String, Codable, CaseIterable, Sendable { case standard, adaptive, lossless }
 enum ColorDepth: Int, Codable, CaseIterable, Sendable { case low = 8, medium = 16, full = 32 }
 enum DisplayLayout: String, Codable, CaseIterable, Sendable { case single, combined, virtualPair }
@@ -122,18 +132,34 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
     var disabledVNCCodecs: [Int32]?
     var screensOperatingSystem: Int?
     var screensAuthenticationMethod: Int?
-    /// Screens v6 exports the Raspberry Pi RSA-AES profile with both fields set to 5.
-    var usesRaspberryPiRSAAES: Bool {
-        get { screensAuthenticationMethod == 5 }
+    private var selectedDesktopAuthentication: DesktopAuthentication?
+
+    var authentication: DesktopAuthentication {
+        get {
+            selectedDesktopAuthentication
+                ?? (screensAuthenticationMethod == DesktopAuthentication.raspberryPiRSA.rawValue ? .raspberryPiRSA : .automatic)
+        }
         set {
-            if newValue {
+            guard newValue != authentication else { return }
+            selectedDesktopAuthentication = newValue == .automatic || newValue == .raspberryPiRSA ? nil : newValue
+            if !newValue.usesUsername { username = "" }
+            screensAuthenticationMethod = newValue == .automatic ? nil : newValue.rawValue
+            if newValue == .raspberryPiRSA {
+                // The original Raspberry Pi profile uses 5 for both fields.
                 screensOperatingSystem = 5
-                screensAuthenticationMethod = 5
-            } else if screensAuthenticationMethod == 5 {
-                screensAuthenticationMethod = nil
+            } else if screensOperatingSystem == nil && newValue != .automatic {
+                screensOperatingSystem = 6
             }
         }
     }
+    var usesRaspberryPiRSAAES: Bool {
+        get { authentication == .raspberryPiRSA }
+        set {
+            if newValue { authentication = .raspberryPiRSA }
+            else if authentication == .raspberryPiRSA { authentication = .automatic }
+        }
+    }
+
     var automaticallySharesClipboard: Bool?
     var allowsRemoteBell: Bool?
     var momentumScrolling: Bool?
@@ -213,6 +239,7 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
 
     func hasSameDestination(as other: Self) -> Bool {
         endpoint == other.endpoint && username == other.username && ssh == other.ssh
+            && authentication.usesPassword == other.authentication.usesPassword
     }
 
     fileprivate var withoutSessionHistory: Self {

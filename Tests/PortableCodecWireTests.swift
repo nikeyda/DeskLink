@@ -43,6 +43,8 @@ final class PortableCodecWireTests: XCTestCase {
             var document = source
             var entry = try XCTUnwrap(entries.first)
             entry["colorDepth"] = depth
+            entry["authenticationMethod"] = DesktopAuthentication.unauthenticated.rawValue
+            entry["users"] = []
             document["screens"] = [entry]
             let archive = try ScreensArchive.convert(JSONSerialization.data(withJSONObject: document))
             let computer = try XCTUnwrap(archive.computers.first)
@@ -56,6 +58,44 @@ final class PortableCodecWireTests: XCTestCase {
             let requested = await peer.requestedBitsPerPixel
             XCTAssertEqual(requested, bits)
         }
+    }
+
+    func testExplicitDesktopAuthenticationIsHonoredOnTheWire() async throws {
+        for (method, expected) in [(DesktopAuthentication.unauthenticated, SecurityType.none), (.vncPassword, .vncAuthentication)] {
+            var computer = Computer(endpoint: try Endpoint(address: "authentication.fixture.invalid"))
+            computer.authentication = method
+            let peer = CodecHandshakePeer(local: true, offered: [.none, .vncAuthentication], accepts: expected)
+            var config = computer.configuration
+            config.transportProvider = { _, _ in peer }
+            let session = VNCSession(configuration: config)
+            try await session.connect(credentials: VNCCredentials(host: computer.endpoint.host, port: computer.endpoint.port,
+                                                                   password: "fixture", username: nil))
+            let packets = await peer.writes
+            XCTAssertEqual(packets.dropFirst().first, Data([expected.rawValue]))
+            if method == .vncPassword {
+                // OpenSSL DES against the fixture challenge using the bit-reversed password.
+                let response = Data([182, 205, 254, 172, 16, 166, 164, 86, 181, 213, 58, 22, 68, 167, 164, 117])
+                XCTAssertEqual(packets.dropFirst(2).first, response)
+            }
+            else { XCTAssertEqual(packets.dropFirst(2).first, Data([1])) }
+            session.disconnect()
+        }
+
+        let peer = CodecHandshakePeer(local: true)
+        var computer = Computer(endpoint: try Endpoint(address: "authentication.fixture.invalid"))
+        computer.authentication = .vncPassword
+        var config = computer.configuration
+        config.transportProvider = { _, _ in peer }
+        let session = VNCSession(configuration: config)
+        do {
+            try await session.connect(credentials: VNCCredentials(host: computer.endpoint.host, port: computer.endpoint.port,
+                                                                   password: "fixture", username: nil))
+            XCTFail("A password-only connection must not fall back to unauthenticated access.")
+        } catch let error as VNCError {
+            guard case .authenticationFailed = error else { return XCTFail("Unexpected connection error: \(error)") }
+        }
+        let refusedWrites = await peer.writes
+        XCTAssertEqual(refusedWrites, [Data("RFB 003.008\n".utf8)])
     }
 
     private func advertised(disabling codes: [Int32] = [], quality: FramebufferQuality = FramebufferQuality(compression: .always),
@@ -78,16 +118,25 @@ final class PortableCodecWireTests: XCTestCase {
 private actor CodecHandshakePeer: RFBConnection {
     let local: Bool
 
-    private var input = Data("RFB 003.008\n".utf8) + Data([
-        1, 1, 0, 0, 0, 0, // None authentication with a successful result.
-        0, 160, 0, 96, // Framebuffer geometry.
-        32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0,
-        0, 0, 0, 4, 84, 101, 115, 116 // Server name: Test.
-    ])
+    private var input: Data
     private(set) var encodings = Set<Int32>()
     private(set) var requestedBitsPerPixel: UInt8?
+    private(set) var writes: [Data] = []
 
-    init(local: Bool) { self.local = local }
+    init(local: Bool, offered: [SecurityType] = [.none], accepts: SecurityType = .none) {
+        self.local = local
+        var input = Data("RFB 003.008\n".utf8)
+        input.append(UInt8(offered.count))
+        input.append(contentsOf: offered.map(\.rawValue))
+        if accepts == .vncAuthentication { input.append(contentsOf: 0..<16) }
+        input.append(contentsOf: [
+            0, 0, 0, 0, // Successful SecurityResult.
+            0, 160, 0, 96, // Framebuffer geometry.
+            32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0,
+            0, 0, 0, 4, 84, 101, 115, 116 // Server name: Test.
+        ])
+        self.input = input
+    }
 
     func isOnLocalNetwork() async -> Bool { local }
 
@@ -106,6 +155,7 @@ private actor CodecHandshakePeer: RFBConnection {
     }
 
     func send(_ data: Data) async throws {
+        writes.append(data)
         let bytes = [UInt8](data)
         // SetPixelFormat and SetEncodings may be issued in one write.
         let offset = bytes.count >= 20 && bytes[0] == 0 ? 20 : 0

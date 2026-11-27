@@ -270,8 +270,8 @@ public struct ConnectionStateMachine: Sendable {
 
     private func selectBestSecurityType(from types: [SecurityType]) -> SecurityType? {
         let rsa = [SecurityType.rsaAES256, .rsaAES].first(where: types.contains)
-        // An encrypted-only policy always takes precedence over diagnostics.
-        if securityPolicy != .requireEncryption, securityPolicy != .rsaAES,
+        // Diagnostics may choose a type only when the caller has not set a policy.
+        if securityPolicy == .automatic,
            let forced = ProcessInfo.processInfo.environment["ROOTSHELL_VNC_SECURITY_TYPE"] {
             let selected: SecurityType? = {
                 switch forced.lowercased() {

@@ -110,3 +110,10 @@
 "导入归档分组" = "Import Archived Groups";
 "将归档分组应用到 %@。已有分组的设备保留原位置。" = "Apply the archived groups to %@. Devices already in a group will stay where they are.";
 "新增文件夹 %lld 个，归组设备 %lld 台，未应用分组 %lld 个。" = "Folders added: %lld. Devices assigned: %lld. Groups skipped: %lld.";
+"认证方式" = "Authentication Method";
+"身份验证" = "Authentication";
+"自动协商" = "Automatic";
+"VNC 密码" = "VNC Password";
+"无认证" = "No Authentication";
+"服务器必须允许无认证连接。" = "The server must allow connections without authentication.";
+"记住 SSH 凭据" = "Remember SSH Credentials";

@@ -112,8 +112,45 @@ final class ScreensArchiveTests: XCTestCase {
         XCTAssertEqual(entry.username, "")
         XCTAssertNil(entry.ssh)
         XCTAssertEqual(entry.screensAuthenticationMethod, 2)
+        XCTAssertEqual(entry.authentication, .vncPassword)
+        XCTAssertEqual(entry.configuration.securityPolicy, .vncAuthentication)
         XCTAssertEqual(entry.screensOperatingSystem, 6)
         XCTAssertEqual(entry.usesMacHardwareKeyPositions, false)
+    }
+
+    func testUnauthenticatedProfileSurvivesBothArchivesAndIsSeparateFromSavedPasswords() throws {
+        let raw = try modified(fixture: "screens-generic") {
+            $0["authenticationMethod"] = 3
+            $0["users"] = []
+        }
+        let archive = try ScreensArchive.convert(raw)
+        let stored = try LibraryArchive.read(archive.encoded())
+        var noAuthentication = try XCTUnwrap(stored.computers.first)
+        XCTAssertEqual(noAuthentication.authentication, .unauthenticated)
+        XCTAssertEqual(noAuthentication.configuration.securityPolicy, .none)
+        XCTAssertEqual(noAuthentication.username, "")
+        XCTAssertEqual(try SessionRequest.remembered(for: noAuthentication, synchronize: false)?.password, "")
+        let privateCopy = try ScreensArchive.export(stored, knownMacs: [], sharedClipboard: true)
+        let roundTrip = try XCTUnwrap(ScreensArchive.convert(privateCopy).computers.first)
+        XCTAssertEqual(roundTrip.screensAuthenticationMethod, 3)
+        XCTAssertEqual(roundTrip.configuration.securityPolicy, .none)
+        let document = try XCTUnwrap(JSONSerialization.jsonObject(with: privateCopy) as? [String: Any])
+        let records = try XCTUnwrap(document["screens"] as? [[String: Any]])
+        XCTAssertEqual(records.first?["users"] as? NSArray, [])
+
+        // Native libraries saved before the picker existed retain automatic negotiation.
+        var old = Computer(endpoint: noAuthentication.endpoint)
+        old.screensOperatingSystem = 6
+        old.screensAuthenticationMethod = 2
+        let migrated = try XCTUnwrap(LibraryArchive.read(LibraryArchive(computers: [old]).encoded()).computers.first)
+        XCTAssertEqual(migrated.authentication, .automatic)
+        XCTAssertFalse(migrated.hasSameDestination(as: noAuthentication))
+
+        noAuthentication.authentication = .vncPassword
+        XCTAssertEqual(noAuthentication.configuration.securityPolicy, .vncAuthentication)
+        XCTAssertTrue(migrated.hasSameDestination(as: noAuthentication))
+        noAuthentication.authentication = .automatic
+        XCTAssertEqual(noAuthentication.configuration.securityPolicy, .automatic)
     }
 
     func testDisplayColorDepthAndAdaptivePolicySurviveBothArchiveFormats() throws {

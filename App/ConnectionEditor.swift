@@ -100,7 +100,9 @@ struct SessionRequest: Identifiable {
     var sshSecretToRemember: String?
 
     static func remembered(for computer: Computer, synchronize: Bool) throws -> Self? {
-        guard let password = try PasswordStore.read(computer, synchronize: synchronize) else { return nil }
+        let desktopPassword = computer.authentication.usesPassword
+            ? try PasswordStore.read(computer, synchronize: synchronize) : ""
+        guard let password = desktopPassword else { return nil }
         var request = Self(computer: computer, password: password, rememberPassword: true, synchronizeCredentials: synchronize)
         if let ssh = computer.ssh {
             guard !ssh.username.isEmpty else { return nil }
@@ -161,7 +163,12 @@ extension Computer {
         configuration.framebufferQuality = framebufferQuality ?? FramebufferQuality()
         configuration.disabledPortableCodecs = Set((disabledVNCCodecs ?? []).compactMap(PortableFramebufferCodec.init(rawValue:)))
         configuration.allowsViewportZoom = allowsViewportZoom != false
-        if usesRaspberryPiRSAAES { configuration.securityPolicy = .rsaAES }
+        configuration.securityPolicy = switch authentication {
+        case .automatic: .automatic
+        case .vncPassword: .vncAuthentication
+        case .unauthenticated: .none
+        case .raspberryPiRSA: .rsaAES
+        }
         configuration.preparesTigerVNCKeyboard = preparesTigerVNCKeyboard == true
         configuration.usesMacHardwareKeyPositions = usesMacHardwareKeyPositions == true
         configuration.swapsHardwareCommandAndControl = swapsHardwareCommandAndControl == true
@@ -184,7 +191,7 @@ struct ConnectionEditor: View {
     @State private var port: String
     @State private var username: String
     @State private var password = ""
-    @State private var usesRaspberryPiRSAAES: Bool
+    @State private var authentication: DesktopAuthentication
     @State private var loadedAccount: Computer?
     @State private var remember = false
     @State private var choseRememberPassword = false
@@ -257,7 +264,7 @@ struct ConnectionEditor: View {
         _port = State(initialValue: String(initial?.port ?? 5900))
         let desktopUser = (link?.sshPort == nil ? link?.username : nil) ?? c?.username ?? ""
         let tunnelUser = (link?.sshPort != nil ? link?.username : nil) ?? c?.ssh?.username ?? ""
-        _usesRaspberryPiRSAAES = State(initialValue: c?.usesRaspberryPiRSAAES == true)
+        _authentication = State(initialValue: c?.authentication ?? .automatic)
         _username = State(initialValue: desktopUser)
         _password = State(initialValue: link?.sshPort == nil ? link?.password ?? "" : "")
         let display = (c?.display(for: .current) ?? DesktopDisplayPreferences()).resolved(for: .current)
@@ -321,6 +328,15 @@ struct ConnectionEditor: View {
         guard port.utf8.allSatisfy({ (48...57).contains($0) }), let port = UInt16(port), port != 0 else { return nil }
         return try? Endpoint(address: host, defaultPort: port)
     }
+    private var desktopUsername: String { authentication.usesUsername ? username : "" }
+
+    private var remembersPassword: Binding<Bool> {
+        Binding(get: { remember }, set: {
+            remember = $0
+            choseRememberPassword = $0
+        })
+    }
+
     private var canSubmit: Bool {
         guard endpoint != nil else { return false }
         if sizing == .fixed, fixedDimensions?.isSupported != true { return false }
@@ -391,6 +407,15 @@ struct ConnectionEditor: View {
         .onChange(of: host) { clearMismatchedPassword() }
         .onChange(of: port) { clearMismatchedPassword() }
         .onChange(of: username) { clearMismatchedPassword() }
+        .onChange(of: authentication) { previous, current in
+            guard previous.usesPassword != current.usesPassword
+                || (previous.usesUsername != current.usesUsername && !username.isEmpty) else { return }
+            password = ""
+            loadedAccount = nil
+            if linkCredentialAccount?.ssh == nil { linkCredentialAccount = nil }
+            remember = restoredSSH != nil
+            choseRememberPassword = false
+        }
         .onChange(of: sshUser) { clearMismatchedPassword() }
         .onChange(of: sshPort) { clearMismatchedPassword() }
         .onChange(of: sshServer) {
@@ -460,23 +485,32 @@ struct ConnectionEditor: View {
     }
 
     private var credentialSection: some View {
-        Section("身份验证") {
-            Picker("认证方式", selection: $usesRaspberryPiRSAAES) {
-                Text("自动协商").tag(false)
-                Text("Raspberry Pi · RSA-AES").tag(true)
+        Section {
+            Picker("认证方式", selection: $authentication) {
+                Text("自动协商").tag(DesktopAuthentication.automatic)
+                Text("VNC 密码").tag(DesktopAuthentication.vncPassword)
+                Text("无认证").tag(DesktopAuthentication.unauthenticated)
+                Text("Raspberry Pi · RSA-AES").tag(DesktopAuthentication.raspberryPiRSA)
             }.accessibilityIdentifier("connection.authentication")
-            TextField("用户名", text: $username)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .textContentType(.username)
-                .accessibilityIdentifier("connection.username")
-            SecureField("密码", text: $password)
-                .textContentType(.password)
-                .accessibilityIdentifier("connection.password")
-            Toggle("记住密码", isOn: Binding(get: { remember }, set: {
-                remember = $0
-                choseRememberPassword = $0
-            })).accessibilityIdentifier("connection.remember")
+            if authentication.usesUsername {
+                TextField("用户名", text: $username)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .textContentType(.username)
+                    .accessibilityIdentifier("connection.username")
+            }
+            if authentication.usesPassword {
+                SecureField("密码", text: $password)
+                    .textContentType(.password)
+                    .accessibilityIdentifier("connection.password")
+                Toggle("记住密码", isOn: remembersPassword).accessibilityIdentifier("connection.remember")
+            }
+        } header: {
+            Text("身份验证")
+        } footer: {
+            if authentication == .unauthenticated {
+                Text("服务器必须允许无认证连接。")
+            }
         }
     }
 
@@ -518,6 +552,9 @@ struct ConnectionEditor: View {
                         .id(keyImportID)
                 } else {
                     SecureField("密码", text: $sshPassword).textContentType(.password)
+                }
+                if !authentication.usesPassword {
+                    Toggle("记住 SSH 凭据", isOn: $remember).accessibilityIdentifier("connection.rememberSSH")
                 }
             }
         } header: { Text(verbatim: "SSH") }
@@ -792,8 +829,8 @@ struct ConnectionEditor: View {
         var entry = request.computer ?? Computer(endpoint: endpoint)
         entry.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         entry.endpoint = endpoint
-        entry.username = username.trimmingCharacters(in: .whitespacesAndNewlines)
-        entry.usesRaspberryPiRSAAES = usesRaspberryPiRSAAES
+        entry.username = desktopUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+        entry.authentication = authentication
         entry.viewOnly = observe
         entry.curtainsDisplayOnConnect = curtainsDisplayOnConnect ? true : nil
         entry.curtainMessage = curtainMessage.isEmpty ? nil : curtainMessage
@@ -843,7 +880,8 @@ struct ConnectionEditor: View {
             guard library.save(entry) else { error = library.errorMessage; return }
             do {
                 // An SSH-only credential may have turned on Remember Password when the editor opened.
-                let savesDesktopPassword = remember && (!password.isEmpty || loadedAccount != nil || choseRememberPassword)
+                let savesDesktopPassword = authentication.usesPassword && remember
+                    && (!password.isEmpty || loadedAccount != nil || choseRememberPassword)
                 if savesDesktopPassword || loadedAccount != nil {
                     try PasswordStore.write(savesDesktopPassword ? password : nil, for: entry, synchronize: synchronizeCredentials)
                 }
@@ -860,7 +898,8 @@ struct ConnectionEditor: View {
                 catch { self.error = error.localizedDescription; return }
             }
             do {
-                var offer = SessionRequest(computer: entry, password: password, rememberPassword: remember,
+                let desktopPassword = authentication.usesPassword ? password : ""
+                var offer = SessionRequest(computer: entry, password: desktopPassword, rememberPassword: remember,
                                            synchronizeCredentials: synchronizeCredentials)
                 if useSSH {
                     if sshUseKey {

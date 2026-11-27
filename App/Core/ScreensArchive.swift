@@ -161,7 +161,7 @@ struct ScreensArchive: Decodable {
         let sshUsers: [User]?
 
         func computer() throws -> Computer {
-            guard version == 6, clientProtocol == "vnc", ([1, 2].contains(authenticationMethod) || (authenticationMethod == 5 && operatingSystem == 5)),
+            guard version == 6, clientProtocol == "vnc", ([1, 2, 3].contains(authenticationMethod) || (authenticationMethod == 5 && operatingSystem == 5)),
                   users.count <= 1 else {
                 throw ImportError.unsupportedConnection
             }
@@ -182,6 +182,9 @@ struct ScreensArchive: Decodable {
             }
             result.screensOperatingSystem = operatingSystem
             result.screensAuthenticationMethod = authenticationMethod
+            if let mode = DesktopAuthentication(rawValue: authenticationMethod), mode == .vncPassword || mode == .unauthenticated {
+                result.authentication = mode
+            }
             let depth = colorDepth.flatMap(ColorDepth.init(screensColorDepth:))
             result.colorDepth = depth == .full ? nil : depth
             result.swapsHardwareCommandAndControl = permuteCmdAndCtrlModifierKeys == true ? true : nil
@@ -310,10 +313,12 @@ extension ScreensArchive {
                 system = 1
                 authentication = 1
             } else if computer.username.isEmpty {
-                system = 6
-                authentication = 2
+                system = computer.screensOperatingSystem ?? 6
+                authentication = DesktopAuthentication.vncPassword.rawValue
             } else { throw ExportError.unknownAuthentication(computer.displayName) }
-            guard authentication != 2 || computer.username.isEmpty else { throw ExportError.unknownAuthentication(computer.displayName) }
+            guard ![2, 3].contains(authentication) || computer.username.isEmpty else {
+                throw ExportError.unknownAuthentication(computer.displayName)
+            }
             guard computer.ssh?.usesKey != true else {
                 throw ExportError.unsupportedSetting(computer.displayName)
             }
@@ -336,7 +341,8 @@ extension ScreensArchive {
                 if let name, !name.isEmpty { entry["username"] = name }
                 return entry
             }
-            record["users"] = [user(computer.username, role: "desktop")]
+            record["users"] = authentication == DesktopAuthentication.unauthenticated.rawValue
+                ? [] : [user(computer.username, role: "desktop")]
             record["useSecureConnection"] = computer.ssh != nil
             record["sshHostname"] = computer.ssh?.server
             record["sshPort"] = Int(computer.ssh?.port ?? 22)

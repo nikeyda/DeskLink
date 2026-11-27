@@ -26,6 +26,7 @@ enum PasswordStore {
     }
 
     static func read(_ entry: Computer, kind: Kind = .desktop, synchronize: Bool = false) throws -> String? {
+        if kind == .desktop, !entry.authentication.usesPassword { return nil }
         if synchronize, kind != .tailnet,
            let shared = try value(matching: query(entry, kind: kind, synchronized: true)) { return shared }
         return try value(matching: query(entry, kind: kind, synchronized: false))
@@ -108,6 +109,7 @@ enum PasswordStore {
 
     static func write(_ password: String?, for entry: Computer, kind: Kind = .desktop,
                       synchronize: Bool = false) throws {
+        if kind == .desktop, !entry.authentication.usesPassword { return }
         let shared = synchronize && kind != .tailnet
         let target = query(entry, kind: kind, synchronized: shared)
         // Some desktop accounts have an empty password. Only nil forgets an explicitly saved desktop credential.
