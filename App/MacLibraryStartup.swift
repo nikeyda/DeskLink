@@ -30,7 +30,7 @@ final class MacLibraryStartup: NSObject {
     }
 
     func openRequestedContent() {
-        if state == .hidden, let app = Self.application, app.value(forKey: "hidden") as? Bool == true {
+        if state == .hidden, let app = MacApplication.shared, app.value(forKey: "hidden") as? Bool == true {
             app.perform(NSSelectorFromString("unhide:"), with: nil)
         }
         finish(with: .finished)
@@ -38,7 +38,7 @@ final class MacLibraryStartup: NSObject {
 
     @objc private func windowDidUpdate(_ notification: Notification) {
         guard state == .waitingForWindow, let window = notification.object as? NSObject,
-              Self.isVisibleMainWindow(window), let app = Self.application,
+              Self.isVisibleMainWindow(window), let app = MacApplication.shared,
               let windows = app.value(forKey: "windows") as? [NSObject] else { return }
         guard windows.filter({ Self.isVisibleMainWindow($0) }).count == 1 else {
             finish(with: .finished)
@@ -53,12 +53,6 @@ final class MacLibraryStartup: NSObject {
     private func finish(with state: State) {
         NotificationCenter.default.removeObserver(self, name: Self.windowUpdated, object: nil)
         self.state = state
-    }
-
-    private static var application: NSObject? {
-        // These AppKit APIs are public on Mac, but AppKit cannot be imported by Catalyst.
-        (NSClassFromString("NSApplication") as? NSObject.Type)?
-            .perform(NSSelectorFromString("sharedApplication"))?.takeUnretainedValue() as? NSObject
     }
 
     private static func isVisibleMainWindow(_ window: NSObject) -> Bool {

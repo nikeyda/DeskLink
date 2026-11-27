@@ -7,9 +7,14 @@ final class MacAvailability {
     private let defaults: UserDefaults
     private var assertion: IdleSleepAssertion?
     private static let keepAwakeKey = "mac.keepAwake"
+    static let hideDockKey = "mac.hideDockIcon"
     let remoteAccess: MacRemoteAccess
     let libraryStartup: MacLibraryStartup
     let statusMenu: MacStatusMenu
+    private(set) var hidesDockIcon = false
+    private(set) var dockVisibilityChangeFailed = false
+    private var appliedDockPreference = false
+    private var dockPolicyObservation: MacDockPolicyObservation?
 
     init(defaults: UserDefaults) {
         self.defaults = defaults
@@ -25,6 +30,43 @@ final class MacAvailability {
             guard newValue != keepAwake else { return }
             assertion = newValue ? IdleSleepAssertion() : nil
             defaults.set(newValue, forKey: Self.keepAwakeKey)
+        }
+    }
+
+    func attachStatusMenu(library: ConnectionLibrary, privacy: AppLock) {
+        statusMenu.attach(library: library, privacy: privacy)
+        if !appliedDockPreference {
+            appliedDockPreference = true
+            setDockHidden(defaults.bool(forKey: Self.hideDockKey))
+        } else { refreshStatusMenu() }
+    }
+
+    func setDockHidden(_ hidden: Bool) {
+        guard hidden != hidesDockIcon else { refreshStatusMenu(); return }
+        // Register the recovery menu before removing the Dock icon and the app menu.
+        if hidden, !statusMenu.setVisible(true) {
+            dockVisibilityChangeFailed = true
+            return
+        }
+        let changed = MacApplication.setDockHidden(hidden)
+        dockVisibilityChangeFailed = !changed
+        if changed {
+            hidesDockIcon = hidden
+            // Finder and Launch Services can promote a Catalyst app on reopen.
+            dockPolicyObservation = hidden ? MacDockPolicyObservation { [weak self] in self?.restoreDockPolicyIfNeeded() } : nil
+            defaults.set(hidden, forKey: Self.hideDockKey)
+        }
+        refreshStatusMenu()
+    }
+
+    func refreshStatusMenu() {
+        statusMenu.restoreDock = hidesDockIcon ? { [weak self] in self?.setDockHidden(false) } : nil
+        statusMenu.setVisible(hidesDockIcon || defaults.bool(forKey: MacStatusMenu.preference))
+    }
+
+    func restoreDockPolicyIfNeeded() {
+        if hidesDockIcon, !MacApplication.isDockHidden {
+            dockVisibilityChangeFailed = !MacApplication.setDockHidden(true)
         }
     }
 
@@ -56,9 +98,19 @@ struct MacAvailabilityPreferences: View {
             if let loginError { Text(loginError).foregroundStyle(.red) }
             Toggle("启动时隐藏连接库", isOn: $hideLibraryOnLaunch)
                 .accessibilityIdentifier("preferences.hideLibraryOnLaunch")
-            Toggle("在菜单栏中显示", isOn: $showStatusMenu)
+            Toggle("隐藏程序坞图标", isOn: Binding(get: { availability.hidesDockIcon }, set: availability.setDockHidden))
+                .accessibilityIdentifier("preferences.hideDockIcon")
+            Toggle("在菜单栏中显示", isOn: Binding(get: { availability.hidesDockIcon || showStatusMenu },
+                                                set: { showStatusMenu = $0 }))
                 .accessibilityIdentifier("preferences.showStatusMenu")
-                .onChange(of: showStatusMenu) { availability.statusMenu.setVisible(showStatusMenu) }
+                .disabled(availability.hidesDockIcon)
+                .onChange(of: showStatusMenu) { availability.refreshStatusMenu() }
+            if availability.hidesDockIcon {
+                Text("可从菜单栏打开连接库或恢复程序坞图标。").font(.footnote).foregroundStyle(.secondary)
+            }
+            if availability.dockVisibilityChangeFailed {
+                Text("无法更改程序坞图标的显示状态。").font(.footnote).foregroundStyle(.red)
+            }
             Toggle("保持这台 Mac 唤醒", isOn: $availability.keepAwake)
                 .accessibilityIdentifier("preferences.keepMacAwake")
             NavigationLink("异网接入") { MacRemoteAccessPreferences(access: availability.remoteAccess) }

@@ -3,6 +3,48 @@ import XCTest
 @testable import DeskLink
 
 final class MacStatusMenuTests: XCTestCase {
+    @MainActor func testHidingDockKeepsRecoveryMenuAndRestoresTheOriginalStatusPreference() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        let name = "Telescope-dock-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        let library = ConnectionLibrary(file: directory.appending(path: "library.json"))
+        let privacy = AppLock(defaults: defaults)
+        let availability = MacAvailability(defaults: defaults)
+        defer {
+            availability.setDockHidden(false)
+            defaults.removePersistentDomain(forName: name)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        availability.attachStatusMenu(library: library, privacy: privacy)
+        let application = try XCTUnwrap(MacApplication.shared)
+        XCTAssertEqual(application.value(forKey: "activationPolicy") as? Int, 0)
+        XCTAssertFalse(availability.hidesDockIcon)
+
+        availability.setDockHidden(true)
+        XCTAssertTrue(availability.hidesDockIcon)
+        XCTAssertFalse(availability.dockVisibilityChangeFailed)
+        XCTAssertEqual(application.value(forKey: "activationPolicy") as? Int, 1)
+        XCTAssertTrue(defaults.bool(forKey: MacAvailability.hideDockKey))
+        XCTAssertFalse(defaults.bool(forKey: MacStatusMenu.preference))
+
+        let menu = try XCTUnwrap((NSClassFromString("NSMenu") as? NSObject.Type)?.init())
+        let refresh = NSSelectorFromString("menuNeedsUpdate:")
+        availability.statusMenu.perform(refresh, with: menu)
+        let showDock = String(localized: "显示程序坞图标")
+        XCTAssertTrue(titles(in: menu).contains(String(localized: "退出远程随航")))
+        let position = try XCTUnwrap(titles(in: menu).firstIndex(of: showDock))
+        let selector = NSSelectorFromString("performActionForItemAtIndex:")
+        let implementation = try XCTUnwrap(menu.method(for: selector))
+        typealias PerformAction = @convention(c) (AnyObject, Selector, Int) -> Void
+        unsafeBitCast(implementation, to: PerformAction.self)(menu, selector, position)
+        XCTAssertFalse(availability.hidesDockIcon)
+        XCTAssertEqual(application.value(forKey: "activationPolicy") as? Int, 0)
+        XCTAssertFalse(defaults.bool(forKey: MacAvailability.hideDockKey))
+        XCTAssertFalse(defaults.bool(forKey: MacStatusMenu.preference))
+        availability.statusMenu.perform(refresh, with: menu)
+        XCTAssertFalse(titles(in: menu).contains(showDock))
+    }
+
     @MainActor func testMenuRoutesUseTheExactSavedComputerAndKeepExternalLinksSeparate() throws {
         let id = UUID()
         let actions: [LibraryWindowRequest] = [

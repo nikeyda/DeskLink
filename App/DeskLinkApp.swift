@@ -77,7 +77,7 @@ struct DeskLinkApp: App {
                 #if targetEnvironment(macCatalyst)
                 .environment(monitorWindows)
                 .environment(availability)
-                .onAppear { availability.statusMenu.attach(library: library, privacy: privacy) }
+                .onAppear { availability.attachStatusMenu(library: library, privacy: privacy) }
                 #endif
                 .defaultAppStorage(preferences)
                 #if DEBUG && !targetEnvironment(macCatalyst)

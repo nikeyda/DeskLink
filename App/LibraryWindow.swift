@@ -411,6 +411,7 @@ struct LibraryWindow: View {
         .onOpenURL { url in
             #if targetEnvironment(macCatalyst)
             availability.libraryStartup.openRequestedContent()
+            availability.restoreDockPolicyIfNeeded()
             if let request = MacStatusMenu.request(for: url) {
                 if activeSession != nil { openWindow(id: "desklink-library", value: request) }
                 else { open(request) }

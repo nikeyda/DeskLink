@@ -5,6 +5,11 @@
 "侧栏" = "Sidebar";
 "启动时隐藏连接库" = "Hide Connection Library on Launch";
 "在菜单栏中显示" = "Show in Menu Bar";
+"隐藏程序坞图标" = "Hide Dock Icon";
+"显示程序坞图标" = "Show Dock Icon";
+"可从菜单栏打开连接库或恢复程序坞图标。" = "Use the menu bar to open the connection library or restore the Dock icon.";
+"无法更改程序坞图标的显示状态。" = "Couldn’t change Dock icon visibility.";
+"退出远程随航" = "Quit Telescope";
 "打开连接库" = "Open Connection Library";
 "在连接库中查看" = "View in Connection Library";
 "快速连接…" = "Quick Connect…";

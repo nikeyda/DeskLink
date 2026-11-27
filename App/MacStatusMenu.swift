@@ -9,32 +9,34 @@ final class MacStatusMenu: NSObject {
     private weak var library: ConnectionLibrary?
     private weak var privacy: AppLock?
     private var statusItem: NSObject?
+    var restoreDock: (() -> Void)?
 
     init(defaults: UserDefaults) { self.defaults = defaults }
 
     func attach(library: ConnectionLibrary, privacy: AppLock) {
         self.library = library
         self.privacy = privacy
-        setVisible(defaults.bool(forKey: Self.preference))
     }
 
-    func setVisible(_ visible: Bool) {
-        guard visible != (statusItem != nil), let bar = Self.systemBar else { return }
+    @discardableResult
+    func setVisible(_ visible: Bool) -> Bool {
+        guard visible != (statusItem != nil) else { return true }
+        guard let bar = Self.systemBar else { return false }
         if let statusItem {
             bar.perform(NSSelectorFromString("removeStatusItem:"), with: statusItem)
             self.statusItem = nil
-            return
+            return true
         }
         let selector = NSSelectorFromString("statusItemWithLength:")
         guard bar.responds(to: selector), let method = bar.method(for: selector),
-              let menu = Self.make("NSMenu") else { return }
+              let menu = Self.make("NSMenu") else { return false }
         // AppKit is unavailable to import in Catalyst. The method takes a CGFloat.
         typealias CreateStatusItem = @convention(c) (AnyObject, Selector, CGFloat) -> Unmanaged<AnyObject>
         let createStatusItem = unsafeBitCast(method, to: CreateStatusItem.self)
-        guard let item = createStatusItem(bar, selector, -1).takeUnretainedValue() as? NSObject else { return }
+        guard let item = createStatusItem(bar, selector, -1).takeUnretainedValue() as? NSObject else { return false }
         guard let button = item.value(forKey: "button") as? NSObject else {
             bar.perform(NSSelectorFromString("removeStatusItem:"), with: item)
-            return
+            return false
         }
         let image = (NSClassFromString("NSImage") as? NSObject.Type)?
             .perform(NSSelectorFromString("imageWithSystemSymbolName:accessibilityDescription:"),
@@ -47,12 +49,20 @@ final class MacStatusMenu: NSObject {
         menuNeedsUpdate(menu)
         item.setValue(menu, forKey: "menu")
         statusItem = item
+        return true
     }
 
     @objc private func menuNeedsUpdate(_ menu: NSObject) {
         menu.perform(NSSelectorFromString("removeAllItems"))
         append(String(localized: "打开连接库"), request: .collection(.all), to: menu)
         append(String(localized: "快速连接…"), request: .quickConnect, to: menu)
+        defer {
+            if restoreDock != nil {
+                appendSeparator(to: menu)
+                append(String(localized: "显示程序坞图标"), action: #selector(showDock), to: menu)
+                append(String(localized: "退出远程随航"), action: #selector(quit), to: menu)
+            }
+        }
         guard let library, privacy?.locked == false else { return }
         let archive = library.archive
         let hidden = HiddenSidebarItems(rawValue: defaults.integer(forKey: HiddenSidebarItems.preferenceKey))
@@ -102,13 +112,18 @@ final class MacStatusMenu: NSObject {
     }
 
     private func append(_ title: String, request: LibraryWindowRequest, to menu: NSObject) {
+        guard let url = Self.url(for: request) else { return }
+        append(title, action: #selector(selectItem), url: url, to: menu)
+    }
+
+    private func append(_ title: String, action: Selector, url: URL? = nil, to menu: NSObject) {
         let selector = NSSelectorFromString("setAction:")
         guard let item = Self.make("NSMenuItem"), let method = item.method(for: selector) else { return }
         item.setValue(title, forKey: "title")
         item.setValue(self, forKey: "target")
-        item.setValue(Self.url(for: request), forKey: "representedObject")
+        item.setValue(url, forKey: "representedObject")
         typealias SetAction = @convention(c) (AnyObject, Selector, Selector) -> Void
-        unsafeBitCast(method, to: SetAction.self)(item, selector, #selector(selectItem))
+        unsafeBitCast(method, to: SetAction.self)(item, selector, action)
         menu.perform(NSSelectorFromString("addItem:"), with: item)
     }
 
@@ -121,6 +136,12 @@ final class MacStatusMenu: NSObject {
     @objc private func selectItem(_ sender: NSObject) {
         guard let url = sender.value(forKey: "representedObject") as? URL else { return }
         Task { await UIApplication.shared.open(url) }
+    }
+
+    @objc private func showDock() { restoreDock?() }
+
+    @objc private func quit() {
+        MacApplication.shared?.perform(NSSelectorFromString("terminate:"), with: nil)
     }
 
     static func url(for request: LibraryWindowRequest) -> URL? {
