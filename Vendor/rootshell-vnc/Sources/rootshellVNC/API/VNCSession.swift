@@ -1973,8 +1973,8 @@ public final class VNCSession {
         sendKeyEvent(downFlag: downFlag, key: key, macKeyCode: nil)
     }
 
-    func macKeyCode(forHardwareUsage usage: UInt32) -> UInt16? {
-        guard configuration.usesMacHardwareKeyPositions, supportsAppleKeyPositions else { return nil }
+    func macKeyCode(forHardwareUsage usage: UInt32, useKeystrokes: Bool = false) -> UInt16? {
+        guard (useKeystrokes || configuration.usesMacHardwareKeyPositions), supportsAppleKeyPositions else { return nil }
         return MacKeyboardPosition.keyCode(for: usage)
     }
 

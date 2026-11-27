@@ -1594,7 +1594,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
                 usage,
                 characters: characters,
                 appleModifierConvention: keyboardHandler.usesAppleModifierMapping)
-            guard keysym != 0 || keyboardHandler.forwardsPhysicalKey(usage: usage) else {
+            guard hardwareKeyboard.canPress(usage: usage, keysym: keysym) else {
                 unhandled.insert(press)
                 continue
             }

@@ -194,9 +194,14 @@ public struct RemoteDesktopView: View {
             },
             sendPhysicalKeyEvent: { [session] down, usage, keysym in
                 if down { onRemoteInput?() }
-                session.sendKeyEvent(downFlag: down, key: keysym, macKeyCode: session.macKeyCode(forHardwareUsage: usage))
+                session.sendKeyEvent(downFlag: down, key: keysym,
+                                     macKeyCode: session.macKeyCode(forHardwareUsage: usage, useKeystrokes: true))
             },
             physicalKeySupported: { [session] in session.macKeyCode(forHardwareUsage: $0) != nil },
+            optionPhysicalKeySupported: { [session] in
+                !session.configuration.usesLegacyHardwareKeyboardMapping
+                    && session.macKeyCode(forHardwareUsage: $0, useKeystrokes: true) != nil
+            },
             usesLegacyHardwareMapping: { [session] in session.configuration.usesLegacyHardwareKeyboardMapping },
             usesLegacySoftwareMapping: { [session] in session.configuration.usesLegacySoftwareKeyboardMapping })
     }

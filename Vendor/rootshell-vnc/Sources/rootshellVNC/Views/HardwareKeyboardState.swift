@@ -495,6 +495,8 @@ final class HardwareKeyboardController {
     private let keyboardHandler: KeyboardInputHandler
     private var state = HardwareKeyboardState()
     private var remappedUsages: [UInt32: UInt32] = [:]
+    // An Option key-up can arrive before the character key-up.
+    private var optionPositionUsages: Set<UInt32> = []
     private var commandModifiers = CommandModifierState()
     var swapsCommandAndControl: Bool {
         get { commandModifiers.swapsCommandAndControl }
@@ -538,6 +540,25 @@ final class HardwareKeyboardController {
         state.contains(usage) || commandModifiers.physical[usage] != nil
     }
 
+    func canPress(usage: UInt32, keysym: UInt32) -> Bool {
+        keysym != 0 || keyboardHandler.forwardsPhysicalKey(usage: usage) || usesOptionPosition(usage: usage)
+    }
+
+    private func usesOptionPosition(usage: UInt32) -> Bool {
+        guard MacKeyboardPosition.isCharacterKey(usage), keyboardHandler.forwardsOptionPhysicalKey(usage: usage) else {
+            return false
+        }
+        func holds(_ keysym: UInt32) -> Bool {
+            controlOptionAsCommand ? commandModifiers.contains(keysym: keysym) : state.pressedKeysyms.values.contains(keysym)
+        }
+        let apple = keyboardHandler.usesAppleModifierMapping
+        let optionLeft = KeyboardInputHandler.optionLeftKeysym(appleModifierConvention: apple)
+        let optionRight = KeyboardInputHandler.optionRightKeysym(appleModifierConvention: apple)
+        return (holds(optionLeft) || holds(optionRight))
+            && ![KeyboardInputHandler.keysymControlL, KeyboardInputHandler.keysymControlR,
+                 KeyboardInputHandler.keysymSuperL, KeyboardInputHandler.keysymSuperR].contains(where: holds)
+    }
+
     @discardableResult
     func press(usage: UInt32, keysym: UInt32, sendingAs remoteUsage: UInt32? = nil) -> Bool {
         if controlOptionAsCommand, (0xE0...0xE7).contains(usage) {
@@ -546,7 +567,8 @@ final class HardwareKeyboardController {
         }
         // Dead keys and some JIS keys produce no local character before composition.
         let target = remoteUsage ?? usage
-        let usesPosition = keyboardHandler.forwardsPhysicalKey(usage: target)
+        let useOptionPosition = remoteUsage == nil && usesOptionPosition(usage: target)
+        let usesPosition = useOptionPosition || keyboardHandler.forwardsPhysicalKey(usage: target)
         let remoteKeysym = usesPosition ? keysym : keyboardHandler.hardwareKeysym(keysym)
         guard let transition = state.press(usage: usage, keysym: remoteKeysym, allowEmptyKeysym: usesPosition) else {
             // UIKit and UIKeyCommand can both report OS repeat callbacks. The
@@ -554,6 +576,7 @@ final class HardwareKeyboardController {
             return state.contains(usage)
         }
         remappedUsages[usage] = remoteUsage
+        if useOptionPosition { optionPositionUsages.insert(usage) }
         send(transition, usage: usage)
         // A physical-key host is a USB keyboard; the remote OS repeats held keys.
         if keyRepeat.enabled, Self.isRepeatable(target), !usesPosition {
@@ -572,6 +595,7 @@ final class HardwareKeyboardController {
         if repeatingUsage == usage { stopRepeat() }
         send(transition, usage: usage)
         remappedUsages.removeValue(forKey: usage)
+        optionPositionUsages.remove(usage)
         return true
     }
 
@@ -590,6 +614,7 @@ final class HardwareKeyboardController {
         stopRepeat()
         state.releaseAllWithUsages().forEach { send($0.transition, usage: $0.usage) }
         remappedUsages.removeAll(keepingCapacity: true)
+        optionPositionUsages.removeAll(keepingCapacity: true)
         commandModifiers.releaseAll().forEach(sendModifier)
     }
 
@@ -723,7 +748,8 @@ final class HardwareKeyboardController {
         keyboardHandler.handlePhysicalKey(
             downFlag: remoteKey.downFlag,
             usage: remoteUsage,
-            keysym: remoteKey.keysym)
+            keysym: remoteKey.keysym,
+            useOptionPosition: optionPositionUsages.contains(usage))
     }
 
     private static func isRepeatable(_ usage: UInt32) -> Bool {

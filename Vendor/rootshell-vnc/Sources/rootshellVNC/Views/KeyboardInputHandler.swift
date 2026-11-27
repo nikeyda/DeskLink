@@ -114,6 +114,7 @@ public struct KeyboardInputHandler {
     ///     standard X11 convention for standalone and non-Apple use.
     ///   - sendPhysicalKeyEvent: When set, hardware keys with a known HID
     ///     usage go here instead of `sendKeyEvent`, and are not auto-repeated.
+    ///   - optionPhysicalKeySupported: Whether an Option character can use the physical-key transport.
     ///   - commandPlatform: Whose shortcuts menu commands send. Nil follows
     ///     the modifier convention.
     public init(
@@ -122,6 +123,7 @@ public struct KeyboardInputHandler {
         sendPhysicalKeyEvent: PhysicalKeyEventHandler? = nil,
         commandPlatform: (@MainActor () -> RemoteCommandPlatform)? = nil,
         physicalKeySupported: (@MainActor (UInt32) -> Bool)? = nil,
+        optionPhysicalKeySupported: (@MainActor (UInt32) -> Bool)? = nil,
         usesLegacyHardwareMapping: @escaping @MainActor () -> Bool = { false },
         usesLegacySoftwareMapping: @escaping @MainActor () -> Bool = { false }
     ) {
@@ -130,12 +132,14 @@ public struct KeyboardInputHandler {
         self.sendPhysicalKeyEvent = sendPhysicalKeyEvent
         self.commandPlatformOverride = commandPlatform
         self.physicalKeySupported = physicalKeySupported
+        self.optionPhysicalKeySupported = optionPhysicalKeySupported
         self.usesLegacyHardwareMapping = usesLegacyHardwareMapping
         self.usesLegacySoftwareMapping = usesLegacySoftwareMapping
     }
 
     private let sendPhysicalKeyEvent: PhysicalKeyEventHandler?
     private let physicalKeySupported: (@MainActor (UInt32) -> Bool)?
+    private let optionPhysicalKeySupported: (@MainActor (UInt32) -> Bool)?
 
     /// A copy that calls `onKeyDown` before every key press it sends.
     func notifyingKeyDown(_ onKeyDown: @escaping @MainActor () -> Void) -> KeyboardInputHandler {
@@ -154,6 +158,7 @@ public struct KeyboardInputHandler {
             usesAppleModifierConvention: usesAppleModifierConvention,
             sendPhysicalKeyEvent: physical,
             commandPlatform: commandPlatformOverride, physicalKeySupported: physicalKeySupported,
+            optionPhysicalKeySupported: optionPhysicalKeySupported,
             usesLegacyHardwareMapping: usesLegacyHardwareMapping,
             usesLegacySoftwareMapping: usesLegacySoftwareMapping)
     }
@@ -162,13 +167,17 @@ public struct KeyboardInputHandler {
         sendPhysicalKeyEvent != nil && physicalKeySupported?(usage) != false
     }
 
+    func forwardsOptionPhysicalKey(usage: UInt32) -> Bool {
+        sendPhysicalKeyEvent != nil && optionPhysicalKeySupported?(usage) == true
+    }
+
     func hardwareKeysym(_ keysym: UInt32) -> UInt32 {
         usesLegacyHardwareMapping() ? LegacyKeysyms.preferredAlias(for: keysym) : keysym
     }
 
     /// A hardware key transition whose HID usage is known.
-    func handlePhysicalKey(downFlag: Bool, usage: UInt32, keysym: UInt32) {
-        if forwardsPhysicalKey(usage: usage), let sendPhysicalKeyEvent {
+    func handlePhysicalKey(downFlag: Bool, usage: UInt32, keysym: UInt32, useOptionPosition: Bool = false) {
+        if useOptionPosition || forwardsPhysicalKey(usage: usage), let sendPhysicalKeyEvent {
             sendPhysicalKeyEvent(downFlag, usage, keysym)
         } else if keysym != 0 {
             handleKeysym(downFlag: downFlag, keysym: keysym)

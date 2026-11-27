@@ -243,6 +243,69 @@ import UIKit
         XCTAssertEqual(keyDowns, 6)
     }
 
+    func testUnicodeOptionUsesTheMacPositionThroughTheMatchingKeyUp() {
+        for translatesControlOption in [false, true] {
+            for useShift in [false, true] {
+                var positions: [(down: Bool, code: UInt16)] = []
+                var symbols: [UInt32] = []
+                let handler = KeyboardInputHandler(
+                    sendKeyEvent: { down, key in if down { symbols.append(key) } },
+                    usesAppleModifierConvention: { true },
+                    sendPhysicalKeyEvent: { down, usage, _ in
+                        if let code = MacKeyboardPosition.keyCode(for: usage) { positions.append((down, code)) }
+                    },
+                    physicalKeySupported: { _ in false },
+                    optionPhysicalKeySupported: { MacKeyboardPosition.keyCode(for: $0) != nil }
+                ).notifyingKeyDown {}
+                let keyboard = HardwareKeyboardController(keyboardHandler: handler)
+                keyboard.controlOptionAsCommand = translatesControlOption
+                keyboard.keyRepeat = VNCKeyRepeat(enabled: false)
+                if useShift { keyboard.press(usage: 0xE5, keysym: KeyboardInputHandler.keysymShiftR) }
+                keyboard.press(usage: 0xE6, keysym: KeyboardInputHandler.keysymMetaR)
+                XCTAssertTrue(keyboard.canPress(usage: 0x08, keysym: 0)) // An Option dead key has no local character.
+                XCTAssertTrue(keyboard.press(usage: 0x08, keysym: 0))
+                XCTAssertTrue(keyboard.release(usage: 0xE6))
+                XCTAssertTrue(keyboard.release(usage: 0x08))
+                if useShift { keyboard.release(usage: 0xE5) }
+
+                XCTAssertFalse(keyboard.canPress(usage: 0x08, keysym: 0))
+                XCTAssertTrue(keyboard.press(usage: 0x14, keysym: 0x61))
+                XCTAssertTrue(keyboard.release(usage: 0x14))
+                XCTAssertEqual(positions.map(\.down), [true, false])
+                XCTAssertEqual(positions.map(\.code), [0x0E, 0x0E])
+                XCTAssertEqual(symbols.last, 0x61)
+                XCTAssertFalse(keyboard.hasPressedKeys)
+            }
+        }
+    }
+
+    func testUnicodeOptionLeavesUnsupportedHostsAndKeyboardShortcutsInCharacterTransport() {
+        for supportsPosition in [false, true] {
+            var positions: [UInt32] = []
+            var symbols: [UInt32] = []
+            let handler = KeyboardInputHandler(
+                sendKeyEvent: { down, key in if down { symbols.append(key) } },
+                usesAppleModifierConvention: { true },
+                sendPhysicalKeyEvent: { _, usage, _ in positions.append(usage) },
+                physicalKeySupported: { _ in false },
+                optionPhysicalKeySupported: { _ in supportsPosition }
+            )
+            let keyboard = HardwareKeyboardController(keyboardHandler: handler)
+            keyboard.keyRepeat = VNCKeyRepeat(enabled: false)
+
+            // With no negotiated Apple position support, Option keeps the Unicode glyph.
+            if supportsPosition { keyboard.press(usage: 0xE3, keysym: KeyboardInputHandler.keysymSuperL) }
+            keyboard.press(usage: 0xE2, keysym: KeyboardInputHandler.keysymMetaL)
+            XCTAssertTrue(keyboard.press(usage: 0x14, keysym: 0x00E5))
+            XCTAssertTrue(keyboard.release(usage: 0x14))
+            // Navigation keys keep their existing representation.
+            XCTAssertTrue(keyboard.press(usage: 0x50, keysym: KeyboardInputHandler.keysymLeft))
+            keyboard.releaseAll()
+            XCTAssertTrue(positions.isEmpty)
+            XCTAssertEqual(Array(symbols.suffix(2)), [0x00E5, KeyboardInputHandler.keysymLeft])
+        }
+    }
+
     func testEncryptedPositionDownAndUpMatchIndependentReferenceBlocks() throws {
         let key = Data(UInt8(0)...UInt8(15))
         let cipher = try XCTUnwrap(AppleEncryptedInputCipher(key: key))
