@@ -627,10 +627,16 @@ final class ConnectionLibrary {
 
     @discardableResult
     func applySync(_ value: LibraryArchive) -> Bool {
-        let savedChanged = value.folders != archive.folders || value.linkFolders != archive.linkFolders ||
-            value.computers.filter(\.saved).map(\.withoutSessionHistory) !=
-            archive.computers.filter(\.saved).map(\.withoutSessionHistory)
-        return change(backup: savedChanged) { $0 = value }
+        let knownLinks = Set(archive.computers.lazy.filter(\.isLink).map(\.id))
+        func shouldBackUp(_ computer: Computer) -> Bool {
+            // A new, unedited link can come from recent activity on another device.
+            computer.saved || (computer.isLink && (knownLinks.contains(computer.id)
+                || computer.modifiedAt != nil || computer.linkFolder != nil))
+        }
+        let libraryChanged = value.folders != archive.folders || value.linkFolders != archive.linkFolders ||
+            value.computers.filter(shouldBackUp).map(\.withoutSessionHistory) !=
+            archive.computers.filter(shouldBackUp).map(\.withoutSessionHistory)
+        return change(backup: libraryChanged) { $0 = value }
     }
 
     func remove(_ computer: Computer) {
@@ -684,7 +690,9 @@ final class ConnectionLibrary {
         edit(&next)
         guard next != archive else { return true }
         do {
-            if backup, !archive.computers.isEmpty || !archive.folders.isEmpty { try backups.capture(archive.encoded()) }
+            if backup, !archive.computers.isEmpty || !archive.folders.isEmpty || !archive.folders(in: .links).isEmpty {
+                try backups.capture(archive.encoded())
+            }
             let data = try next.encoded()
             try writePrimary(data)
             installArchive(next)

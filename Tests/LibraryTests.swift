@@ -337,6 +337,25 @@ final class LibraryTests: XCTestCase {
     }
 
     @MainActor
+    func testBackupPreservesLegacyLibraryContainingOnlyLinkFolders() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "library.json")
+        var original = LibraryArchive()
+        original.setFolders(["Away", "Lab"], in: .links)
+        try original.encoded().write(to: file)
+        let library = ConnectionLibrary(file: file)
+        XCTAssertTrue(try library.backups.list().isEmpty)
+
+        XCTAssertTrue(library.applySync(LibraryArchive()))
+        let backup = try XCTUnwrap(library.backups.list().first { $0.folders == 2 })
+        XCTAssertEqual(backup.computers, 0)
+        try library.restore(backup)
+        XCTAssertEqual(ConnectionLibrary(file: file).archive, original)
+    }
+
+    @MainActor
     func testRestoreRepairsUnreadablePrimaryAndRejectsChangedBackup() throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

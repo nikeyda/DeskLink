@@ -135,6 +135,63 @@ final class LibrarySyncTests: XCTestCase {
         XCTAssertFalse(a.preferencesChanged)
     }
 
+    @MainActor func testSyncedLinkChangesHaveLocalRestorePointsWithoutBackingUpConnectionActivity() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        let shared = root.appending(path: "Shared")
+        try FileManager.default.createDirectory(at: shared, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let firstSuite = UUID().uuidString, secondSuite = UUID().uuidString
+        let first = try XCTUnwrap(UserDefaults(suiteName: firstSuite))
+        let second = try XCTUnwrap(UserDefaults(suiteName: secondSuite))
+        defer { first.removePersistentDomain(forName: firstSuite); second.removePersistentDomain(forName: secondSuite) }
+        let a = LibrarySync(settings: root.appending(path: "a/sync.json"), defaults: first)
+        let b = LibrarySync(settings: root.appending(path: "b/sync.json"), defaults: second)
+        let firstFile = root.appending(path: "a/book.json")
+        let bookA = ConnectionLibrary(file: firstFile)
+        let bookB = ConnectionLibrary(file: root.appending(path: "b/book.json"))
+        try a.select(shared)
+        try b.select(shared)
+        var link = Computer(name: "Desk Link", endpoint: try Endpoint(address: "restorable-link.invalid"))
+        link.saved = false
+        link.openedFromLink = true
+        bookB.recordSuccess(link, now: Date(timeIntervalSince1970: 10))
+        await b.refresh(bookB)
+        await a.refresh(bookA)
+        XCTAssertEqual(bookA.archive.computers.first?.id, link.id)
+        XCTAssertTrue(try bookA.backups.list().isEmpty)
+
+        bookB.recordSuccess(link, now: Date(timeIntervalSince1970: 20))
+        await b.refresh(bookB)
+        await a.refresh(bookA)
+        XCTAssertEqual(bookA.archive.computers.first?.totalConnections, 2)
+        XCTAssertTrue(try bookA.backups.list().isEmpty)
+        let beforeDeletion = bookA.archive
+
+        bookB.remove(link)
+        await b.refresh(bookB)
+        await a.refresh(bookA)
+        XCTAssertNil(a.error)
+        XCTAssertTrue(bookA.archive.computers.isEmpty)
+        let restorePoint = try XCTUnwrap(bookA.backups.list().first { $0.computers == 1 })
+        try bookA.restore(restorePoint)
+        XCTAssertEqual(ConnectionLibrary(file: firstFile).archive, beforeDeletion)
+        await a.refresh(bookA)
+        await b.refresh(bookB)
+        XCTAssertNil(b.error)
+        XCTAssertEqual(bookB.archive, beforeDeletion)
+
+        link.name = "Renamed Desk Link"
+        XCTAssertTrue(bookB.save(link))
+        await b.refresh(bookB)
+        await a.refresh(bookA)
+        XCTAssertNil(a.error)
+        XCTAssertEqual(bookA.archive.computers.first?.name, link.name)
+        let renamedPoint = try XCTUnwrap(bookA.backups.list().first { backup in
+            try bookA.backups.read(backup.id).computers.first?.name == link.name
+        })
+        XCTAssertEqual(try bookA.backups.read(renamedPoint.id), bookA.archive)
+    }
+
     func testTwoWritersMergeOfflineEditsAndKeepDeletedRecordsDeleted() throws {
         let first = UUID(), second = UUID()
         var a = Computer(name: "Desk", endpoint: try Endpoint(address: "first.invalid:5909"))
