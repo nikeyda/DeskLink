@@ -5,9 +5,11 @@ import SwiftUI
 /// text, and always offers a way out of a stuck attempt.
 public struct ConnectionStatusOverlay: View {
     @Bindable var session: VNCSession
+    private let onCancel: (@MainActor () -> Void)?
 
-    public init(session: VNCSession) {
+    public init(session: VNCSession, onCancel: (@MainActor () -> Void)? = nil) {
         self.session = session
+        self.onCancel = onCancel
     }
 
     public var body: some View {
@@ -18,22 +20,50 @@ public struct ConnectionStatusOverlay: View {
                 detail: session.connectionPhaseDescription,
                 actionLabel: String(localized: "Cancel", bundle: .module),
                 actionRole: .cancel
-            ) { session.disconnect() }
+            ) { cancelInitialConnection() }
 
         case .reconnecting(let attempt, let delay):
+            let phase = session.connectionPhaseDescription
+            let waitingToRetry = delay > 0 && phase == nil
             ConnectionStatusCard(
-                title: String(localized: "Connection interrupted", bundle: .module),
-                detail: delay > 0
+                title: waitingToRetry
+                    ? String(localized: "Connection interrupted", bundle: .module)
+                    : reconnectingTitle,
+                detail: waitingToRetry
                     ? String(localized: "Retry \(attempt) starts in about \(Int(ceil(delay))) seconds.", bundle: .module)
-                    : (session.connectionPhaseDescription
-                        ?? String(localized: "Reconnecting now…", bundle: .module)),
+                    : phase,
                 actionLabel: String(localized: "Stop Reconnecting", bundle: .module),
                 actionRole: .destructive
             ) { session.disconnect() }
+            .accessibilityIdentifier("session.reconnecting")
+
+        case .connected where !session.hasPresentedCurrentPicture:
+            let reconnecting = session.desktopPictureState == .waitingAfterReconnect
+            let waiting = String(localized: "Waiting for first screen update…", bundle: .module)
+            ConnectionStatusCard(
+                title: reconnecting ? reconnectingTitle : waiting,
+                detail: reconnecting ? waiting : nil,
+                actionLabel: reconnecting ? String(localized: "Stop Reconnecting", bundle: .module)
+                    : String(localized: "Cancel", bundle: .module),
+                actionRole: reconnecting ? .destructive : .cancel
+            ) {
+                if reconnecting { session.disconnect() }
+                else { cancelInitialConnection() }
+            }
+            .accessibilityIdentifier("session.waitingForScreen")
 
         default:
             EmptyView()
         }
+    }
+
+    private var reconnectingTitle: String {
+        String(localized: "Reconnecting now…", bundle: .module)
+    }
+
+    private func cancelInitialConnection() {
+        if let onCancel { onCancel() }
+        else { session.disconnect() }
     }
 
     private var connectingTitle: String {
@@ -44,9 +74,9 @@ public struct ConnectionStatusOverlay: View {
     }
 }
 
-/// The shared glass card. Also used directly for states the overlay's
-/// connection-state switch cannot see, like connected-but-no-frame-yet.
+/// The shared status card for connecting and waiting for the desktop.
 struct ConnectionStatusCard: View {
+    @Environment(\.colorScheme) private var colorScheme
     let title: String
     var detail: String?
     var actionLabel: String?
@@ -63,20 +93,27 @@ struct ConnectionStatusCard: View {
             if let detail {
                 Text(detail)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(colorScheme == .dark ? Color.white.opacity(0.82) : Color.secondary)
                     .multilineTextAlignment(.center)
             }
             if let actionLabel, let action {
                 Button(actionLabel, role: actionRole, action: action)
                     .buttonStyle(.bordered)
                     .padding(.top, 2)
+                    .accessibilityIdentifier("session.statusAction")
             }
         }
         .padding(28)
         .frame(minWidth: 220, maxWidth: 320)
+        .background {
+            if colorScheme == .dark {
+                // A changing desktop can have any color under the glass.
+                RoundedRectangle(cornerRadius: 28).fill(.black.opacity(0.7))
+            }
+        }
         .glassStatusCard()
         .padding()
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 }
 

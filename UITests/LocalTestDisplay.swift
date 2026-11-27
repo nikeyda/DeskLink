@@ -97,10 +97,11 @@ final class LocalTestDisplay {
             closedConnections += 1
             return
         }
+        let connectionNumber = acceptedConnections
         peer = incoming
         incoming.start(queue: queue)
         worker = Task {
-            do { try await serve(incoming) }
+            do { try await serve(incoming, connectionNumber: connectionNumber) }
             catch {
                 // A client closing with unread framebuffer bytes can end TCP with RST.
                 let expectedReset = expectsClientDisconnect && (error as? NWError) == .posix(.ECONNRESET)
@@ -136,7 +137,7 @@ final class LocalTestDisplay {
         try await send([2], to: peer)
     }
 
-    private func serve(_ connection: NWConnection) async throws {
+    private func serve(_ connection: NWConnection, connectionNumber: Int) async throws {
         let version = Array((appleScalingCapability == nil ? "RFB 003.008\n" : "RFB 003.889\n").utf8)
         if waitsForCancellationBeforeHandshake {
             _ = try await read(1, from: connection)
@@ -177,6 +178,9 @@ final class LocalTestDisplay {
             case 3:
                 let request = try await read(9, from: connection)
                 if request[0] == 0 {
+                    while let lastAllowed = withholdFramesAfterConnection, connectionNumber > lastAllowed {
+                        try await Task.sleep(for: .milliseconds(20))
+                    }
                     let width = Int(request[5]) * 256 + Int(request[6])
                     let height = Int(request[7]) * 256 + Int(request[8])
                     requestedFramebufferSize = CGSize(width: width, height: height)

@@ -277,6 +277,66 @@ final class SessionUITests: XCTestCase {
         try await waitUntil { trigger.value as? String == "传输连接中断" }
     }
 
+    func testFirstPictureStatusWaitsForNewFramesAfterReconnect() async throws {
+        let desktop = LocalTestDisplay()
+        desktop.withholdFramesAfterConnection = 0
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        openChart(app, port: port)
+        let waiting = app.descendants(matching: .any)["session.waitingForScreen"].firstMatch
+        let statusAction = app.buttons["session.statusAction"]
+        try await waitUntil { waiting.exists && statusAction.exists }
+        XCTAssertEqual(desktop.frameCount, 0)
+        XCTAssertEqual(statusAction.label, "取消")
+        attachToolbarScreenshot(app, name: "Waiting for the first remote picture")
+        desktop.withholdFramesAfterConnection = nil
+        try await waitUntil { !waiting.exists && desktop.frameCount > 0 }
+
+        let mode = app.buttons["session.mode"]
+        mode.tap()
+        try await waitUntil { mode.label == "仅观察" }
+        desktop.withholdFramesAfterConnection = 1
+        let frames = desktop.frameCount
+        desktop.dropCurrentConnection()
+        try await waitUntil { desktop.acceptedConnections == 2 && waiting.exists }
+        XCTAssertEqual(desktop.frameCount, frames)
+        XCTAssertEqual(statusAction.label, "停止重新连接")
+        XCTAssertTrue(Self.hasColorChart(app.screenshot().image))
+        attachToolbarScreenshot(app, name: "Reconnecting while the old picture is still visible")
+        desktop.withholdFramesAfterConnection = nil
+        try await waitUntil { !waiting.exists && desktop.frameCount > frames }
+        XCTAssertEqual(mode.label, "仅观察")
+
+        desktop.withholdFramesAfterConnection = 2
+        desktop.dropCurrentConnection()
+        try await waitUntil { desktop.acceptedConnections == 3 && waiting.exists }
+        statusAction.tap()
+        XCTAssertTrue(app.buttons["session.reconnect"].waitForExistence(timeout: 8))
+        XCTAssertFalse(waiting.exists)
+        XCTAssertEqual(desktop.acceptedConnections, 3)
+    }
+
+    func testCancellingBeforeTheFirstPictureReturnsToTheLibrary() async throws {
+        let desktop = LocalTestDisplay()
+        desktop.expectsClientDisconnect = true
+        desktop.withholdFramesAfterConnection = 0
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        openChart(app, port: port)
+        let waiting = app.descendants(matching: .any)["session.waitingForScreen"].firstMatch
+        let cancel = app.buttons["session.statusAction"]
+        try await waitUntil { waiting.exists && cancel.isHittable }
+        cancel.tap()
+        XCTAssertTrue(app.buttons["library.quick"].waitForExistence(timeout: 8))
+        XCTAssertFalse(waiting.exists)
+        XCTAssertFalse(app.buttons["session.reconnect"].exists)
+        desktop.withholdFramesAfterConnection = nil
+        try await waitUntil { desktop.closedConnections == 1 }
+        XCTAssertEqual(desktop.acceptedConnections, 1)
+    }
+
     func testManualReconnectAfterPeerClosesUsesTheSameOpenSession() async throws {
         let desktop = LocalTestDisplay()
         let port = try await desktop.start()

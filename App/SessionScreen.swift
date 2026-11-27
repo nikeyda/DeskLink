@@ -131,7 +131,8 @@ struct SessionScreen: View {
                                  toggleFullScreen: toggleFullScreen, clipboardSynchronizer: clipboard,
                                  initialViewportSizing: initialSizing,
                                  pointerSpeed: cursorTrackingSpeed ?? pointerSpeed, touchGestures: gestures, onRemoteInput: remoteActivity,
-                                 onSharedClipboardUserChange: setClipboardSharing, hudMenuExtras: pointerMenuExtras)
+                                 onSharedClipboardUserChange: setClipboardSharing,
+                                 hostOwnsRecoveryChrome: true, hudMenuExtras: pointerMenuExtras)
             .controllingPointerMode($pointerMode)
             .desktopControls(controls)
             .onMonitorShortcut(chooseMonitor)
@@ -270,24 +271,11 @@ struct SessionScreen: View {
                     if privacy.locked {
                         Color.clear
                     } else {
-                        #if targetEnvironment(macCatalyst)
-                        if let group = monitorGroup {
-                            if let region = session.windowMonitorRegion(for: group.primary) {
-                                if observing { VNCMonitorPicture(session: session, region: region) }
-                                else { remoteDesktop.showingMonitor(in: region).ignoresSafeArea(.keyboard) }
-                            } else { ProgressView("等待远程画面…") }
-                        } else if observing { ObservedPicture(session: session) }
-                        else { remoteDesktop.ignoresSafeArea(.keyboard) }
-                        #else
-                        if observing {
-                            ObservedPicture(session: session, sizing: request.computer.initialViewportSizing ?? .fit)
-                        } else {
-                            InteractiveDesktop(desktop: remoteDesktop, session: session, controls: controls, bar: toolbar,
-                                               chooseMonitor: chooseMonitor, startDictation: { showsDictation = true },
-                                               captureScreenshot: captureScreenshot)
-                                .ignoresSafeArea(.keyboard)
+                        sessionPicture.overlay {
+                            ConnectionStatusOverlay(session: session) {
+                                closeSession(allowAction: false) { close(false) }
+                            }
                         }
-                        #endif
                     }
                 case .failed(let reason):
                     let failure = SessionConnectionFailure(session.lastError, setupRequiresEditing: setupRequiresEditing)
@@ -671,6 +659,35 @@ struct SessionScreen: View {
         #endif
     }
 
+    @ViewBuilder private var sessionPicture: some View {
+        #if targetEnvironment(macCatalyst)
+        if let group = monitorGroup {
+            if let region = session.windowMonitorRegion(for: group.primary) {
+                if observing { VNCMonitorPicture(session: session, region: region) }
+                else { remoteDesktop.showingMonitor(in: region).ignoresSafeArea(.keyboard) }
+            } else if session.connectionState.isConnected, session.hasPresentedCurrentPicture {
+                ProgressView("等待远程画面…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Color.black
+            }
+        } else if observing {
+            ObservedPicture(session: session, showsPlaceholder: false)
+        } else {
+            remoteDesktop.ignoresSafeArea(.keyboard)
+        }
+        #else
+        if observing {
+            ObservedPicture(session: session, showsPlaceholder: false, sizing: request.computer.initialViewportSizing ?? .fit)
+        } else {
+            InteractiveDesktop(desktop: remoteDesktop, session: session, controls: controls, bar: toolbar,
+                               chooseMonitor: chooseMonitor, startDictation: { showsDictation = true },
+                               captureScreenshot: captureScreenshot)
+                .ignoresSafeArea(.keyboard)
+        }
+        #endif
+    }
+
     private func finish(edit: Bool) {
         if !edit, session.fileTransfers.hasActiveTransfers { confirmClose = true; return }
         closeSession(allowAction: !edit) { close(edit) }
@@ -724,6 +741,7 @@ struct SessionScreen: View {
 /// Observe mode owns no input responder, clipboard controller or file drop target.
 struct ObservedPicture: View {
     let session: VNCSession
+    var showsPlaceholder = true
     var sizing: RemoteViewportSizing = .fit
 
     var body: some View {
@@ -733,7 +751,7 @@ struct ObservedPicture: View {
                 VNCMonitorPicture(session: session, sizing: sizing)
             } else if case let .image(image) = session.presentedFrame {
                 Image(decorative: image, scale: 1).resizable().scaledToFit()
-            } else {
+            } else if showsPlaceholder {
                 ProgressView().tint(.white)
             }
         }

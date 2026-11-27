@@ -741,6 +741,24 @@ public final class VNCSession {
     /// invalidate SwiftUI view bodies.
     public private(set) var hasPresentedStandardPicture = false
 
+    enum DesktopPictureState {
+        case waiting, waitingAfterReconnect, presented
+    }
+
+    private(set) var desktopPictureState: DesktopPictureState = .waiting
+    // The renderers' buffers are not observable. Track each first commit so
+    // the current monitor's picture can invalidate the waiting overlay.
+    private var presentedVideoDisplays: Set<Int> = []
+
+    /// A picture from the current connection and rendering mode. A retained
+    /// picture from a previous connection can remain visible during recovery.
+    public var hasPresentedCurrentPicture: Bool {
+        if isHighPerformanceMode {
+            return !presentedVideoDisplays.isEmpty && isPresentingPicture
+        }
+        return desktopPictureState == .presented
+    }
+
     /// Incremented whenever a new Standard-mode frame is published so external
     /// `@Observable` observers of `currentImage` still receive notifications.
     private var standardPresentedFrameRevision: UInt64 = 0
@@ -1498,14 +1516,25 @@ public final class VNCSession {
             })
         videoBandRenderer.onFrameCommitted = {
             [weak self] pixelBuffer, streamGeneration in
-            self?.considerAppleLoginVisionFrame(
+            guard let self else { return }
+            noteVideoPicture(display: 0)
+            considerAppleLoginVisionFrame(
                 .pixelBuffer(pixelBuffer),
                 source: "High Performance full frame",
                 highPerformanceGeneration: streamGeneration)
         }
+        secondaryVideoBandRenderer.onFrameCommitted = { [weak self] _, _ in
+            self?.noteVideoPicture(display: 1)
+        }
         #if canImport(UIKit)
         observeApplicationLifecycle()
         #endif
+    }
+
+    private func noteVideoPicture(display: Int) {
+        if isHighPerformanceMode, !presentedVideoDisplays.contains(display) {
+            presentedVideoDisplays.insert(display)
+        }
     }
 
     deinit {
@@ -1564,6 +1593,7 @@ public final class VNCSession {
         reconnectTask = nil
         intentionallyDisconnected = false
         hasEstablishedConnection = false
+        desktopPictureState = .waiting
         consecutiveMediaBootstrapReconnects = 0
         consecutiveMediaStreamRestarts = 0
         automaticRecoveryDeclined = false
@@ -1606,6 +1636,7 @@ public final class VNCSession {
         lastRequestedClientDisplaySize = nil
         diagnostics.isHighPerformanceMode = false
         invalidateVideoBandCoalescers()
+        presentedVideoDisplays.removeAll()
         videoBandRenderer.reset()
         secondaryVideoBandRenderer.reset()
         diagnostics.reset()
@@ -1684,6 +1715,7 @@ public final class VNCSession {
         backgroundVirtualDisplayExitTask = nil
         #endif
         connectionState = .disconnecting
+        desktopPictureState = .waiting
         logger.info("Disconnecting")
 
         // Cancel background tasks
@@ -1725,6 +1757,7 @@ public final class VNCSession {
         monitorOverride = nil
         invalidateStandardFramebufferPresentation()
         invalidateVideoBandCoalescers()
+        presentedVideoDisplays.removeAll()
         videoBandRenderer.reset()
         secondaryVideoBandRenderer.reset()
         videoStreamManager?.stopStream()
@@ -2652,6 +2685,7 @@ public final class VNCSession {
         // ServerInit allocates a new framebuffer even when a reconnect kept
         // the previous complete image on screen. Its initial-frame coverage
         // and all queued presentation work are therefore a new generation.
+        desktopPictureState = hasEstablishedConnection ? .waitingAfterReconnect : .waiting
         invalidateStandardFramebufferPresentation()
 
         serverName = serverInit.name
@@ -3284,6 +3318,7 @@ public final class VNCSession {
         fileTransfers.transportDidEnd()
         transportSession = nil
         activeRouteSupportsMedia = true
+        desktopPictureState = .waiting
         invalidateStandardFramebufferPresentation()
         if clearCredentials {
             activeCredentials = nil
@@ -4360,6 +4395,9 @@ public final class VNCSession {
         if !hasPresentedStandardPicture {
             hasPresentedStandardPicture = true
         }
+        if !isHighPerformanceMode, !hasPresentedCurrentPicture {
+            desktopPictureState = .presented
+        }
         standardPresentedFrameRevision &+= 1
         if configuration.promptForLoginPasswordAtLoginWindow,
            canSendLoginPassword {
@@ -4745,6 +4783,7 @@ public final class VNCSession {
         invalidateVideoBandCoalescers()
         let manager = videoStreamManager ?? VideoStreamManager()
         videoStreamManager = manager
+        presentedVideoDisplays.removeAll()
         videoBandRenderer.reset()
         secondaryVideoBandRenderer.reset()
 
