@@ -29485,6 +29485,22 @@
         }
       }
     },
+    "The password will be typed without submitting the remote form." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只输入密码，远程表单由你手动提交。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只輸入密碼，遠端表單由你手動提交。"
+          }
+        }
+      }
+    },
     "The password will be typed into the remote computer, followed by Return." : {
       "extractionState" : "stale",
       "localizations" : {

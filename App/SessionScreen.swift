@@ -205,6 +205,12 @@ struct SessionScreen: View {
                             #if targetEnvironment(macCatalyst)
                             MonitorMenu(session: session, select: chooseMonitor, split: showAllMonitorWindows,
                                         isSplit: monitorGroup != nil).labelStyle(.iconOnly)
+                            if !observing, session.canSendLoginPassword {
+                                PasswordTypingButton(controls: controls) {
+                                    Label("输入用户密码", systemImage: "key.fill").labelStyle(.iconOnly)
+                                }
+                                .accessibilityIdentifier("session.password")
+                            }
                             if #available(macCatalyst 26, *), !observing {
                                 Button { showsDictation = true } label: { Label("听写", systemImage: "mic").labelStyle(.iconOnly) }
                                     .accessibilityIdentifier("session.dictation")

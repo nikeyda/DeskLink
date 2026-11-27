@@ -350,8 +350,10 @@ struct InteractiveDesktop: View {
         } else if button == .spacer {
             Spacer().frame(width: size.points / 2).accessibilityHidden(true)
         } else if button == .password {
-            Button { controls.requestPasswordPrompt() } label: { icon(button.symbol) }
-                .disabled(!session.canSendLoginPassword).accessibilityLabel(button.title)
+            PasswordTypingButton(controls: controls) { icon(button.symbol) }
+                .disabled(!session.canSendLoginPassword)
+                .accessibilityLabel(button.title)
+                .accessibilityIdentifier("toolbar.password")
         } else {
             Menu {
                 switch button {

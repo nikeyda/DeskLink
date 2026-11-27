@@ -82,3 +82,4 @@
 "在此 Mac 上，VNC 链接将默认用远程随航打开。" = "VNC links on this Mac will open in Telescope by default.";
 "无法设置默认 VNC 应用" = "Couldn't Set the Default VNC App";
 "macOS 未将远程随航设为默认应用。" = "macOS didn't set Telescope as the default app.";
+"仅输入用户密码" = "Type User Password Only";

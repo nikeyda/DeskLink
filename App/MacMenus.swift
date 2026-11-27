@@ -104,6 +104,8 @@ struct MacMenus: Commands {
                 Divider()
                 Button("输入用户密码…") { desktop.controls.requestPasswordPrompt() }
                     .disabled(!desktop.session.canSendLoginPassword)
+                Button("仅输入用户密码") { desktop.controls.requestPasswordOnlyPrompt() }
+                    .disabled(!desktop.session.canSendLoginPassword)
             } else { Button("输入用户密码…") {}.disabled(true) }
         }
     }

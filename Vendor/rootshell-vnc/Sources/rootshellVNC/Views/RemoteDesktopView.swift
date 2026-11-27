@@ -70,6 +70,7 @@ public struct RemoteDesktopView: View {
     private var pointerModeSelection: Binding<RemotePointerMode> { hostPointerSelection ?? $localPointerMode }
     @State private var keyboardActive = false
     @State private var confirmPasswordSend = false
+    @State private var confirmPasswordOnly = false
     @State private var curtainPromptPresented = false
     @State private var keyboardCapture: VNCKeyboardCapture
     #if canImport(UIKit)
@@ -383,9 +384,11 @@ public struct RemoteDesktopView: View {
                     isPresented: $confirmPasswordSend,
                     titleVisibility: .visible
                 ) {
-                    Button(String(localized: "Type Password and Log In", bundle: .module)) {
-                        keyboardCapture.noteExternalInput()
-                        session.sendLoginPassword()
+                    if !confirmPasswordOnly {
+                        Button(String(localized: "Type Password and Log In", bundle: .module)) {
+                            keyboardCapture.noteExternalInput()
+                            session.sendLoginPassword()
+                        }
                     }
                     Button(String(localized: "Type Password Only", bundle: .module)) {
                         keyboardCapture.noteExternalInput()
@@ -393,7 +396,11 @@ public struct RemoteDesktopView: View {
                     }
                     Button(String(localized: "Cancel", bundle: .module), role: .cancel) {}
                 } message: {
-                    Text(String(localized: "The password will be typed into the remote computer. Type Password Only skips Return so you can submit it yourself.", bundle: .module))
+                    if confirmPasswordOnly {
+                        Text(String(localized: "The password will be typed without submitting the remote form.", bundle: .module))
+                    } else {
+                        Text(String(localized: "The password will be typed into the remote computer. Type Password Only skips Return so you can submit it yourself.", bundle: .module))
+                    }
                 }
                 .onChange(of: geometry.size) { _, newSize in
                     viewport.clampOffset(
@@ -504,7 +511,11 @@ public struct RemoteDesktopView: View {
             if new.curtainPrompts != old.curtainPrompts {
                 presentHostCurtainPrompt()
             }
-            if new.passwordPrompts != old.passwordPrompts { requestPasswordSend() }
+            if new.passwordOnlyPrompts != old.passwordOnlyPrompts {
+                requestPasswordSend(only: true)
+            } else if new.passwordPrompts != old.passwordPrompts {
+                requestPasswordSend()
+            }
         }
         #if canImport(UIKit)
         // The overlay's teardown never reports, so its last measurements would
@@ -876,6 +887,7 @@ public struct RemoteDesktopView: View {
         var fileTransferToggles = 0
         var curtainPrompts = 0
         var passwordPrompts = 0
+        var passwordOnlyPrompts = 0
     }
 
     private var desktopControlRequests: DesktopControlRequests {
@@ -883,7 +895,8 @@ public struct RemoteDesktopView: View {
         var requests = DesktopControlRequests(
             controller: desktopControls.identity,
             curtainPrompts: desktopControls.curtainPromptRequests,
-            passwordPrompts: desktopControls.passwordPromptRequests)
+            passwordPrompts: desktopControls.passwordPromptRequests,
+            passwordOnlyPrompts: desktopControls.passwordOnlyPromptRequests)
         #if canImport(UIKit)
         requests.fileTransferToggles = desktopControls.fileTransfersToggleRequests
         #endif
@@ -897,15 +910,18 @@ public struct RemoteDesktopView: View {
         curtainPromptPresented = true
     }
 
-    private func requestPasswordSend() {
-        guard session.canSendLoginPassword else { return }
+    private func requestPasswordSend() { requestPasswordSend(only: false) }
+
+    private func requestPasswordSend(only: Bool) {
+        guard session.canSendLoginPassword, !confirmPasswordSend else { return }
+        confirmPasswordOnly = only
         confirmPasswordSend = true
     }
 
     private func presentPendingLoginPasswordPrompt() {
         guard session.loginPasswordPromptPending else { return }
         guard session.consumeLoginPasswordPromptRequest() else { return }
-        confirmPasswordSend = true
+        requestPasswordSend()
     }
 
     private func requestDictation() {

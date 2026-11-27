@@ -28,6 +28,7 @@ public final class VNCDesktopControls {
     /// Ignored unless the session is connected and `supportsCurtainMode`.
     public private(set) var curtainPromptRequests = 0
     public private(set) var passwordPromptRequests = 0
+    public private(set) var passwordOnlyPromptRequests = 0
 
     public init() {}
 
@@ -46,4 +47,6 @@ public final class VNCDesktopControls {
     #endif
     public func requestCurtainPrompt() { curtainPromptRequests &+= 1 }
     public func requestPasswordPrompt() { passwordPromptRequests &+= 1 }
+    /// Prompts to type the password without submitting the remote form.
+    public func requestPasswordOnlyPrompt() { passwordOnlyPromptRequests &+= 1 }
 }
