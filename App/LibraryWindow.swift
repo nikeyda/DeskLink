@@ -252,6 +252,8 @@ struct LibraryWindow: View {
                     #endif
                 }
                 .id(activeSession.id)
+                .background(Color(uiColor: .systemBackground).ignoresSafeArea())
+                .preferredColorScheme(.dark)
             } else {
                 NavigationSplitView {
                     if usesUnifiedSearch {

@@ -157,6 +157,8 @@ struct MacMonitorWindow: View {
             if let id, group == nil { dismissWindow(id: MonitorWindowID.scene, value: id) }
         }
         .onDisappear { if let id { windows.closed(id) } }
+        .background(Color(uiColor: .systemBackground).ignoresSafeArea())
+        .preferredColorScheme(.dark)
     }
 }
 #endif
