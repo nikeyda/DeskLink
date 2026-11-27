@@ -2,6 +2,9 @@ import Foundation
 import Observation
 import RFBTransport
 import rootshellVNC
+#if !targetEnvironment(macCatalyst)
+import UIKit
+#endif
 
 enum PictureQuality: String, Codable, CaseIterable, Sendable { case standard, adaptive, lossless }
 enum ColorDepth: Int, Codable, CaseIterable, Sendable { case low = 8, medium = 16, full = 32 }
@@ -15,14 +18,16 @@ struct DesktopDimensions: Codable, Equatable, Sendable {
     static let standard = DesktopDimensions(width: 1440, height: 900)
 }
 
-enum DisplayClient: String, Codable, Sendable {
-    case mac, iPad
+enum DisplayClient: String, Codable, CaseIterable, Sendable {
+    case mac, iPad, iPhone, vision
 
-    static var current: Self {
+    @MainActor static var current: Self {
         #if targetEnvironment(macCatalyst)
         .mac
+        #elseif os(visionOS)
+        .vision
         #else
-        .iPad
+        UIDevice.current.userInterfaceIdiom == .phone ? .iPhone : .iPad
         #endif
     }
 }
@@ -44,7 +49,7 @@ struct DesktopDisplayPreferences: Codable, Equatable, Sendable {
     /// Resolve it for this connection without changing the archived preferences.
     func resolved(for client: DisplayClient) -> Self {
         var result = self
-        if layout == .virtualPair, client != .mac || quality != .adaptive {
+        if layout == .virtualPair, (client != .mac && client != .vision) || quality != .adaptive {
             result.layout = .single
         }
         if result.layout == .combined {
@@ -212,7 +217,7 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
 
     fileprivate var withoutSessionHistory: Self {
         var copy = withoutConnectionActivity
-        for client in [DisplayClient.mac, .iPad] {
+        for client in DisplayClient.allCases {
             var profile = copy.display(for: client)
             profile.lastMonitor = nil
             profile.windowedMonitors = nil
@@ -222,13 +227,20 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
     }
 
     func display(for client: DisplayClient) -> DesktopDisplayPreferences {
-        deviceDisplays?[client.rawValue] ?? legacyDisplay
+        deviceDisplays?[client.rawValue] ?? inheritedDisplay(for: client)
     }
 
-    mutating func setDisplay(_ value: DesktopDisplayPreferences, for client: DisplayClient) {
+    mutating func setDisplay(_ value: DesktopDisplayPreferences, for client: DisplayClient, explicit: Bool = false) {
         var profiles = deviceDisplays ?? [:]
-        profiles[client.rawValue] = value == legacyDisplay ? nil : value
+        // An explicit phone profile must stay independent of later tablet edits.
+        let keepsPhoneProfile = client == .iPhone && (explicit || profiles[client.rawValue] != nil)
+        profiles[client.rawValue] = value == inheritedDisplay(for: client) && !keepsPhoneProfile ? nil : value
         deviceDisplays = profiles.isEmpty ? nil : profiles
+    }
+
+    private func inheritedDisplay(for client: DisplayClient) -> DesktopDisplayPreferences {
+        if client == .iPhone, let tablet = deviceDisplays?[DisplayClient.iPad.rawValue] { return tablet }
+        return legacyDisplay
     }
 
     private var legacyDisplay: DesktopDisplayPreferences {

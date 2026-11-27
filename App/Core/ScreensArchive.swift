@@ -3,8 +3,8 @@ import RFBTransport
 import rootshellVNC
 
 private extension FramebufferQuality.Scope {
-    init?(screensCompressionMode: Int) {
-        switch screensCompressionMode {
+    init?(screensPolicy: Int) {
+        switch screensPolicy {
         case 0: self = .never
         case 1: self = .remoteOnly
         case 2: self = .always
@@ -12,11 +12,30 @@ private extension FramebufferQuality.Scope {
         }
     }
 
-    var screensCompressionMode: Int {
+    var screensPolicy: Int {
         switch self {
         case .never: 0
         case .remoteOnly: 1
         case .always: 2
+        }
+    }
+}
+
+private extension ColorDepth {
+    init?(screensColorDepth: Int) {
+        switch screensColorDepth {
+        case 3: self = .low
+        case 1: self = .medium
+        case 2: self = .full
+        default: return nil
+        }
+    }
+
+    var screensColorDepth: Int {
+        switch self {
+        case .low: 3
+        case .medium: 1
+        case .full: 2
         }
     }
 }
@@ -60,6 +79,46 @@ struct ScreensArchive: Decodable {
 
     private struct User: Decodable { let username: String? }
 
+    private struct ClientDisplayProfile: Decodable {
+        let renderingProtocol: Int?
+        let sizingMode: String?
+        let selectedVirtualDisplayCount: Int?
+        let customWidth: Int?
+        let customHeight: Int?
+        let useRetina: Bool?
+
+        func apply(to display: inout DesktopDisplayPreferences, for client: DisplayClient) {
+            guard renderingProtocol == 1 else { return }
+            display.quality = .adaptive
+            display.matchWindow = true
+            display.retinaResolution = useRetina == false ? false : nil
+            guard sizingMode == "custom" else { return }
+            if let customWidth, let customHeight {
+                let size = DesktopDimensions(width: customWidth, height: customHeight)
+                if size.isSupported { display.fixedDesktop = size }
+            }
+            if selectedVirtualDisplayCount == 2 && (client == .mac || client == .vision) {
+                display.layout = .virtualPair
+            }
+        }
+    }
+
+    private struct ClientDisplayProfiles: Decodable {
+        let byClient: [String: ClientDisplayProfile]
+
+        init(from decoder: Decoder) throws {
+            // The original dictionary has enum keys. Swift's Codable writes
+            // alternating keys and values instead of a JSON object for it.
+            var container = try decoder.unkeyedContainer()
+            var profiles: [String: ClientDisplayProfile] = [:]
+            while !container.isAtEnd {
+                let family = try container.decode(String.self)
+                profiles[family] = try container.decode(ClientDisplayProfile.self)
+            }
+            byClient = profiles
+        }
+    }
+
     private struct Screen: Decodable {
         let version: Int
         let id: UUID
@@ -71,6 +130,9 @@ struct ScreensArchive: Decodable {
         let users: [User]
         let authenticationMethod: Int
         let operatingSystem: Int
+        let colorDepth: Int?
+        let adaptiveQualityMode: Int?
+        let desktopDisplayPreferences: ClientDisplayProfiles?
         let hardwareKeyboardMode: Int?
         let permuteCmdAndCtrlModifierKeys: Bool?
         let showLocalCursor: Bool?
@@ -120,6 +182,8 @@ struct ScreensArchive: Decodable {
             }
             result.screensOperatingSystem = operatingSystem
             result.screensAuthenticationMethod = authenticationMethod
+            let depth = colorDepth.flatMap(ColorDepth.init(screensColorDepth:))
+            result.colorDepth = depth == .full ? nil : depth
             result.swapsHardwareCommandAndControl = permuteCmdAndCtrlModifierKeys == true ? true : nil
             result.showsLocalCursor = showLocalCursor
             result.usesFallbackCursor = useFallbackCursor == true ? true : nil
@@ -128,7 +192,10 @@ struct ScreensArchive: Decodable {
                 result.disabledVNCCodecs = Set(disabledCodecs).sorted()
             }
             var framebuffer = FramebufferQuality()
-            if let mode = imageCompressionMode, let compression = FramebufferQuality.Scope(screensCompressionMode: mode) {
+            if let mode = adaptiveQualityMode, let adaptive = FramebufferQuality.Scope(screensPolicy: mode) {
+                framebuffer.adaptive = adaptive
+            }
+            if let mode = imageCompressionMode, let compression = FramebufferQuality.Scope(screensPolicy: mode) {
                 framebuffer.compression = compression
             }
             if let quality = tightVncJPEGEncodingQuality, FramebufferQuality.tightJPEGQualityRange.contains(quality),
@@ -159,12 +226,13 @@ struct ScreensArchive: Decodable {
                 result.remoteAudio = false
                 result.smoothVideo = false
             }
-            if let rememberLastSelectedDisplay {
-                for client in [DisplayClient.mac, .iPad] {
-                    var display = result.display(for: client)
-                    display.rememberMonitor = rememberLastSelectedDisplay
-                    result.setDisplay(display, for: client)
-                }
+            let commonDisplay = result.display(for: .mac)
+            for client in DisplayClient.allCases {
+                var display = commonDisplay
+                let profile = desktopDisplayPreferences?.byClient[client.rawValue]
+                profile?.apply(to: &display, for: client)
+                display.rememberMonitor = rememberLastSelectedDisplay
+                result.setDisplay(display, for: client, explicit: profile != nil)
             }
             if useSecureConnection {
                 let names = sshUsers ?? []
@@ -223,7 +291,7 @@ struct ScreensArchive: Decodable {
 extension ScreensArchive {
     /// New, password-only VNC records use the generic host profile. A Mac user
     /// profile requires evidence of an Apple session or an imported profile.
-    static func export(_ archive: LibraryArchive, knownMacs: Set<UUID>, sharedClipboard: Bool,
+    @MainActor static func export(_ archive: LibraryArchive, knownMacs: Set<UUID>, sharedClipboard: Bool,
                        preferences: UserDefaults = .standard) throws -> Data {
         guard let file = Bundle.main.url(forResource: "ScreensV6Defaults", withExtension: "plist"),
               let defaults = try PropertyListSerialization.propertyList(from: Data(contentsOf: file), format: nil) as? [String: Any] else {
@@ -281,8 +349,11 @@ extension ScreensArchive {
             record["useFallbackCursor"] = computer.usesFallbackCursor == true
             if let speed = CursorTrackingSpeed.validated(computer.cursorTrackingSpeed) { record["cursorTrackingSpeed"] = speed }
             record["disabledCodecs"] = computer.disabledVNCCodecs ?? []
+            let display = computer.display(for: .current)
             let framebuffer = computer.framebufferQuality ?? FramebufferQuality()
-            record["imageCompressionMode"] = framebuffer.compression.screensCompressionMode
+            record["colorDepth"] = (display.colorDepth ?? .full).screensColorDepth
+            record["adaptiveQualityMode"] = display.quality == .lossless ? 0 : framebuffer.adaptive.screensPolicy
+            record["imageCompressionMode"] = display.quality == .lossless ? 0 : framebuffer.compression.screensPolicy
             record["tightVncJPEGEncodingQuality"] = framebuffer.resolvedTightJPEGQuality
             record["turnOffZooming"] = computer.allowsViewportZoom == false
             record["initialScalingMode"] = (computer.initialViewportSizing ?? .fit).rawValue
@@ -292,9 +363,9 @@ extension ScreensArchive {
             record["allowBellSignal"] = computer.allowsRemoteBell != false
             record["permuteCmdAndCtrlModifierKeys"] = computer.swapsHardwareCommandAndControl == true
             record["enableMomentumScrolling"] = computer.momentumScrolling ?? true
-            let display = computer.display(for: .current)
             record["streamVideoAndAudio"] = display.remoteAudio && display.smoothVideo != false
             record["rememberLastSelectedDisplay"] = display.rememberMonitor ?? true
+            record["desktopDisplayPreferences"] = encodedDisplayProfiles(for: computer)
             return record
         }
         let folders: [[String: Any]] = archive.folders.map { name in
@@ -304,6 +375,25 @@ extension ScreensArchive {
         }
         let result: [String: Any] = ["filename": "Telescope", "screens": screens, "folders": folders, "scFolders": [], "tsFolders": []]
         return try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+    }
+
+    private static func encodedDisplayProfiles(for computer: Computer) -> [Any] {
+        DisplayClient.allCases.flatMap { client -> [Any] in
+            let display = computer.display(for: client).resolved(for: client)
+            guard display.quality == .adaptive || computer.deviceDisplays?[client.rawValue] != nil else { return [] }
+            let size = display.fixedDesktop.flatMap { $0.isSupported ? $0 : nil }
+            let defaults = DesktopDimensions.standard
+            let profile: [String: Any] = [
+                "renderingProtocol": display.quality == .adaptive ? 1 : 0,
+                "hasChosenRenderingProtocol": true,
+                "sizingMode": size == nil ? "dynamic" : "custom",
+                "selectedVirtualDisplayCount": display.layout == .virtualPair ? 2 : 1,
+                "customWidth": (size ?? defaults).width,
+                "customHeight": (size ?? defaults).height,
+                "useRetina": display.retinaResolution ?? true,
+            ]
+            return [client.rawValue, profile]
+        }
     }
 
     enum ExportError: LocalizedError {

@@ -119,8 +119,10 @@ struct SessionRequest: Identifiable {
 }
 
 extension Computer {
+    @MainActor
     var configuration: VNCConfiguration { configuration(preferences: .standard) }
 
+    @MainActor
     func configuration(preferences: UserDefaults, streamingPaused: Bool = false) -> VNCConfiguration {
         let display = display(for: .current).resolved(for: .current)
         let picture: VNCConfiguration.VideoQualityMode = switch display.quality {
@@ -803,7 +805,7 @@ struct ConnectionEditor: View {
             display.lastMonitor = old.lastMonitor
             display.windowedMonitors = old.windowedMonitors
         }
-        entry.setDisplay(display, for: .current)
+        entry.setDisplay(display, for: .current, explicit: true)
         entry.pointerModeOverride = pointerMode
         entry.cursorTrackingSpeed = cursorTrackingSpeed
         entry.allowsViewportZoom = allowsViewportZoom ? nil : false

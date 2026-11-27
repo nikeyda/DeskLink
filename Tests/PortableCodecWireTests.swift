@@ -33,6 +33,31 @@ final class PortableCodecWireTests: XCTestCase {
         XCTAssertTrue(disabled.isDisjoint(with: qualityEncodings))
     }
 
+    func testImportedScreensColorDepthIsSentInTheFramebufferHandshake() async throws {
+        let bundle = Bundle(for: Self.self)
+        let fixture = try XCTUnwrap(bundle.url(forResource: "screens-generic", withExtension: "json")
+            ?? bundle.url(forResource: "screens-generic", withExtension: "json", subdirectory: "Fixtures"))
+        let source = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: fixture)) as? [String: Any])
+        let entries = try XCTUnwrap(source["screens"] as? [[String: Any]])
+        for (depth, bits) in [(3, UInt8(8)), (1, 16), (2, 32)] {
+            var document = source
+            var entry = try XCTUnwrap(entries.first)
+            entry["colorDepth"] = depth
+            document["screens"] = [entry]
+            let archive = try ScreensArchive.convert(JSONSerialization.data(withJSONObject: document))
+            let computer = try XCTUnwrap(archive.computers.first)
+            let peer = CodecHandshakePeer(local: true)
+            var config = computer.configuration
+            config.transportProvider = { _, _ in peer }
+            let session = VNCSession(configuration: config)
+            defer { session.disconnect() }
+            try await session.connect(credentials: VNCCredentials(host: computer.endpoint.host, port: computer.endpoint.port,
+                                                                   password: "", username: nil))
+            let requested = await peer.requestedBitsPerPixel
+            XCTAssertEqual(requested, bits)
+        }
+    }
+
     private func advertised(disabling codes: [Int32] = [], quality: FramebufferQuality = FramebufferQuality(compression: .always),
                             local: Bool = false) async throws -> Set<Int32> {
         let peer = CodecHandshakePeer(local: local)
@@ -60,6 +85,7 @@ private actor CodecHandshakePeer: RFBConnection {
         0, 0, 0, 4, 84, 101, 115, 116 // Server name: Test.
     ])
     private(set) var encodings = Set<Int32>()
+    private(set) var requestedBitsPerPixel: UInt8?
 
     init(local: Bool) { self.local = local }
 
@@ -83,6 +109,7 @@ private actor CodecHandshakePeer: RFBConnection {
         let bytes = [UInt8](data)
         // SetPixelFormat and SetEncodings may be issued in one write.
         let offset = bytes.count >= 20 && bytes[0] == 0 ? 20 : 0
+        if offset != 0 { requestedBitsPerPixel = bytes[4] }
         guard bytes.count >= offset + 4, bytes[offset] == 2 else { return }
         let start = offset + 4
         let end = start + 4 * (Int(bytes[offset + 2]) * 256 + Int(bytes[offset + 3]))

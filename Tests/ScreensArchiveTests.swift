@@ -71,6 +71,101 @@ final class ScreensArchiveTests: XCTestCase {
         XCTAssertEqual(entry.usesMacHardwareKeyPositions, false)
     }
 
+    func testDisplayColorDepthAndAdaptivePolicySurviveBothArchiveFormats() throws {
+        for (wire, bits, policyWire, policy) in [(3, 8, 0, FramebufferQuality.Scope.never),
+                                                (1, 16, 1, .remoteOnly), (2, 32, 2, .always)] {
+            let input = try modified(fixture: "screens-generic") {
+                $0["colorDepth"] = wire
+                $0["adaptiveQualityMode"] = policyWire
+            }
+            let imported = try ScreensArchive.convert(input)
+            let stored = try LibraryArchive.read(imported.encoded())
+            let computer = try XCTUnwrap(stored.computers.first)
+            XCTAssertEqual(computer.display(for: .current).colorDepth?.rawValue ?? 32, bits)
+            XCTAssertEqual(Int(computer.configuration.preferredPixelFormat?.bitsPerPixel ?? 32), bits)
+            XCTAssertEqual(computer.configuration.framebufferQuality?.adaptive, policy)
+            let output = try ScreensArchive.export(stored, knownMacs: [], sharedClipboard: true)
+            let document = try XCTUnwrap(JSONSerialization.jsonObject(with: output) as? [String: Any])
+            let entry = try XCTUnwrap((document["screens"] as? [[String: Any]])?.first)
+            XCTAssertEqual(entry["colorDepth"] as? Int, wire)
+            XCTAssertEqual(entry["adaptiveQualityMode"] as? Int, policyWire)
+        }
+    }
+
+    func testDisplayProfilesImportPerClientAndDriveTheConnectionConfiguration() throws {
+        func profile(_ mode: String, width: Int, height: Int, count: Int, retina: Bool) -> [String: Any] {
+            ["renderingProtocol": 1, "hasChosenRenderingProtocol": true, "sizingMode": mode,
+             "selectedVirtualDisplayCount": count, "customWidth": width, "customHeight": height, "useRetina": retina]
+        }
+        let input = try modified {
+            $0["desktopDisplayPreferences"] = [
+                "mac", profile("custom", width: 1680, height: 1050, count: 2, retina: false),
+                "iPad", profile("dynamic", width: 1440, height: 900, count: 1, retina: true),
+                "iPhone", profile("custom", width: 960, height: 540, count: 1, retina: false),
+                "vision", profile("custom", width: 1920, height: 1080, count: 2, retina: true),
+            ] as [Any]
+        }
+        let imported = try ScreensArchive.convert(input)
+        let stored = try LibraryArchive.read(imported.encoded())
+        let computer = try XCTUnwrap(stored.computers.first)
+        XCTAssertEqual(computer.display(for: .mac).layout, .virtualPair)
+        XCTAssertEqual(computer.display(for: .mac).fixedDesktop, DesktopDimensions(width: 1680, height: 1050))
+        XCTAssertEqual(computer.display(for: .mac).retinaResolution, false)
+        XCTAssertEqual(computer.display(for: .iPad).layout, .single)
+        XCTAssertTrue(computer.display(for: .iPad).matchWindow)
+        XCTAssertNil(computer.display(for: .iPad).fixedDesktop)
+        XCTAssertEqual(computer.display(for: .iPhone).fixedDesktop, DesktopDimensions(width: 960, height: 540))
+
+        let configuration = computer.configuration
+        XCTAssertTrue(configuration.enableHighPerformanceMode)
+        XCTAssertEqual(configuration.displaySizingMode, .matchClient)
+        switch DisplayClient.current {
+        case .mac:
+            XCTAssertEqual(configuration.displayMode, .twoVirtualDisplays)
+            XCTAssertEqual(configuration.fixedDesktopSize, CGSize(width: 1680, height: 1050))
+            XCTAssertFalse(configuration.usesRetinaResolution)
+        case .iPad:
+            XCTAssertEqual(configuration.displayMode, .oneDisplay)
+            XCTAssertNil(configuration.fixedDesktopSize)
+            XCTAssertTrue(configuration.usesRetinaResolution)
+        case .iPhone:
+            XCTAssertEqual(configuration.fixedDesktopSize, CGSize(width: 960, height: 540))
+        case .vision:
+            XCTAssertEqual(configuration.fixedDesktopSize, CGSize(width: 1920, height: 1080))
+        }
+
+        let output = try ScreensArchive.export(stored, knownMacs: [], sharedClipboard: true)
+        let roundTrip = try XCTUnwrap(ScreensArchive.convert(output).computers.first)
+        for client in DisplayClient.allCases { XCTAssertEqual(roundTrip.display(for: client), computer.display(for: client)) }
+    }
+
+    func testOldProfilesAndUnsupportedDepthsKeepTheirFallbacks() throws {
+        let old = try modified {
+            $0["colorDepth"] = 0
+            $0["adaptiveQualityMode"] = 99
+            $0.removeValue(forKey: "desktopDisplayPreferences")
+        }
+        var computer = try XCTUnwrap(ScreensArchive.convert(old).computers.first)
+        XCTAssertNil(computer.display(for: .current).colorDepth)
+        XCTAssertEqual(computer.display(for: .mac).quality, .standard)
+        XCTAssertEqual(computer.configuration.framebufferQuality?.adaptive, .always)
+
+        var previousMobileProfile = computer.display(for: .iPad)
+        previousMobileProfile.quality = .adaptive
+        computer.setDisplay(previousMobileProfile, for: .iPad)
+        XCTAssertEqual(computer.display(for: .iPhone), previousMobileProfile)
+        var phoneProfile = previousMobileProfile
+        phoneProfile.fixedDesktop = DesktopDimensions(width: 960, height: 540)
+        computer.setDisplay(phoneProfile, for: .iPhone)
+        XCTAssertEqual(computer.display(for: .iPhone), phoneProfile)
+        XCTAssertEqual(computer.display(for: .iPad), previousMobileProfile)
+
+        computer.setDisplay(previousMobileProfile, for: .iPhone, explicit: true)
+        computer.setDisplay(phoneProfile, for: .iPad)
+        XCTAssertEqual(computer.display(for: .iPhone), previousMobileProfile)
+        XCTAssertEqual(computer.display(for: .iPad), phoneProfile)
+    }
+
     func testMacKeyboardPositionPreferenceSurvivesScreensRoundTrip() throws {
         var source = try ScreensArchive.convert(fixture("screens-direct"))
         XCTAssertEqual(source.computers.first?.usesMacHardwareKeyPositions, true)
