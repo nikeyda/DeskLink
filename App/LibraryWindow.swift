@@ -145,6 +145,7 @@ struct LibraryWindow: View {
     @State private var historicalReport: ConnectionReport?
     @State private var selectedPreview: SavedDesktopPreview?
     #if targetEnvironment(macCatalyst)
+    @Environment(MacAvailability.self) private var availability
     @State private var showsDiagnostics = false
     #endif
 
@@ -241,6 +242,9 @@ struct LibraryWindow: View {
                 .focusedSceneValue(\.deskLinkLibrary, libraryMenu)
                 #endif
                 .onAppear {
+                    #if targetEnvironment(macCatalyst)
+                    availability.libraryStartup.libraryAppeared(restoringConnection: initialComputer != nil)
+                    #endif
                     importPendingArchives()
                     if !openedInitialComputer, let initialComputer {
                         openedInitialComputer = true
@@ -382,6 +386,9 @@ struct LibraryWindow: View {
             exportDocument = nil
         }
         .onOpenURL { url in
+            #if targetEnvironment(macCatalyst)
+            availability.libraryStartup.openRequestedContent()
+            #endif
             do {
                 if url.isFileURL && ["desklink", "screens"].contains(url.pathExtension.lowercased()) {
                     try receiveArchive(at: url)
