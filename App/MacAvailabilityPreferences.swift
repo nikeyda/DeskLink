@@ -142,6 +142,14 @@ struct MacRemoteAccessPreferences: View {
 
     private var manualEndpoint: Endpoint? { try? Endpoint(address: address, defaultPort: service.port) }
 
+    private var switchToManual: some View {
+        Button("改用手动地址") {
+            access.apply(nil)
+            automatic = false
+        }
+        .accessibilityIdentifier("remoteAccess.useManual")
+    }
+
     var body: some View {
         Form {
             Section {
@@ -182,15 +190,19 @@ struct MacRemoteAccessPreferences: View {
                     switch access.status {
                     case .off: EmptyView()
                     case .waiting: ProgressView("正在等待路由器分配地址…")
-                    case .unavailable(let code):
-                        if let code { Text("未取得端口映射（\(String(code))）") }
-                        else { Text("路由器未提供可用的地址和端口。") }
+                    case .unavailable:
+                        Text("路由器未提供可用的地址和端口。")
                         Button("重试") { access.apply(access.configuration) }
+                        switchToManual
+                    case .notPublic(let endpoint):
+                        Text("自动映射未取得公网地址。")
+                            .accessibilityIdentifier("remoteAccess.noPublicAddress")
+                        if let endpoint { LabeledContent("路由器返回的地址", value: endpoint.address) }
+                        switchToManual
                     case .ready(let endpoint):
                         LabeledContent("外部主机", value: endpoint.host)
                         LabeledContent("外部端口", value: String(endpoint.port))
-                        if let service = access.configuration?.service,
-                           let link = service.link(to: endpoint), let observationLink = service.link(to: endpoint, observe: true) {
+                        if let link = access.connectionLink(), let observationLink = access.connectionLink(observe: true) {
                             Menu("分享连接链接", systemImage: "square.and.arrow.up") {
                                 ShareLink("打开连接", item: link)
                                 ShareLink("以仅观察打开", item: observationLink)

@@ -1,5 +1,6 @@
 #if targetEnvironment(macCatalyst)
 import XCTest
+import Network
 import dnssd
 @testable import DeskLink
 
@@ -18,16 +19,16 @@ import dnssd
         access.apply(.manual(.ssh, external))
         let reopened = MacRemoteAccess(defaults: defaults, startMapping: mapping)
         XCTAssertEqual(reopened.status, .ready(external))
-        let ssh = try XCTUnwrap(reopened.configuration?.service.link(to: external))
+        let ssh = try XCTUnwrap(reopened.connectionLink())
         XCTAssertEqual(try ConnectionRoute(url: ssh), .secureAddress(try Endpoint(address: "2001:db8::10"), sshPort: 42422))
-        let observingSSH = try XCTUnwrap(reopened.configuration?.service.link(to: external, observe: true))
+        let observingSSH = try XCTUnwrap(reopened.connectionLink(observe: true))
         XCTAssertEqual(try ConnectionRoute(url: observingSSH),
                        .sharedAddress(try Endpoint(address: "2001:db8::10"), sshPort: 42422, server: nil,
                                       options: .init(observe: true)))
         reopened.apply(.manual(.screenSharing, external))
-        let vnc = try XCTUnwrap(reopened.configuration?.service.link(to: external))
+        let vnc = try XCTUnwrap(reopened.connectionLink())
         XCTAssertEqual(try ConnectionRoute(url: vnc), .address(external))
-        let observingVNC = try XCTUnwrap(reopened.configuration?.service.link(to: external, observe: true))
+        let observingVNC = try XCTUnwrap(reopened.connectionLink(observe: true))
         XCTAssertEqual(try ConnectionRoute(url: observingVNC),
                        .sharedAddress(external, sshPort: nil, server: nil, options: .init(observe: true)))
         let links = try JSONEncoder().encode(["ssh": ssh.absoluteString, "direct": vnc.absoluteString,
@@ -53,13 +54,15 @@ import dnssd
         XCTAssertTrue(requested.isEmpty)
         access.apply(.automatic(.ssh))
         XCTAssertEqual(access.status, .waiting)
-        let initial = MacRemoteAccess.mappingStatus(code: 0, address: UInt32(0xCB00712A).bigEndian, port: UInt16(48130).bigEndian)
-        reply?(initial)
-        XCTAssertEqual(access.status, .ready(try Endpoint(address: "203.0.113.42:48130")))
+        reply?(try mappingResponse("192.0.0.9", port: 48130))
+        XCTAssertEqual(access.status, .ready(try Endpoint(address: "192.0.0.9:48130")))
+        XCTAssertNotNil(access.connectionLink())
         reply?(MacRemoteAccess.mappingStatus(code: 0, address: 0, port: 0))
         XCTAssertEqual(access.status, .unavailable(nil))
-        reply?(MacRemoteAccess.mappingStatus(code: 0, address: UInt32(0xCB00712B).bigEndian, port: UInt16(48231).bigEndian))
-        XCTAssertEqual(access.status, .ready(try Endpoint(address: "203.0.113.43:48231")))
+        XCTAssertNil(access.connectionLink())
+        reply?(try mappingResponse("192.0.0.10", port: 48231))
+        XCTAssertEqual(access.status, .ready(try Endpoint(address: "192.0.0.10:48231")))
+        XCTAssertNotNil(access.connectionLink(observe: true))
         access.apply(.automatic(.screenSharing))
         XCTAssertEqual(requested, [22, 5900])
         XCTAssertEqual(cancelled, 1)
@@ -69,6 +72,63 @@ import dnssd
         access.apply(nil)
         XCTAssertEqual(cancelled, 2)
         XCTAssertEqual(access.status, .off)
+    }
+
+    func testPrivateRouterAddressAndDoubleNATDoNotProduceShareLinks() throws {
+        var reply: ((MacRemoteAccess.Status) -> Void)?
+        let access = MacRemoteAccess(defaults: defaults) { _, update in reply = update; return {} }
+        access.apply(.automatic(.ssh))
+        for host in ["10.0.0.1", "100.64.0.1", "100.127.255.254", "127.0.0.1", "169.254.2.2",
+                     "172.16.2.2", "172.31.255.254", "192.168.0.2", "192.0.2.9", "198.18.0.1", "224.0.0.1"] {
+            let local = try Endpoint(address: "\(host):42422")
+            reply?(try mappingResponse(host, port: 42422))
+            XCTAssertEqual(access.status, .notPublic(local), host)
+            XCTAssertNil(access.connectionLink(), host)
+            XCTAssertNil(access.connectionLink(observe: true), host)
+        }
+        let doubleNAT = Int32(kDNSServiceErr_DoubleNAT)
+        reply?(try mappingResponse("192.0.0.9", port: 42422, code: doubleNAT))
+        XCTAssertEqual(access.status, .notPublic(try Endpoint(address: "192.0.0.9:42422")))
+        XCTAssertNil(access.connectionLink())
+        reply?(MacRemoteAccess.mappingStatus(code: doubleNAT, address: 0, port: 0))
+        XCTAssertEqual(access.status, .notPublic(nil))
+
+        // An explicit address can be intentionally reachable via a VPN.
+        let manual = try Endpoint(address: "100.64.0.4:42422")
+        access.apply(.manual(.ssh, manual))
+        XCTAssertEqual(access.status, .ready(manual))
+        XCTAssertNotNil(access.connectionLink(observe: true))
+    }
+
+    func testSupersededRepliesCannotReplaceTheCurrentAddressOrRestoreSharing() throws {
+        var replies: [(MacRemoteAccess.Status) -> Void] = []
+        let stale = try mappingResponse("192.0.0.9", port: 42422)
+        let access = MacRemoteAccess(defaults: defaults) { _, update in
+            replies.append(update)
+            return { update(stale) }
+        }
+        access.apply(.automatic(.ssh))
+        access.apply(.automatic(.screenSharing))
+        replies[0](stale)
+        XCTAssertEqual(access.status, .waiting)
+        XCTAssertNil(access.connectionLink())
+
+        let active = try mappingResponse("192.0.0.10", port: 42600)
+        replies[1](active)
+        XCTAssertEqual(access.status, active)
+        XCTAssertNotNil(access.connectionLink())
+
+        let manual = try Endpoint(address: "studio.fixture.invalid:42800")
+        access.apply(.manual(.screenSharing, manual))
+        replies[1](stale)
+        XCTAssertEqual(access.status, .ready(manual))
+        let link = try XCTUnwrap(access.connectionLink())
+        XCTAssertEqual(try ConnectionRoute(url: link), .address(manual))
+        access.apply(nil)
+        replies[0](stale)
+        replies[1](active)
+        XCTAssertEqual(access.status, .off)
+        XCTAssertNil(access.connectionLink(observe: true))
     }
 
     func testFailureToStartCanBeRetriedAndAnEnabledConfigurationRestarts() throws {
@@ -86,6 +146,12 @@ import dnssd
         let reopened = MacRemoteAccess(defaults: defaults, startMapping: mapping)
         XCTAssertEqual(reopened.configuration, .automatic(.ssh))
         XCTAssertEqual(attempts, 3)
+    }
+
+    private func mappingResponse(_ host: String, port: UInt16, code: Int32 = 0) throws -> MacRemoteAccess.Status {
+        let ipv4 = try XCTUnwrap(IPv4Address(host))
+        let address = ipv4.rawValue.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }
+        return MacRemoteAccess.mappingStatus(code: code, address: address, port: port.bigEndian)
     }
 }
 #endif

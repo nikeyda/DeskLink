@@ -33,13 +33,14 @@ final class MacRemoteAccess {
     }
 
     enum Status: Equatable {
-        case off, waiting, unavailable(Int32?), ready(Endpoint)
+        case off, waiting, unavailable(Int32?), notPublic(Endpoint?), ready(Endpoint)
     }
 
     typealias StartMapping = (UInt16, @escaping (Status) -> Void) throws -> () -> Void
     private let defaults: UserDefaults
     private let startMapping: StartMapping
     private var cancelMapping: (() -> Void)?
+    private var mappingRequest: UUID?
     private static let settingsKey = "mac.remoteAccess.configuration"
     private(set) var configuration: Configuration?
     private(set) var status: Status = .off
@@ -54,6 +55,7 @@ final class MacRemoteAccess {
     }
 
     func apply(_ configuration: Configuration?) {
+        mappingRequest = nil
         cancelMapping?()
         cancelMapping = nil
         self.configuration = configuration
@@ -67,12 +69,23 @@ final class MacRemoteAccess {
         case .manual(_, let endpoint): status = .ready(endpoint)
         case .automatic(let service):
             status = .waiting
+            let request = UUID()
+            mappingRequest = request
             do {
-                cancelMapping = try startMapping(service.port) { [weak self] in self?.status = $0 }
+                cancelMapping = try startMapping(service.port) { [weak self] status in
+                    guard let self, self.mappingRequest == request else { return }
+                    self.status = status
+                }
             } catch {
+                mappingRequest = nil
                 status = .unavailable(Int32(clamping: (error as NSError).code))
             }
         }
+    }
+
+    func connectionLink(observe: Bool = false) -> URL? {
+        guard case .ready(let endpoint) = status else { return nil }
+        return configuration?.service.link(to: endpoint, observe: observe)
     }
 }
 
@@ -119,12 +132,28 @@ final class MacRemoteAccess {
 
 extension MacRemoteAccess {
     static func mappingStatus(code: Int32, address: UInt32, port: UInt16) -> Status {
-        guard code == kDNSServiceErr_NoError else { return .unavailable(code) }
+        let doubleNAT = code == kDNSServiceErr_DoubleNAT
+        guard code == kDNSServiceErr_NoError || doubleNAT else { return .unavailable(code) }
         guard address != 0, port != 0,
               let ip = IPv4Address(withUnsafeBytes(of: address) { Data($0) }),
               let endpoint = try? Endpoint(address: ip.debugDescription, defaultPort: UInt16(bigEndian: port))
-        else { return .unavailable(nil) }
+        else { return doubleNAT ? .notPublic(nil) : .unavailable(nil) }
+        guard !doubleNAT, isPublicIPv4(ip) else { return .notPublic(endpoint) }
         return .ready(endpoint)
+    }
+
+    private static func isPublicIPv4(_ address: IPv4Address) -> Bool {
+        let octets = Array(address.rawValue)
+        // IANA non-global address ranges, plus multicast destinations.
+        switch (octets[0], octets[1], octets[2], octets[3]) {
+        case (192, 0, 0, 9...10): return true
+        case (0, _, _, _), (10, _, _, _), (100, 64...127, _, _), (127, _, _, _),
+             (169, 254, _, _), (172, 16...31, _, _), (192, 168, _, _),
+             (192, 0, 0, _), (192, 0, 2, _), (192, 88, 99, _),
+             (198, 18...19, _, _), (198, 51, 100, _), (203, 0, 113, _), (224...255, _, _, _):
+            return false
+        default: return true
+        }
     }
 }
 #endif
