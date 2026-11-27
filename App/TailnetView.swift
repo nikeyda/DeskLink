@@ -3,6 +3,7 @@ import UIKit
 
 struct TailnetView: View {
     @Bindable var directory: TailnetDirectory
+    let archiveFolders: [ScreensDirectoryFolder]
     var search: String
     var select: (Computer, UInt16?) -> Void
     var save: (Computer, UInt16?) -> Void
@@ -13,6 +14,8 @@ struct TailnetView: View {
     @State private var portsEditor: TailnetPortsEditor.Request?
     @State private var folderEditor: TailnetFolderEditor.Request?
     @State private var deletingFolder: TailnetFolder?
+    @State private var archiveImportAccount: TailnetAccount?
+    @State private var archiveImportResult: TailnetFolderImportResult?
 
     var body: some View {
         Group {
@@ -24,6 +27,11 @@ struct TailnetView: View {
                 let results = directory.devicesInSelectedFolder.filter(matches)
                 List {
                     if let error = directory.error { Text(error).foregroundStyle(.red) }
+                    if let result = archiveImportResult {
+                        Text("新增文件夹 \(result.foldersAdded) 个，归组设备 \(result.devicesAssigned) 台，未应用分组 \(result.groupsSkipped) 个。")
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("tailnet.folder.importResult")
+                    }
                     if !directory.folders.isEmpty { folderPicker }
                     ForEach(results) { item in
                         if let computer = directory.computer(for: item) {
@@ -48,6 +56,13 @@ struct TailnetView: View {
                             Button("新建文件夹", systemImage: "folder.badge.plus") {
                                 folderEditor = .init(folder: nil)
                             }
+                            if !archiveFolders.isEmpty {
+                                Button("导入归档分组", systemImage: "square.and.arrow.down") {
+                                    archiveImportAccount = directory.account
+                                }
+                                .accessibilityIdentifier("tailnet.folder.import")
+                                .disabled(!directory.canImportArchiveFolders)
+                            }
                             if let folder = directory.selectedFolder {
                                 Button("重命名文件夹", systemImage: "pencil") {
                                     folderEditor = .init(folder: folder)
@@ -69,6 +84,7 @@ struct TailnetView: View {
         }
         .task { if directory.devices.isEmpty { await directory.refresh() } }
         .onChange(of: directory.selectedFolder?.id) { selectedDevice = nil }
+        .onChange(of: directory.account) { archiveImportResult = nil }
         .sheet(isPresented: $editing) { TailnetLogin(directory: directory) }
         .sheet(item: $portsEditor) { TailnetPortsEditor(request: $0, directory: directory) }
         .sheet(item: $folderEditor) { TailnetFolderEditor(request: $0, directory: directory) }
@@ -81,6 +97,18 @@ struct TailnetView: View {
             Button("删除", role: .destructive) { directory.removeFolder(folder.id) }
         } message: { _ in
             Text("文件夹中的设备仍可在「所有设备」查看。")
+        }
+        .alert("导入归档分组", isPresented: Binding(
+            get: { archiveImportAccount != nil },
+            set: { if !$0 { archiveImportAccount = nil } }
+        ), presenting: archiveImportAccount) { account in
+            Button("取消", role: .cancel) {}
+            Button("导入") {
+                do { archiveImportResult = try directory.importArchiveFolders(archiveFolders, into: account) }
+                catch { directory.error = error.localizedDescription }
+            }
+        } message: { account in
+            Text("将归档分组应用到 \(account.tailnet)。已有分组的设备保留原位置。")
         }
         .alert("断开连接", isPresented: $unlinking) {
             Button("取消", role: .cancel) {}

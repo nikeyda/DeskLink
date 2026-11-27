@@ -2,6 +2,64 @@ import XCTest
 @testable import DeskLink
 
 final class TailnetTests: XCTestCase {
+    @MainActor func testArchivedGroupsResolveExactDeviceIDsAndPreserveCurrentAssignments() async throws {
+        let suite = "TelescopeTailnetImport." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let service = DirectoryFixture()
+        await service.changeListing(to: #"""
+        {"devices":[
+            {"id":"1001","nodeId":"nStudio","hostname":"Desk","name":"desk.fixture","addresses":["100.64.1.1"],"os":"macOS"},
+            {"id":"1002","nodeId":"nHome","hostname":"Home","name":"home.fixture","addresses":["100.64.1.2"],"os":"linux"},
+            {"id":"1003","nodeId":"nConflict","hostname":"Shared","name":"shared.fixture","addresses":["100.64.1.3"],"os":"linux"},
+            {"id":"1004","nodeId":"nRevoked","hostname":"Revoked","name":"revoked.fixture","addresses":["100.64.1.4"],"os":"linux","authorized":false}
+        ]}
+        """#)
+        let account = try TailnetAccount(tailnet: "fixture.example", clientID: "fixture")
+        let directory = TailnetDirectory(defaults: defaults) { try await service.reply(to: $0) }
+        XCTAssertFalse(directory.canImportArchiveFolders)
+        try await directory.link(account, secret: "fixture-only", remember: false)
+        XCTAssertTrue(directory.canImportArchiveFolders)
+
+        directory.addFolder("Studio")
+        let existing = try XCTUnwrap(directory.selectedFolder)
+        directory.addFolder("Home")
+        let home = try XCTUnwrap(directory.selectedFolder)
+        let homeDevice = try XCTUnwrap(directory.devices.first { $0.id == "1002" })
+        directory.moveDevice(try XCTUnwrap(directory.directoryID(for: homeDevice)), to: home.id)
+        let empty = UUID()
+        let groups = [
+            ScreensDirectoryFolder(id: UUID(), name: "studio", contentType: 16, items: [UUID()],
+                                   rawItems: ["nStudio", "1001", "1002", "nConflict"]),
+            ScreensDirectoryFolder(id: UUID(), name: "Conflicting", contentType: 16, items: [], rawItems: ["1003"]),
+            ScreensDirectoryFolder(id: UUID(), name: "Unknown", contentType: 16, items: [UUID()],
+                                   rawItems: ["shared.fixture", "100.64.1.3", "nRevoked"]),
+            ScreensDirectoryFolder(id: empty, name: "Empty", contentType: 16, items: [], rawItems: []),
+        ]
+
+        let applied = try directory.importArchiveFolders(groups, into: account)
+        XCTAssertEqual(applied, TailnetFolderImportResult(foldersAdded: 1, devicesAssigned: 1, groupsSkipped: 2))
+        let desk = try XCTUnwrap(directory.devices.first { $0.id == "1001" })
+        let conflict = try XCTUnwrap(directory.devices.first { $0.id == "1003" })
+        XCTAssertEqual(directory.folderID(for: desk), existing.id)
+        XCTAssertEqual(directory.folderID(for: homeDevice), home.id)
+        XCTAssertNil(directory.folderID(for: conflict))
+        XCTAssertEqual(directory.folders.map(\.id), [existing.id, home.id, empty])
+        XCTAssertEqual(directory.selectedFolder, home)
+        let initialRequests = await service.methods
+        XCTAssertEqual(initialRequests, ["POST", "GET"])
+
+        let reopened = TailnetDirectory(defaults: defaults) { try await service.reply(to: $0) }
+        let other = try TailnetAccount(tailnet: "other.fixture", clientID: "different")
+        try await reopened.link(other, secret: "fixture-only", remember: false)
+        XCTAssertThrowsError(try reopened.importArchiveFolders(groups, into: account))
+        XCTAssertTrue(reopened.folders.isEmpty)
+        try await reopened.link(account, secret: "fixture-only", remember: false)
+        XCTAssertEqual(reopened.folderID(for: desk), existing.id)
+        XCTAssertEqual(try reopened.importArchiveFolders(groups, into: account), TailnetFolderImportResult(groupsSkipped: 4))
+        XCTAssertEqual(reopened.folders.map(\.id), [existing.id, home.id, empty])
+    }
+
     @MainActor func testUnifiedSearchFindsOutsideTheSelectedFolderAndKeepsPortsAndVisibility() async throws {
         let domain = "TelescopeTailnetSearch." + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))

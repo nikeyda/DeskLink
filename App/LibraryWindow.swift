@@ -657,7 +657,8 @@ struct LibraryWindow: View {
 
     @ViewBuilder private var collection: some View {
         if page == .tailscale {
-            TailnetView(directory: tailnet, search: categorySearch, select: open, save: saveDiscovered)
+            TailnetView(directory: tailnet, archiveFolders: library.archive.screensDirectoryFolders?.tailscale ?? [],
+                        search: categorySearch, select: open, save: saveDiscovered)
         } else if page == .nearby {
             let results = nearby.entries.filter { categorySearch.isEmpty || $0.name.localizedCaseInsensitiveContains(categorySearch) }
             Group {

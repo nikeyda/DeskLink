@@ -107,3 +107,6 @@
 "仅输入用户密码" = "Type User Password Only";
 "切换连接库工具栏" = "Toggle Connection Library Toolbar";
 "\n另保留 %lld 个目录分组，可随归档导出。" = "\nPreserved %lld directory groups for archive export.";
+"导入归档分组" = "Import Archived Groups";
+"将归档分组应用到 %@。已有分组的设备保留原位置。" = "Apply the archived groups to %@. Devices already in a group will stay where they are.";
+"新增文件夹 %lld 个，归组设备 %lld 台，未应用分组 %lld 个。" = "Folders added: %lld. Devices assigned: %lld. Groups skipped: %lld.";

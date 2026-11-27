@@ -44,6 +44,7 @@ struct TailnetAccount: Codable, Equatable, Sendable {
 
 struct TailnetDevice: Decodable, Identifiable, Sendable {
     let id: String
+    let nodeId: String?
     let hostname: String
     let name: String
     let addresses: [String]
@@ -96,6 +97,12 @@ struct TailnetFolder: Codable, Equatable, Identifiable {
     var name: String
 }
 
+struct TailnetFolderImportResult: Equatable {
+    var foldersAdded = 0
+    var devicesAssigned = 0
+    var groupsSkipped = 0
+}
+
 struct TailnetSearchMatch: Identifiable, Equatable {
     let id: String
     let computer: Computer
@@ -139,12 +146,14 @@ final class TailnetDirectory {
     private var widgetCandidates = [ComputerEntity]()
     private(set) var account: TailnetAccount?
     private(set) var devices = [TailnetDevice]()
+    private var hasLoadedDevices = false
     private(set) var loading = false
     var error: String?
 
     var visibleDevices: [TailnetDevice] { devices.filter { !isHidden($0) } }
     var hiddenDevices: [TailnetDevice] { devices.filter { isHidden($0) } }
     var folders: [TailnetFolder] { activeFolders.entries }
+    var canImportArchiveFolders: Bool { account != nil && hasLoadedDevices && !loading && error == nil }
     var selectedFolder: TailnetFolder? {
         guard let selection = activeFolders.selection else { return nil }
         return folders.first { $0.id == selection }
@@ -218,6 +227,7 @@ final class TailnetDirectory {
         account = new
         self.secret = secret
         devices = listing
+        hasLoadedDevices = true
         error = nil
     }
 
@@ -235,6 +245,7 @@ final class TailnetDirectory {
             if attempt == generation {
                 try storeWidgetComputers(listing, account: account, remember: defaults.data(forKey: "tailnet.account") != nil)
                 devices = listing
+                hasLoadedDevices = true
                 error = nil
             }
         } catch { if attempt == generation { self.error = error.localizedDescription } }
@@ -248,6 +259,7 @@ final class TailnetDirectory {
         account = nil
         secret = nil
         devices = []
+        hasLoadedDevices = false
         widgetCandidates = []
         loading = false
         error = nil
@@ -317,14 +329,63 @@ final class TailnetDirectory {
         changeFolders { $0.assignments[id] = folder }
     }
 
-    private func changeFolders(_ update: (inout Folders) -> Void) {
-        guard let key = account?.tailnet.lowercased() else { return }
+    func importArchiveFolders(_ groups: [ScreensDirectoryFolder], into target: TailnetAccount) throws -> TailnetFolderImportResult {
+        guard account == target, canImportArchiveFolders else { throw URLError(.resourceUnavailable) }
+
+        var deviceIDs: [String: Set<UUID>] = [:]
+        for device in devices {
+            guard let id = device.directoryID(in: target) else { continue }
+            for identifier in [device.id, device.nodeId].compactMap({ $0 }).filter({ !$0.isEmpty }) {
+                deviceIDs[identifier, default: []].insert(id)
+            }
+        }
+
+        var requestedMemberships: [UUID: Int] = [:]
+        let matchedGroups = groups.map { group in
+            let members = Set((group.rawItems ?? []).compactMap { identifier -> UUID? in
+                guard let matches = deviceIDs[identifier], matches.count == 1 else { return nil }
+                return matches.first
+            })
+            for member in members { requestedMemberships[member, default: 0] += 1 }
+            return (group, members)
+        }
+
+        var next = activeFolders
+        var result = TailnetFolderImportResult()
+        for (group, members) in matchedGroups {
+            let name = group.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let destination = next.entries.first { $0.id == group.id }
+                ?? next.entries.first { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }
+            let assignments = members.filter { next.assignments[$0] == nil && requestedMemberships[$0] == 1 }
+            let isEmptyGroup = group.items.isEmpty && (group.rawItems?.isEmpty ?? true)
+            guard !name.isEmpty, !assignments.isEmpty || (isEmptyGroup && destination == nil) else {
+                result.groupsSkipped += 1
+                continue
+            }
+
+            let folder = destination ?? TailnetFolder(id: group.id, name: name)
+            if destination == nil {
+                next.entries.append(folder)
+                result.foldersAdded += 1
+            }
+            for member in assignments { next.assignments[member] = folder.id }
+            result.devicesAssigned += assignments.count
+        }
+        if result.foldersAdded > 0 || result.devicesAssigned > 0 {
+            guard changeFolders({ $0 = next }) else { throw CocoaError(.fileWriteUnknown) }
+        }
+        return result
+    }
+
+    @discardableResult private func changeFolders(_ update: (inout Folders) -> Void) -> Bool {
+        guard let key = account?.tailnet.lowercased() else { return false }
         var updated = foldersByTailnet
         update(&updated[key, default: Folders()])
         if updated[key]?.entries.isEmpty == true { updated[key] = nil }
-        guard let data = try? JSONEncoder().encode(updated) else { return }
+        guard let data = try? JSONEncoder().encode(updated) else { return false }
         defaults.set(data, forKey: Self.foldersKey)
         foldersByTailnet = updated
+        return true
     }
 
     func ports(for id: UUID) -> TailnetDevicePorts? { devicePorts[id] }
