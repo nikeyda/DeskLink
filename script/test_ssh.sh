@@ -30,8 +30,9 @@ if [[ -n "$device" ]]; then
     python3 script/linux-peer/paired_device.py --ssh "$device" "$state" "$manifest" "$out"
     exit $?
 fi
-read -r port fingerprint < <("$python" -c 'import json,sys; data=json.load(open(sys.argv[1])); print(data["port"],data["pin"])' "$state/peer.json")
+read -r port fingerprint host_algorithm < <("$python" -c 'import json,sys; data=json.load(open(sys.argv[1])); print(data["port"],data["pin"],data["hostAlgorithm"])' "$state/peer.json")
 export TEST_RUNNER_DESKLINK_SSH_PORT="$port" TEST_RUNNER_DESKLINK_SSH_PIN="$fingerprint"
+export TEST_RUNNER_DESKLINK_SSH_HOST_ALGORITHM="$host_algorithm"
 export TEST_RUNNER_DESKLINK_KEY_FIXTURES
 TEST_RUNNER_DESKLINK_KEY_FIXTURES=$(base64 -i "$state/test-keys.json" | tr -d '\n')
 "${build[@]}" -only-testing:DeskLinkTests/SSHWireTests -only-testing:DeskLinkTests/SSHAndRouteTests \

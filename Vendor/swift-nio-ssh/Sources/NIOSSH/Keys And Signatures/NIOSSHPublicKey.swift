@@ -10,6 +10,8 @@
 //
 // Modified by the Telescope project to add RFC 8332 user authentication.
 //
+// Modified by the Telescope project to support RFC 8332 RSA host keys.
+//
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
@@ -96,6 +98,8 @@ extension NIOSSHPublicKey {
             return digest.withUnsafeBytes { digestPtr in
                 key.isValidSignature(sig, for: digestPtr)
             }
+        case (.rsa(let key), .rsa(let algorithm, let sig)):
+            return digest.withUnsafeBytes { algorithm.verify(Data($0), signature: sig.asData, with: key.key) }
         case (.certified(let key), _):
             return key.isValidSignature(signature, for: digest)
         case (.rsa, _), (.ed25519, _),
@@ -184,6 +188,15 @@ extension NIOSSHPublicKey {
     internal func userAuthenticationPrefix(rsaAlgorithm: NIOSSHRSAUserAuthentication? = nil) -> String.UTF8View {
         if case .rsa = self.backingKey { return (rsaAlgorithm ?? .sha512).rawValue.utf8 }
         return self.keyPrefix
+    }
+
+    internal func matchesHostKeyAlgorithm(_ algorithm: Substring) -> Bool {
+        // The RSA public key blob always uses ssh-rsa, independently of the negotiated SHA-2 algorithm.
+        if NIOSSHRSAUserAuthentication(identifier: algorithm.utf8) != nil {
+            if case .rsa = self.backingKey { return true }
+            return false
+        }
+        return self.keyPrefix.elementsEqual(algorithm.utf8)
     }
 
     internal var keyPrefix: String.UTF8View {

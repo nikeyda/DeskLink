@@ -183,6 +183,76 @@ final class SSHWireTests: XCTestCase {
         XCTAssertEqual(session.currentImage?.height, 192)
     }
 
+    func testRSAHostFingerprintPersistsAndRejectsAChangedGateway() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let algorithm = env["DESKLINK_SSH_HOST_ALGORITHM"], algorithm.hasPrefix("rsa-sha2-"),
+              let port = env["DESKLINK_SSH_PORT"].flatMap(UInt16.init), let fingerprint = env["DESKLINK_SSH_PIN"] else {
+            throw XCTSkip("Requires the independent RSA-only SSH gateway.")
+        }
+        let domain = "DeskLinkRSAHost." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let trust = HostTrust(defaults: defaults)
+        defer { trust.cancel() }
+        let ssh = SSHSettings(port: port, username: "fixture")
+        func dial() -> DesktopSSH {
+            DesktopSSH(host: peerHost, desktopPort: 5900, settings: ssh,
+                       proof: .password("chart-test-only"), trust: trust)
+        }
+
+        let first = dial()
+        let initial = Task { try await first.connect() }
+        defer { initial.cancel() }
+        try await until { trust.prompt != nil }
+        let prompt = try XCTUnwrap(trust.prompt)
+        XCTAssertEqual(prompt.fingerprint, fingerprint)
+        trust.answer(prompt.fingerprint == fingerprint, remember: true)
+        try await initial.value
+        let banner = try await first.read(exactly: 12)
+        XCTAssertEqual(banner, Data("RFB 003.008\n".utf8))
+        await first.close()
+        XCTAssertEqual(HostTrust.saved(in: defaults).map(\.fingerprint), [fingerprint])
+
+        let known = dial()
+        var knownDone = false
+        let reconnect = Task {
+            defer { knownDone = true }
+            try await known.connect()
+        }
+        defer { reconnect.cancel() }
+        try await until { knownDone || trust.prompt != nil }
+        if trust.prompt != nil {
+            XCTFail("A saved RSA gateway fingerprint prompted again")
+            trust.answer(false)
+        }
+        try await reconnect.value
+        let reconnectedBanner = try await known.read(exactly: 12)
+        XCTAssertEqual(reconnectedBanner, banner)
+        await known.close()
+
+        let priorFingerprint = "SHA256:" + String(repeating: "A", count: 43)
+        defaults.set(priorFingerprint, forKey: prompt.id)
+        let changed = dial()
+        var rejected = false
+        let attempt = Task {
+            defer { rejected = true }
+            try await changed.connect()
+        }
+        defer { attempt.cancel() }
+        try await until { rejected || trust.prompt != nil }
+        if trust.prompt != nil {
+            XCTFail("A changed RSA gateway fingerprint prompted instead of rejecting")
+            trust.answer(false)
+        }
+        do {
+            try await attempt.value
+            XCTFail("Connected using a different stored gateway fingerprint")
+        } catch {
+            XCTAssertEqual(defaults.string(forKey: prompt.id), priorFingerprint)
+        }
+        await changed.close()
+    }
+
     func testSeparateSSHServerUsesItsOwnFingerprintAndTheSelectedDesktop() async throws {
         let env = ProcessInfo.processInfo.environment
         guard let port = env["DESKLINK_SSH_PORT"].flatMap(UInt16.init), let pin = env["DESKLINK_SSH_PIN"] else {

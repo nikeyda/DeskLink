@@ -65,7 +65,8 @@ def fixture(directory, local, ssh):
     if ssh:
         identity = json.loads((directory / "peer.json").read_text())
         keys = base64.b64encode((directory / "test-keys.json").read_bytes()).decode("ascii")
-        environment = {"DESKLINK_SSH_HOST": local, "DESKLINK_SSH_PIN": identity["pin"], "DESKLINK_KEY_FIXTURES": keys}
+        environment = {"DESKLINK_SSH_HOST": local, "DESKLINK_SSH_PIN": identity["pin"], "DESKLINK_KEY_FIXTURES": keys,
+                       "DESKLINK_SSH_HOST_ALGORITHM": identity.get("hostAlgorithm", "")}
         return environment, {"DESKLINK_SSH_PORT": int(identity["port"])}, ["SSHWireTests", "SSHAndRouteTests"]
     environment = {"DESKLINK_LINUX_HOST": local, "DESKLINK_TLS_PIN": (directory.parent / "tls-pin").read_text().strip()}
     names = {"DESKLINK_LINUX_PORT": "vnc-port", "DESKLINK_TLS_PORT": "tls-port",

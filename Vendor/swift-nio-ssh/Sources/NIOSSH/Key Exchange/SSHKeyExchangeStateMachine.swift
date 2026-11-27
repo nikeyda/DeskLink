@@ -10,6 +10,8 @@
 //
 // Modified by the Telescope project to read RFC 8308 server signature algorithms.
 //
+// Modified by the Telescope project to support RFC 8332 RSA host keys.
+//
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
@@ -264,6 +266,7 @@ struct SSHKeyExchangeStateMachine {
                 let (result, reply) = try exchanger.completeKeyExchangeServerSide(
                     clientKeyExchangeMessage: message,
                     serverHostKey: negotiated.negotiatedHostKey(configuration.hostKeys),
+                    rsaAlgorithm: NIOSSHRSAUserAuthentication(identifier: negotiated.negotiatedHostKeyAlgorithm.utf8),
                     initialExchangeBytes: &self.initialExchangeBytes,
                     allocator: self.allocator,
                     expectedKeySizes: negotiated.negotiatedProtection.keySizes
@@ -298,11 +301,17 @@ struct SSHKeyExchangeStateMachine {
         case .keyExchangeInitSent(exchange: var exchanger, let negotiated):
             switch self.role {
             case .client:
-                guard message.hostKey.keyPrefix.elementsEqual(negotiated.negotiatedHostKeyAlgorithm.utf8) else {
+                let hostAlgorithm = negotiated.negotiatedHostKeyAlgorithm
+                guard message.hostKey.matchesHostKeyAlgorithm(hostAlgorithm) else {
                     throw NIOSSHError.invalidHostKeyForKeyExchange(
                         expected: negotiated.negotiatedHostKeyAlgorithm,
                         got: message.hostKey.keyPrefix
                     )
+                }
+
+                let rsaAlgorithm = NIOSSHRSAUserAuthentication(identifier: hostAlgorithm.utf8)
+                guard message.signature.rsaAlgorithm == rsaAlgorithm else {
+                    throw NIOSSHError.invalidExchangeHashSignature
                 }
 
                 let result = try exchanger.receiveServerKeyExchangePayload(
@@ -612,7 +621,7 @@ extension SSHKeyExchangeStateMachine {
     /// All known host key algorithms.
     static let supportedServerHostKeyAlgorithms: [Substring] = [
         "ssh-ed25519", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp521",
-    ]
+    ] + NIOSSHRSAUserAuthentication.hostAlgorithmNames
 }
 
 extension SSHKeyExchangeStateMachine {

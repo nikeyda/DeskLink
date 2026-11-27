@@ -15,7 +15,6 @@
 import Crypto
 import CryptoExtras
 import NIOCore
-import NIOFoundationCompat
 
 #if canImport(FoundationEssentials)
 import FoundationEssentials
@@ -23,10 +22,12 @@ import FoundationEssentials
 import Foundation
 #endif
 
-/// RSA signature algorithms for SSH user authentication (RFC 8332).
+/// RSA signature algorithms for SSH authentication (RFC 8332).
 public enum NIOSSHRSAUserAuthentication: String, Sendable, CaseIterable {
     case sha512 = "rsa-sha2-512"
     case sha256 = "rsa-sha2-256"
+
+    internal static let hostAlgorithmNames = Self.allCases.map { Substring($0.rawValue) }
 
     internal init?<Bytes: Collection>(identifier: Bytes) where Bytes.Element == UInt8 {
         guard let algorithm = Self.allCases.first(where: { identifier.elementsEqual($0.rawValue.utf8) }) else {
@@ -35,7 +36,7 @@ public enum NIOSSHRSAUserAuthentication: String, Sendable, CaseIterable {
         self = algorithm
     }
 
-    internal func sign(_ bytes: ByteBufferView, with key: _RSA.Signing.PrivateKey) throws -> Data {
+    internal func sign<Bytes: DataProtocol>(_ bytes: Bytes, with key: _RSA.Signing.PrivateKey) throws -> Data {
         let signature: _RSA.Signing.RSASignature
         switch self {
         case .sha512:
@@ -46,7 +47,7 @@ public enum NIOSSHRSAUserAuthentication: String, Sendable, CaseIterable {
         return signature.rawRepresentation
     }
 
-    internal func verify(_ bytes: ByteBufferView, signature: Data, with key: _RSA.Signing.PublicKey) -> Bool {
+    internal func verify<Bytes: DataProtocol>(_ bytes: Bytes, signature: Data, with key: _RSA.Signing.PublicKey) -> Bool {
         let width = (key.keySizeInBits + 7) / 8
         guard !signature.isEmpty, signature.count <= width else { return false }
         // RFC 8332 allows leading zero octets to be omitted on the wire.

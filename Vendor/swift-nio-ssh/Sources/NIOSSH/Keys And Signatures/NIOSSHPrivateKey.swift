@@ -10,6 +10,8 @@
 //
 // Modified by the Telescope project to add RFC 8332 user authentication.
 //
+// Modified by the Telescope project to support RFC 8332 RSA host keys.
+//
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
@@ -17,6 +19,7 @@
 @preconcurrency import Crypto
 import CryptoExtras
 import NIOCore
+import NIOFoundationCompat
 
 #if canImport(FoundationEssentials)
 import FoundationEssentials
@@ -94,7 +97,7 @@ public struct NIOSSHPrivateKey: Sendable {
         case .ecdsaP521:
             return ["ecdsa-sha2-nistp521"]
         case .rsa:
-            return []
+            return NIOSSHRSAUserAuthentication.hostAlgorithmNames
         #if canImport(Darwin)
         case .secureEnclaveP256:
             return ["ecdsa-sha2-nistp256"]
@@ -119,7 +122,9 @@ extension NIOSSHPrivateKey {
 }
 
 extension NIOSSHPrivateKey {
-    func sign<DigestBytes: Digest>(digest: DigestBytes) throws -> NIOSSHSignature {
+    func sign<DigestBytes: Digest>(
+        digest: DigestBytes, rsaAlgorithm: NIOSSHRSAUserAuthentication? = nil
+    ) throws -> NIOSSHSignature {
         switch self.backingKey {
         case .ed25519(let key):
             let signature = try digest.withUnsafeBytes { ptr in
@@ -141,8 +146,13 @@ extension NIOSSHPrivateKey {
                 try key.signature(for: ptr)
             }
             return NIOSSHSignature(backingSignature: .ecdsaP521(signature))
-        case .rsa:
-            throw NIOSSHError.invalidSSHMessage(reason: "RSA user key cannot sign a host exchange")
+        case .rsa(let key, _):
+            guard let rsaAlgorithm else {
+                throw NIOSSHError.invalidSSHMessage(reason: "No RSA signature algorithm negotiated for the host key")
+            }
+            // RFC 8332 hashes the exchange hash as message data with the negotiated RSA algorithm.
+            let signature = try digest.withUnsafeBytes { try rsaAlgorithm.sign(Data($0), with: key) }
+            return NIOSSHSignature(backingSignature: .rsa(rsaAlgorithm, .data(signature)))
 
         #if canImport(Darwin)
         case .secureEnclaveP256(let key):

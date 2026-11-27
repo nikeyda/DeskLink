@@ -45,7 +45,14 @@ def main():
     parser.add_argument("--ready", required=True, type=Path)
     parser.add_argument("--log", required=True, type=Path)
     options = parser.parse_args()
-    host_key = paramiko.ECDSAKey.generate(bits=256)
+    host_algorithm = os.environ.get("DESKLINK_FIXTURE_HOST_ALGORITHM", "ecdsa-sha2-nistp256")
+    rsa_algorithms = {"rsa-sha2-256", "rsa-sha2-512"}
+    if host_algorithm in rsa_algorithms:
+        host_key = paramiko.RSAKey.generate(bits=2048)
+    elif host_algorithm == "ecdsa-sha2-nistp256":
+        host_key = paramiko.ECDSAKey.generate(bits=256)
+    else:
+        raise ValueError("Expected an ECDSA or RSA SHA-2 host algorithm")
     # These identities exist for one run and are accepted only by the test peer.
     identities = [ed25519.Ed25519PrivateKey.generate()] + [
         ec.generate_private_key(curve) for curve in (ec.SECP256R1(), ec.SECP384R1(), ec.SECP521R1())
@@ -69,21 +76,26 @@ def main():
         "fixture-rsa": fixtures[-1]["public"].split()[1],
     }
     rsa_preference = os.environ.get("DESKLINK_FIXTURE_RSA_ALGORITHM", "rsa-sha2-512")
-    if rsa_preference not in ("rsa-sha2-256", "rsa-sha2-512"):
+    if rsa_preference not in rsa_algorithms:
         raise ValueError("Expected an RSA SHA-2 fixture algorithm")
-    disabled = {"pubkeys": ["ssh-rsa", *({"rsa-sha2-256", "rsa-sha2-512"} - {rsa_preference})]}
+    disabled = {"pubkeys": ["ssh-rsa", *(rsa_algorithms - {rsa_preference})],
+                "keys": ["ssh-rsa", *(rsa_algorithms - {host_algorithm})]}
     fingerprint = base64.b64encode(hashlib.sha256(host_key.asbytes()).digest()).decode().rstrip("=")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener, options.log.open("w") as log:
         listener.bind(("127.0.0.1", 0))
         listener.listen(2)
         record(log, "rsaSignaturePolicy", accepted=rsa_preference)
-        options.ready.write_text(json.dumps({"port": listener.getsockname()[1], "pin": "SHA256:" + fingerprint}))
+        options.ready.write_text(json.dumps({
+            "port": listener.getsockname()[1], "pin": "SHA256:" + fingerprint,
+            "hostAlgorithm": host_algorithm,
+        }))
         while True:
             connection, _ = listener.accept()
             with connection, paramiko.Transport(connection, disabled_algorithms=disabled) as transport:
                 try:
                     transport.add_server_key(host_key)
                     transport.start_server(server=ChartLogin(authorized_keys, log))
+                    record(log, "negotiatedHostKey", algorithm=transport.host_key_type)
                     channel = transport.accept(timeout=15)
                     if channel:
                         record(log, "authenticatedChart")
