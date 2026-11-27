@@ -8,6 +8,7 @@ struct MacLibraryMenuActions {
     let settings: () -> Void
     let transfers: () -> Void
     let diagnostics: () -> Void
+    let toolbarVisible: Binding<Bool>
 }
 
 struct MacSessionMenuActions {
@@ -90,6 +91,12 @@ struct MacMenus: Commands {
                 .disabled(desktop == nil)
         }
         CommandGroup(after: .toolbar) {
+            if let library {
+                Button("切换连接库工具栏") {
+                    library.toolbarVisible.wrappedValue.toggle()
+                }
+                .keyboardShortcut("t", modifiers: [.command, .option])
+            }
             if let desktop {
                 MonitorMenu(session: desktop.session, shortcuts: true, select: desktop.chooseMonitor,
                             split: desktop.splitMonitors, isSplit: desktop.isSplit)

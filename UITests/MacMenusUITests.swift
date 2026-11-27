@@ -2,6 +2,51 @@
 import XCTest
 
 @MainActor final class MacMenusUITests: XCTestCase {
+    func testTheLibraryToolbarCanBeHiddenAndRestoredWithSearchAndQuickConnectAvailable() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString]
+        app.launch()
+
+        let quick = app.buttons["library.quick"].firstMatch
+        let more = app.buttons["library.more"].firstMatch
+        let search = app.searchFields.firstMatch
+        let view = app.menuBars.menuBarItems.matching(NSPredicate(format: "label IN %@", ["View", "显示", "视图"])).firstMatch
+        let command = app.menuItems.matching(NSPredicate(format: "label IN %@",
+            ["Toggle Connection Library Toolbar", "切换连接库工具栏"])).firstMatch
+
+        XCTAssertTrue(quick.waitForExistence(timeout: 10))
+        XCTAssertTrue(view.waitForExistence(timeout: 5))
+        view.click()
+        XCTAssertTrue(command.isEnabled)
+        command.click()
+        let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: quick)
+        XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed)
+        XCTAssertFalse(more.exists)
+        XCTAssertTrue(search.exists)
+        let picture = XCTAttachment(screenshot: app.screenshot())
+        picture.name = "Connection library toolbar hidden"
+        picture.lifetime = .keepAlways
+        add(picture)
+
+        app.typeKey("k", modifierFlags: .command)
+        let address = app.textFields["connection.host"]
+        XCTAssertTrue(address.waitForExistence(timeout: 5))
+        app.typeKey(.escape, modifierFlags: [])
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: address)
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
+        view.click()
+        XCTAssertTrue(command.isEnabled)
+        command.click()
+        XCTAssertTrue(quick.waitForExistence(timeout: 5))
+        app.typeKey("t", modifierFlags: [.command, .option])
+        let hiddenAgain = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: quick)
+        XCTAssertEqual(XCTWaiter.wait(for: [hiddenAgain], timeout: 5), .completed)
+        app.typeKey("t", modifierFlags: [.command, .option])
+        XCTAssertTrue(quick.waitForExistence(timeout: 5))
+        XCTAssertTrue(more.exists)
+    }
+
     func testMacLocalOptionSettingsAndRemoteKeyboardEvents() async throws {
         continueAfterFailure = false
         let desktop = LocalTestDisplay()

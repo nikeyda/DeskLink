@@ -170,6 +170,7 @@ struct LibraryWindow: View {
     @State private var selectedPreview: SavedDesktopPreview?
     #if targetEnvironment(macCatalyst)
     @Environment(MacAvailability.self) private var availability
+    @SceneStorage("mac.library.toolbarVisible") private var libraryToolbarVisible = true
     @SceneStorage("mac.connectionWindow.savedID") private var restoredConnectionID: String?
     @State private var windowSource = MacWindowSceneSource()
     @State private var isConnectionWindow = false
@@ -835,6 +836,14 @@ struct LibraryWindow: View {
     }
 
     @ToolbarContentBuilder private var libraryToolbar: some ToolbarContent {
+        #if targetEnvironment(macCatalyst)
+        if libraryToolbarVisible { libraryToolbarItems }
+        #else
+        libraryToolbarItems
+        #endif
+    }
+
+    private var libraryToolbarItems: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             Button { editor = EditorRequest(purpose: .quick) } label: { Label("快速连接", systemImage: "bolt") }
                 .keyboardShortcut("k", modifiers: .command)
@@ -970,7 +979,7 @@ struct LibraryWindow: View {
               !showFolder, deletingFolder == nil, deletion == nil else { return nil }
         return MacLibraryMenuActions(quickConnect: { editor = EditorRequest(purpose: .quick) },
                                      create: newEntry, settings: { settings = true }, transfers: { downloads = true },
-                                     diagnostics: { showsDiagnostics = true })
+                                     diagnostics: { showsDiagnostics = true }, toolbarVisible: $libraryToolbarVisible)
     }
     #endif
 
