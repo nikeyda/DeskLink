@@ -192,6 +192,52 @@ final class LibrarySyncTests: XCTestCase {
         XCTAssertEqual(try bookA.backups.read(renamedPoint.id), bookA.archive)
     }
 
+    @MainActor func testSyncedDirectoryFoldersMergeAcrossDevicesAndKeepRestorePoints() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        let shared = root.appending(path: "Shared")
+        try FileManager.default.createDirectory(at: shared, withIntermediateDirectories: true)
+        let firstSuite = UUID().uuidString, secondSuite = UUID().uuidString
+        let first = try XCTUnwrap(UserDefaults(suiteName: firstSuite))
+        let second = try XCTUnwrap(UserDefaults(suiteName: secondSuite))
+        defer {
+            first.removePersistentDomain(forName: firstSuite)
+            second.removePersistentDomain(forName: secondSuite)
+            try? FileManager.default.removeItem(at: root)
+        }
+        let a = LibrarySync(settings: root.appending(path: "a/sync.json"), defaults: first)
+        let b = LibrarySync(settings: root.appending(path: "b/sync.json"), defaults: second)
+        let firstFile = root.appending(path: "a/book.json")
+        let bookA = ConnectionLibrary(file: firstFile)
+        let bookB = ConnectionLibrary(file: root.appending(path: "b/book.json"))
+        try a.select(shared)
+        try b.select(shared)
+
+        let id = UUID()
+        let tailnet = ScreensDirectoryFolder(id: id, name: "Studio", contentType: 16, items: [UUID()], rawItems: ["node"])
+        let connect = ScreensDirectoryFolder(id: id, name: "Studio", contentType: 32, items: [UUID()], rawItems: ["computer"])
+        let firstImport = LibraryArchive(screensDirectoryFolders: .init(tailscale: [tailnet]))
+        let secondImport = LibraryArchive(screensDirectoryFolders: .init(screensConnect: [connect]))
+        XCTAssertEqual(try bookA.importArchive(firstImport.encoded()), ArchiveImportResult(directoryFolders: 1))
+        XCTAssertEqual(try bookB.importArchive(secondImport.encoded()), ArchiveImportResult(directoryFolders: 1))
+        await a.refresh(bookA)
+        await b.refresh(bookB)
+        await a.refresh(bookA)
+        let merged = ScreensDirectoryFolders(tailscale: [tailnet], screensConnect: [connect])
+        XCTAssertEqual(bookA.archive.screensDirectoryFolders, merged)
+        XCTAssertEqual(bookB.archive.screensDirectoryFolders, merged)
+
+        let removablePoint = try XCTUnwrap(bookB.backups.list().first { $0.folders == 1 && $0.computers == 0 })
+        try bookB.restore(removablePoint)
+        XCTAssertEqual(bookB.archive, secondImport)
+        await b.refresh(bookB)
+        await a.refresh(bookA)
+        XCTAssertNil(a.error)
+        XCTAssertNil(b.error)
+        XCTAssertEqual(ConnectionLibrary(file: firstFile).archive, secondImport)
+        let recovery = try XCTUnwrap(bookA.backups.list().first { $0.folders == 2 && $0.computers == 0 })
+        XCTAssertEqual(try bookA.backups.read(recovery.id).screensDirectoryFolders, merged)
+    }
+
     func testTwoWritersMergeOfflineEditsAndKeepDeletedRecordsDeleted() throws {
         let first = UUID(), second = UUID()
         var a = Computer(name: "Desk", endpoint: try Endpoint(address: "first.invalid:5909"))

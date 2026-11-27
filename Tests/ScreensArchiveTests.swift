@@ -41,6 +41,51 @@ final class ScreensArchiveTests: XCTestCase {
         XCTAssertEqual(stored.display(for: .iPad).rememberMonitor, true)
     }
 
+    func testMixedOriginalArchiveRetainsExternalFoldersOnImportAndExport() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appending(path: "Mixed.screens")
+        let libraryFile = root.appending(path: "library.json")
+        let library = ConnectionLibrary(file: libraryFile)
+        var source = try XCTUnwrap(JSONSerialization.jsonObject(with: fixture("screens-group-ssh")) as? [String: Any])
+        let id = UUID().uuidString
+        let tailscale: [[String: Any]] = [["id": id, "name": "Studio", "items": [UUID().uuidString],
+                                           "rawItems": ["fixture-node-A"], "contentType": 16]]
+        let connect: [[String: Any]] = [["id": id, "name": "Studio", "items": [],
+                                          "rawItems": ["fixture-computer-A"], "contentType": 32]]
+        source["tsFolders"] = tailscale
+        source["scFolders"] = connect
+        try JSONSerialization.data(withJSONObject: source).write(to: file)
+        let document = try ArchiveDocument(contentsOf: file)
+        XCTAssertEqual(try library.importArchive(document.data), ArchiveImportResult(connections: 1, folders: 1, directoryFolders: 2))
+        XCTAssertEqual(try library.importArchive(document.data), ArchiveImportResult(duplicates: 1))
+        let saved = ConnectionLibrary(file: libraryFile).archive
+        XCTAssertEqual(saved.computers.first?.folder, "Telescope Test Group 7F39")
+        XCTAssertEqual(saved.folderCount, 3)
+        XCTAssertEqual(try library.backups.list().first?.folders, 3)
+        let exported = try ScreensArchive.export(saved, knownMacs: [], sharedClipboard: true)
+        let record = try XCTUnwrap(JSONSerialization.jsonObject(with: exported) as? [String: Any])
+        XCTAssertEqual(record["tsFolders"] as? NSArray, tailscale as NSArray)
+        XCTAssertEqual(record["scFolders"] as? NSArray, connect as NSArray)
+        XCTAssertEqual(try ScreensArchive.convert(exported).screensDirectoryFolders, saved.screensDirectoryFolders)
+    }
+
+    func testDirectoryFolderDuplicatesAreRejectedAndLegacyOmissionsStillDecode() throws {
+        var source = try XCTUnwrap(JSONSerialization.jsonObject(with: fixture("screens-direct")) as? [String: Any])
+        source.removeValue(forKey: "scFolders")
+        source.removeValue(forKey: "tsFolders")
+        let legacy = try JSONSerialization.data(withJSONObject: source)
+        XCTAssertEqual(try ScreensArchive.convert(legacy).computers.count, 1)
+        XCTAssertNil(try ScreensArchive.convert(legacy).screensDirectoryFolders)
+        let duplicate: [String: Any] = ["id": UUID().uuidString, "name": "Duplicate", "items": [], "contentType": 16]
+        source["tsFolders"] = [duplicate, duplicate]
+        let malformed = try JSONSerialization.data(withJSONObject: source)
+        XCTAssertThrowsError(try ScreensArchive.convert(malformed)) { error in
+            guard case ScreensArchive.ImportError.unsupportedFolder = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+    }
+
     func testOriginalRaspberryPiRSAProfilePreservesUserAndRequiresEncryptedAuthentication() throws {
         let archive = try ScreensArchive.convert(fixture("screens-rsa-pi"))
         let stored = try LibraryArchive.read(archive.encoded())

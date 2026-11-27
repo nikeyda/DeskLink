@@ -429,8 +429,10 @@ struct LibraryWindow: View {
         } message: {
             if let result = importResult {
                 let counts = "新增连接 \(result.connections) 个，新增文件夹 \(result.folders) 个，跳过重复连接 \(result.duplicates) 个。"
-                let note = result.importedScreens ? "\n已迁移连接地址、账户、分组及适用的 SSH 和观察设置。首次连接时请核对显示与输入偏好，并按需提供密码或密钥。" : ""
-                Text(counts + note)
+                let note = result.importedScreens && result.connections > 0
+                    ? "\n已迁移连接地址、账户、分组及适用的 SSH 和观察设置。首次连接时请核对显示与输入偏好，并按需提供密码或密钥。" : ""
+                let directoryNote = result.directoryFolders == 0 ? "" : String(localized: "\n另保留 \(result.directoryFolders) 个目录分组，可随归档导出。")
+                Text(counts + directoryNote + note)
             }
         }
         .onChange(of: privacy.locked) { _, locked in
@@ -505,6 +507,7 @@ struct LibraryWindow: View {
                 total.connections += result.connections
                 total.folders += result.folders
                 total.duplicates += result.duplicates
+                total.directoryFolders += result.directoryFolders
                 total.importedScreens = total.importedScreens || file.fromScreens
                 importResult = total
             } catch { ownError = error.localizedDescription }

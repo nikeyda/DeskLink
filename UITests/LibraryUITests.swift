@@ -250,6 +250,26 @@ final class LibraryUITests: XCTestCase {
     }
 
     #if targetEnvironment(simulator)
+    func testOpeningScreensDirectoryArchiveReportsPreservedFolders() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]
+        app.launch()
+        XCTAssertTrue(app.buttons["library.new"].waitForExistence(timeout: 10))
+        let data = Data(#"{"filename":"Fixture","screens":[],"folders":[],"tsFolders":[{"id":"EA5E2C8A-84E5-46F4-BF4C-331B2900677A","name":"Test","items":[],"rawItems":["fixture-node"],"contentType":16}]}"#.utf8)
+        let file = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString + ".screens")
+        defer { try? FileManager.default.removeItem(at: file) }
+        try data.write(to: file)
+        app.open(file)
+        let alert = app.alerts["导入完成"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 12))
+        XCTAssertTrue(alert.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "另保留 1 个目录分组，可随归档导出。")).firstMatch.exists)
+        XCTAssertFalse(alert.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "已迁移连接地址")).firstMatch.exists)
+        let picture = XCTAttachment(screenshot: app.screenshot())
+        picture.name = "Imported Screens directory groups"
+        picture.lifetime = .keepAlways
+        add(picture)
+    }
+
     func testOpenArchiveDocumentTwiceUsingTheSystemFileRoute() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--test-library", UUID().uuidString]

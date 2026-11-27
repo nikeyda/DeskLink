@@ -18,8 +18,7 @@ struct LibraryBackups {
     func list() throws -> [LibraryBackup] {
         try locations().compactMap { item in
             guard let archive = try? read(item.id) else { return nil }
-            return LibraryBackup(id: item.id, created: item.date, computers: archive.computers.count,
-                                 folders: archive.folders.count + archive.folders(in: .links).count)
+            return LibraryBackup(id: item.id, created: item.date, computers: archive.computers.count, folders: archive.folderCount)
         }
     }
 

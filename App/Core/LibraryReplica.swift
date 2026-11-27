@@ -23,6 +23,7 @@ struct LibraryReplica: Codable, Equatable, Sendable {
     private var deviceDisplays: [UUID: [String: Revision<DesktopDisplayPreferences?>]]?
     private var folders: [String: Revision<Bool>] = [:]
     private var linkFolders: [String: Revision<Bool>]?
+    private var screensDirectoryFolders: [String: [UUID: Revision<ScreensDirectoryFolder?>]]?
     private var order: Revision<[UUID]>?
     private var folderOrder: Revision<[String]>?
     private var linkFolderOrder: Revision<[String]>?
@@ -83,6 +84,18 @@ struct LibraryReplica: Codable, Equatable, Sendable {
             updateFolders(baseline.folders(in: .links), local.folders(in: .links), entries: &entries, order: &linkFolderOrder)
             linkFolders = entries
         }
+        for directory in ScreensDirectoryFolders.Directory.allCases {
+            let oldFolders = baseline.screensDirectoryFolders?[directory] ?? []
+            let newFolders = local.screensDirectoryFolders?[directory] ?? []
+            guard oldFolders != newFolders else { continue }
+            let before = Dictionary(uniqueKeysWithValues: oldFolders.map { ($0.id, $0) })
+            let after = Dictionary(uniqueKeysWithValues: newFolders.map { ($0.id, $0) })
+            var revisions = screensDirectoryFolders ?? [:]
+            for id in Set(before.keys).union(after.keys) where before[id] != after[id] {
+                revisions[directory.rawValue, default: [:]][id] = Revision(edition: edition, value: after[id])
+            }
+            screensDirectoryFolders = revisions
+        }
         let ids = local.computers.map(\.id)
         if baseline.computers.map(\.id) != ids { order = Revision(edition: edition, value: ids) }
     }
@@ -103,6 +116,11 @@ struct LibraryReplica: Codable, Equatable, Sendable {
         }
         folders.merge(other.folders) { $0.newer($1) }
         if let incoming = other.linkFolders { linkFolders = (linkFolders ?? [:]).merging(incoming) { $0.newer($1) } }
+        if let incoming = other.screensDirectoryFolders {
+            screensDirectoryFolders = (screensDirectoryFolders ?? [:]).merging(incoming) { local, remote in
+                local.merging(remote) { $0.newer($1) }
+            }
+        }
         if let otherOrder = other.order { order = order?.newer(otherOrder) ?? otherOrder }
         if let newFolders = other.folderOrder { folderOrder = folderOrder?.newer(newFolders) ?? newFolders }
         if let newOrder = other.linkFolderOrder { linkFolderOrder = linkFolderOrder?.newer(newOrder) ?? newOrder }
@@ -121,6 +139,12 @@ struct LibraryReplica: Codable, Equatable, Sendable {
         var result = LibraryArchive()
         result.folders = activeFolders(folders, order: folderOrder)
         result.setFolders(activeFolders(linkFolders ?? [:], order: linkFolderOrder), in: .links)
+        var directories = ScreensDirectoryFolders()
+        for directory in ScreensDirectoryFolders.Directory.allCases {
+            let entries = screensDirectoryFolders?[directory.rawValue] ?? [:]
+            directories[directory] = entries.values.compactMap(\.value).sorted { $0.id.uuidString < $1.id.uuidString }
+        }
+        if directories.count > 0 { result.screensDirectoryFolders = directories }
         let names = Set(result.folders), links = Set(result.folders(in: .links))
         let ranked = (order?.value ?? []).filter { entries[$0] != nil }
         let extra = Set(entries.keys).subtracting(ranked).sorted { $0.uuidString < $1.uuidString }
@@ -163,6 +187,12 @@ struct LibraryReplica: Codable, Equatable, Sendable {
             guard profiles.values.allSatisfy({ $0.edition.sequence <= value.clock && $0.value?.fixedDesktop?.isSupported != false }) else {
                 throw CocoaError(.fileReadCorruptFile)
             }
+        }
+        for (directory, revisions) in value.screensDirectoryFolders ?? [:] {
+            guard ScreensDirectoryFolders.Directory(rawValue: directory) != nil,
+                  revisions.allSatisfy({ id, item in
+                      item.edition.sequence <= value.clock && (item.value.map { $0.id == id } ?? true)
+                  }) else { throw CocoaError(.fileReadCorruptFile) }
         }
         _ = try LibraryArchive.read(value.archive.encoded())
         return value

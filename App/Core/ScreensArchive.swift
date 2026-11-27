@@ -249,8 +249,8 @@ struct ScreensArchive: Decodable {
 
     private let screens: [Screen]
     private let folders: [Folder]
-    private let tsFolders: [Folder]
-    private let scFolders: [Folder]
+    private let tsFolders: [ScreensDirectoryFolder]?
+    private let scFolders: [ScreensDirectoryFolder]?
 
     enum ImportError: LocalizedError {
         case unsupportedConnection, incompleteSSH, unsupportedFolder
@@ -266,8 +266,10 @@ struct ScreensArchive: Decodable {
 
     static func convert(_ data: Data) throws -> LibraryArchive {
         let source = try JSONDecoder().decode(Self.self, from: data)
-        guard source.tsFolders.isEmpty, source.scFolders.isEmpty else { throw ImportError.unsupportedFolder }
+        let directories = ScreensDirectoryFolders(tailscale: source.tsFolders ?? [], screensConnect: source.scFolders ?? [])
+        guard directories.isValid else { throw ImportError.unsupportedFolder }
         var result = LibraryArchive()
+        if directories.count > 0 { result.screensDirectoryFolders = directories }
         result.computers = try source.screens.map { try $0.computer() }
         let ids = Set(result.computers.map(\.id))
         guard ids.count == result.computers.count else { throw CocoaError(.fileReadCorruptFile) }
@@ -373,7 +375,14 @@ extension ScreensArchive {
             let id = UUID.derived(from: "local.nikey.desklink/screens/group/" + name)
             return ["id": id.uuidString, "name": name, "contentType": 8, "items": items, "rawItems": items]
         }
-        let result: [String: Any] = ["filename": "Telescope", "screens": screens, "folders": folders, "scFolders": [], "tsFolders": []]
+        func directoryRecords(_ entries: [ScreensDirectoryFolder]) throws -> Any {
+            try JSONSerialization.jsonObject(with: JSONEncoder().encode(entries))
+        }
+        let result: [String: Any] = [
+            "filename": "Telescope", "screens": screens, "folders": folders,
+            "scFolders": try directoryRecords(archive.screensDirectoryFolders?.screensConnect ?? []),
+            "tsFolders": try directoryRecords(archive.screensDirectoryFolders?.tailscale ?? []),
+        ]
         return try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
     }
 

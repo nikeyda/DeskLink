@@ -279,6 +279,9 @@ struct LibraryArchive: Codable, Equatable, Sendable {
     var folders: [String] = []
     var computers: [Computer] = []
     private(set) var linkFolders: [String]?
+    var screensDirectoryFolders: ScreensDirectoryFolders?
+
+    var folderCount: Int { folders.count + (linkFolders?.count ?? 0) + (screensDirectoryFolders?.count ?? 0) }
 
     func folders(in scope: LibraryFolderScope) -> [String] { scope == .links ? linkFolders ?? [] : folders }
 
@@ -320,6 +323,7 @@ struct LibraryArchive: Codable, Equatable, Sendable {
     static func read(_ data: Data) throws -> Self {
         let archive = try JSONDecoder().decode(Self.self, from: data)
         guard archive.version == 1,
+              archive.screensDirectoryFolders?.isValid != false,
               Set(archive.computers.map(\.id)).count == archive.computers.count,
               LibraryFolderScope.allCases.allSatisfy({ scope in
                   let names = archive.folders(in: scope)
@@ -354,6 +358,7 @@ struct ArchiveImportResult: Equatable {
     var connections = 0
     var folders = 0
     var duplicates = 0
+    var directoryFolders = 0
     var importedScreens = false
 }
 
@@ -634,6 +639,7 @@ final class ConnectionLibrary {
                 || computer.modifiedAt != nil || computer.linkFolder != nil))
         }
         let libraryChanged = value.folders != archive.folders || value.linkFolders != archive.linkFolders ||
+            value.screensDirectoryFolders != archive.screensDirectoryFolders ||
             value.computers.filter(shouldBackUp).map(\.withoutSessionHistory) !=
             archive.computers.filter(shouldBackUp).map(\.withoutSessionHistory)
         return change(backup: libraryChanged) { $0 = value }
@@ -673,14 +679,19 @@ final class ConnectionLibrary {
         let additions = imported.computers.filter { !existingIDs.contains($0.id) }
         let folders = imported.folders.filter { !archive.folders.contains($0) }
         let linkFolders = imported.folders(in: .links).filter { !archive.folders(in: .links).contains($0) }
+        var directories = archive.screensDirectoryFolders ?? ScreensDirectoryFolders()
+        let earlierDirectoryCount = directories.count
+        if let incoming = imported.screensDirectoryFolders { directories.addMissing(from: incoming) }
         let saved = change { state in
             state.folders.append(contentsOf: folders)
             state.setFolders(state.folders(in: .links) + linkFolders, in: .links)
             state.computers.append(contentsOf: additions)
+            state.screensDirectoryFolders = directories.count > 0 ? directories : nil
         }
         guard saved else { return nil }
         return ArchiveImportResult(connections: additions.count, folders: folders.count + linkFolders.count,
-                                   duplicates: imported.computers.count - additions.count)
+                                   duplicates: imported.computers.count - additions.count,
+                                   directoryFolders: directories.count - earlierDirectoryCount)
     }
 
     @discardableResult
@@ -690,7 +701,7 @@ final class ConnectionLibrary {
         edit(&next)
         guard next != archive else { return true }
         do {
-            if backup, !archive.computers.isEmpty || !archive.folders.isEmpty || !archive.folders(in: .links).isEmpty {
+            if backup, !archive.computers.isEmpty || archive.folderCount > 0 {
                 try backups.capture(archive.encoded())
             }
             let data = try next.encoded()

@@ -106,3 +106,4 @@
 "macOS 未将远程随航设为默认应用。" = "macOS didn't set Telescope as the default app.";
 "仅输入用户密码" = "Type User Password Only";
 "切换连接库工具栏" = "Toggle Connection Library Toolbar";
+"\n另保留 %lld 个目录分组，可随归档导出。" = "\nPreserved %lld directory groups for archive export.";
