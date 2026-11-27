@@ -83,6 +83,7 @@ public enum VNCSecurityPolicy: String, Sendable, Equatable, Hashable, CaseIterab
     case rsaAES
     case none
     case vncAuthentication
+    case macUser
     case apple30
     case macAuthentication
     case appleSRP

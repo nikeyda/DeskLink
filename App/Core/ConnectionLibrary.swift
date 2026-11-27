@@ -8,12 +8,13 @@ import UIKit
 
 enum DesktopAuthentication: Int, Codable, CaseIterable, Sendable {
     case automatic = 0
+    case macUser = 1
     case vncPassword = 2
     case unauthenticated = 3
     case raspberryPiRSA = 5
 
     var usesPassword: Bool { self != .unauthenticated }
-    var usesUsername: Bool { self == .automatic || self == .raspberryPiRSA }
+    var usesUsername: Bool { self == .automatic || self == .macUser || self == .raspberryPiRSA }
 }
 
 enum PictureQuality: String, Codable, CaseIterable, Sendable { case standard, adaptive, lossless }
@@ -136,19 +137,29 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
 
     var authentication: DesktopAuthentication {
         get {
-            selectedDesktopAuthentication
-                ?? (screensAuthenticationMethod == DesktopAuthentication.raspberryPiRSA.rawValue ? .raspberryPiRSA : .automatic)
+            if let selectedDesktopAuthentication { return selectedDesktopAuthentication }
+            switch screensAuthenticationMethod {
+            case DesktopAuthentication.macUser.rawValue: return .macUser
+            case DesktopAuthentication.raspberryPiRSA.rawValue: return .raspberryPiRSA
+            default: return .automatic
+            }
         }
         set {
             guard newValue != authentication else { return }
-            selectedDesktopAuthentication = newValue == .automatic || newValue == .raspberryPiRSA ? nil : newValue
+            switch newValue {
+            case .vncPassword, .unauthenticated: selectedDesktopAuthentication = newValue
+            default: selectedDesktopAuthentication = nil
+            }
             if !newValue.usesUsername { username = "" }
             screensAuthenticationMethod = newValue == .automatic ? nil : newValue.rawValue
-            if newValue == .raspberryPiRSA {
-                // The original Raspberry Pi profile uses 5 for both fields.
+            switch newValue {
+            case .macUser:
+                screensOperatingSystem = 1
+            case .raspberryPiRSA:
                 screensOperatingSystem = 5
-            } else if screensOperatingSystem == nil && newValue != .automatic {
-                screensOperatingSystem = 6
+            case .vncPassword, .unauthenticated:
+                if screensOperatingSystem == nil { screensOperatingSystem = 6 }
+            case .automatic: break
             }
         }
     }

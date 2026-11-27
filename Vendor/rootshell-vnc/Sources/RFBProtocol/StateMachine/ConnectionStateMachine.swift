@@ -268,6 +268,8 @@ public struct ConnectionStateMachine: Sendable {
 
     // MARK: - Security type selection
 
+    private static let macUserSecurityTypes: [SecurityType] = [.macAuthentication, .apple30, .appleSRP]
+
     private func selectBestSecurityType(from types: [SecurityType]) -> SecurityType? {
         let rsa = [SecurityType.rsaAES256, .rsaAES].first(where: types.contains)
         // Diagnostics may choose a type only when the caller has not set a policy.
@@ -297,6 +299,8 @@ public struct ConnectionStateMachine: Sendable {
             return types.contains(.none) ? SecurityType.none : nil
         case .vncAuthentication:
             return types.contains(.vncAuthentication) ? .vncAuthentication : nil
+        case .macUser:
+            return hasUsername ? Self.macUserSecurityTypes.first(where: types.contains) : nil
         case .apple30:
             return types.contains(.apple30) ? .apple30 : nil
         case .macAuthentication:
@@ -308,10 +312,9 @@ public struct ConnectionStateMachine: Sendable {
         case .requireEncryption:
             return rsa ?? (types.contains(.vencrypt) ? .vencrypt : nil)
         case .automatic:
-            if negotiatedVersion?.isApple == true, hasUsername {
-                if types.contains(.macAuthentication) { return .macAuthentication }
-                if types.contains(.apple30) { return .apple30 }
-                if types.contains(.appleSRP) { return .appleSRP }
+            if negotiatedVersion?.isApple == true, hasUsername,
+               let macType = Self.macUserSecurityTypes.first(where: types.contains) {
+                return macType
             }
             if let rsa {
                 // WayVNC advertises VeNCrypt first and can generate a temporary RSA
@@ -330,12 +333,11 @@ public struct ConnectionStateMachine: Sendable {
         }
     }
 
-    /// Automatic selection skipped Apple types only because no username was set.
+    /// The connection cannot select the offered Apple authentication without a username.
     private func requiresUsername(_ types: [SecurityType]) -> Bool {
-        securityPolicy == .automatic
-            && negotiatedVersion?.isApple == true
-            && !hasUsername
-            && types.contains { [.apple30, .macAuthentication, .appleSRP].contains($0) }
+        !hasUsername
+            && (securityPolicy == .macUser || (securityPolicy == .automatic && negotiatedVersion?.isApple == true))
+            && types.contains(where: Self.macUserSecurityTypes.contains)
     }
 
     /// RFB 3.3 does not let the client choose a type, but a server-selected
@@ -351,6 +353,8 @@ public struct ConnectionStateMachine: Sendable {
             return type == .none
         case .vncAuthentication:
             return type == .vncAuthentication
+        case .macUser:
+            return hasUsername && Self.macUserSecurityTypes.contains(type)
         case .apple30:
             return type == .apple30
         case .macAuthentication:

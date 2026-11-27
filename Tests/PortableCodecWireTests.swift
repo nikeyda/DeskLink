@@ -98,6 +98,55 @@ final class PortableCodecWireTests: XCTestCase {
         XCTAssertEqual(refusedWrites, [Data("RFB 003.008\n".utf8)])
     }
 
+    func testMacUserOnlyNegotiatesAppleAccountTypesAndRequiresTheUsername() {
+        let compatible: [SecurityType] = [.macAuthentication, .apple30, .appleSRP]
+        let other: [SecurityType] = [.none, .vncAuthentication, .rsaAES, .rsaAES256, .vencrypt]
+        for version in [ProtocolVersion.apple, .v3_8] {
+            for (index, expected) in compatible.enumerated() {
+                var machine = ConnectionStateMachine(securityPolicy: .macUser, hasUsername: true)
+                _ = machine.handle(event: .connected)
+                _ = machine.handle(event: .receivedProtocolVersion(version))
+                _ = machine.handle(event: .receivedSecurityTypes(other + Array(compatible.dropFirst(index).reversed())))
+                XCTAssertEqual(machine.selectedSecurityType, expected)
+            }
+        }
+
+        var missingUser = ConnectionStateMachine(securityPolicy: .macUser)
+        _ = missingUser.handle(event: .connected)
+        _ = missingUser.handle(event: .receivedProtocolVersion(.apple))
+        _ = missingUser.handle(event: .receivedSecurityTypes(other + compatible))
+        XCTAssertNil(missingUser.selectedSecurityType)
+        guard case .failed(.authenticationFailed) = missingUser.state else {
+            return XCTFail("Expected an authentication failure without a Mac username.")
+        }
+
+        for type in other {
+            var legacy = ConnectionStateMachine(securityPolicy: .macUser, hasUsername: true)
+            _ = legacy.handle(event: .connected)
+            _ = legacy.handle(event: .receivedProtocolVersion(.v3_3))
+            _ = legacy.handle(event: .receivedServerSelectedSecurityType(type))
+            XCTAssertNil(legacy.selectedSecurityType)
+        }
+    }
+
+    func testMacUserRefusesPasswordOnlyAndUnauthenticatedOffersBeforeSendingCredentials() async throws {
+        let peer = CodecHandshakePeer(local: true, offered: [.none, .vncAuthentication])
+        var computer = Computer(endpoint: try Endpoint(address: "mac-authentication.fixture.invalid"))
+        computer.authentication = .macUser
+        var config = computer.configuration
+        config.transportProvider = { _, _ in peer }
+        let session = VNCSession(configuration: config)
+        do {
+            try await session.connect(credentials: VNCCredentials(host: computer.endpoint.host, port: computer.endpoint.port,
+                                                                   password: "fixture", username: "fixture-user"))
+            XCTFail("A Mac account connection must refuse non-Apple security types.")
+        } catch let error as VNCError {
+            guard case .authenticationFailed = error else { return XCTFail("Unexpected connection error: \(error)") }
+        }
+        let writes = await peer.writes
+        XCTAssertEqual(writes, [Data("RFB 003.008\n".utf8)])
+    }
+
     private func advertised(disabling codes: [Int32] = [], quality: FramebufferQuality = FramebufferQuality(compression: .always),
                             local: Bool = false) async throws -> Set<Int32> {
         let peer = CodecHandshakePeer(local: local)

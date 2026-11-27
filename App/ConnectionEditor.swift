@@ -100,6 +100,9 @@ struct SessionRequest: Identifiable {
     var sshSecretToRemember: String?
 
     static func remembered(for computer: Computer, synchronize: Bool) throws -> Self? {
+        if computer.authentication == .macUser, computer.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return nil
+        }
         let desktopPassword = computer.authentication.usesPassword
             ? try PasswordStore.read(computer, synchronize: synchronize) : ""
         guard let password = desktopPassword else { return nil }
@@ -166,6 +169,7 @@ extension Computer {
         configuration.allowsViewportZoom = allowsViewportZoom != false
         configuration.securityPolicy = switch authentication {
         case .automatic: .automatic
+        case .macUser: .macUser
         case .vncPassword: .vncAuthentication
         case .unauthenticated: .none
         case .raspberryPiRSA: .rsaAES
@@ -331,7 +335,9 @@ struct ConnectionEditor: View {
         guard port.utf8.allSatisfy({ (48...57).contains($0) }), let port = UInt16(port), port != 0 else { return nil }
         return try? Endpoint(address: host, defaultPort: port)
     }
-    private var desktopUsername: String { authentication.usesUsername ? username : "" }
+    private var desktopUsername: String {
+        authentication.usesUsername ? username.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+    }
 
     private var remembersPassword: Binding<Bool> {
         Binding(get: { remember }, set: {
@@ -342,6 +348,7 @@ struct ConnectionEditor: View {
 
     private var canSubmit: Bool {
         guard endpoint != nil else { return false }
+        if !isSaving, authentication == .macUser, desktopUsername.isEmpty { return false }
         if sizing == .fixed, fixedDimensions?.isSupported != true { return false }
         guard useSSH else { return true }
         if !sshServer.isEmpty, (try? Endpoint.hostOnly(sshServer)) == nil { return false }
@@ -491,6 +498,7 @@ struct ConnectionEditor: View {
         Section {
             Picker("认证方式", selection: $authentication) {
                 Text("自动协商").tag(DesktopAuthentication.automatic)
+                Text("Mac 用户").tag(DesktopAuthentication.macUser)
                 Text("VNC 密码").tag(DesktopAuthentication.vncPassword)
                 Text("无认证").tag(DesktopAuthentication.unauthenticated)
                 Text("Raspberry Pi · RSA-AES").tag(DesktopAuthentication.raspberryPiRSA)
@@ -511,7 +519,9 @@ struct ConnectionEditor: View {
         } header: {
             Text("身份验证")
         } footer: {
-            if authentication == .unauthenticated {
+            if authentication == .macUser {
+                Text("请使用远程 Mac 的登录用户名和密码。")
+            } else if authentication == .unauthenticated {
                 Text("服务器必须允许无认证连接。")
             }
         }
@@ -837,11 +847,11 @@ struct ConnectionEditor: View {
     }
 
     private func submit() {
-        guard let endpoint else { return }
+        guard canSubmit, let endpoint else { return }
         var entry = request.computer ?? Computer(endpoint: endpoint)
         entry.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         entry.endpoint = endpoint
-        entry.username = desktopUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+        entry.username = desktopUsername
         entry.authentication = authentication
         entry.viewOnly = observe
         entry.curtainsDisplayOnConnect = curtainsDisplayOnConnect ? true : nil

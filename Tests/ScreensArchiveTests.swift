@@ -141,6 +141,36 @@ final class ScreensArchiveTests: XCTestCase {
         XCTAssertEqual(entry.usesMacHardwareKeyPositions, false)
     }
 
+    func testMacUserProfilesRoundTripAndKeepAutomaticAvailableForNativeConnections() throws {
+        let imported = try ScreensArchive.convert(fixture("screens-direct"))
+        let original = try XCTUnwrap(imported.computers.first)
+        XCTAssertEqual(original.authentication, .macUser)
+        XCTAssertEqual(original.username, "example-user")
+
+        var manual = Computer(endpoint: original.endpoint)
+        manual.username = "fixture-mac"
+        XCTAssertEqual(manual.configuration.securityPolicy, .automatic)
+        manual.authentication = .macUser
+        XCTAssertEqual(manual.screensOperatingSystem, 1)
+
+        for computer in [original, manual] {
+            let native = try LibraryArchive.read(LibraryArchive(computers: [computer]).encoded())
+            let stored = try XCTUnwrap(native.computers.first)
+            XCTAssertEqual(stored.configuration.securityPolicy, .macUser)
+            let output = try ScreensArchive.export(native, knownMacs: [], sharedClipboard: true)
+            let restored = try XCTUnwrap(ScreensArchive.convert(output).computers.first)
+            XCTAssertEqual(restored.authentication, .macUser)
+            XCTAssertEqual(restored.screensOperatingSystem, 1)
+            XCTAssertEqual(restored.username, computer.username)
+        }
+
+        manual.username = " "
+        XCTAssertNil(try SessionRequest.remembered(for: manual, synchronize: false))
+        manual.authentication = .automatic
+        XCTAssertNil(manual.screensAuthenticationMethod)
+        XCTAssertEqual(manual.configuration.securityPolicy, .automatic)
+    }
+
     func testUnauthenticatedProfileSurvivesBothArchivesAndIsSeparateFromSavedPasswords() throws {
         let raw = try modified(fixture: "screens-generic") {
             $0["authenticationMethod"] = 3
