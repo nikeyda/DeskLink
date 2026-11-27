@@ -17,6 +17,7 @@ final class SSHWireTests: XCTestCase {
         let pem: [String]?
         let encryptedPEM: String
         let encryptedPEMVariants: [String]?
+        let openSSHCipherVariants: [String: String]?
     }
 
     func testOnlyAnOptedInLocalSocketBypassesSSH() async throws {
@@ -119,7 +120,25 @@ final class SSHWireTests: XCTestCase {
                 XCTAssertEqual(String(openSSHPublicKey: try SSHKeyFile.identity(opened).publicKey), item.public)
             }
         }
-        let login = try XCTUnwrap(pemIdentities.first)
+        let login: NIOSSHPrivateKey
+        if let variants = first.openSSHCipherVariants {
+            let ciphers: Set<String> = ["aes128-ctr", "aes192-ctr", "aes256-ctr", "aes128-cbc", "aes192-cbc", "aes256-cbc"]
+            XCTAssertEqual(Set(variants.keys), ciphers)
+            for (cipher, variant) in variants {
+                XCTAssertThrowsError(try SSHKeyFile.opened(variant), cipher) {
+                    XCTAssertEqual(($0 as NSError).code, Int(errSecPassphraseRequired))
+                }
+                XCTAssertThrowsError(try SSHKeyFile.opened(variant, passphrase: "invalid"), cipher) {
+                    XCTAssertEqual(($0 as NSError).code, Int(errSecAuthFailed))
+                }
+                let key = try SSHKeyFile.identity(SSHKeyFile.opened(variant, passphrase: "chart-key-phrase"))
+                XCTAssertEqual(String(openSSHPublicKey: key.publicKey), first.public, cipher)
+            }
+            let cbcKey = try XCTUnwrap(variants["aes256-cbc"])
+            login = try SSHKeyFile.identity(SSHKeyFile.opened(cbcKey, passphrase: "chart-key-phrase"))
+        } else {
+            login = try XCTUnwrap(pemIdentities.first)
+        }
         let domain = "DeskLinkKeyLogin." + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
         defer { defaults.removePersistentDomain(forName: domain) }

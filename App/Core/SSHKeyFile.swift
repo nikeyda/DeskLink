@@ -26,9 +26,14 @@ enum SSHKeyFile {
             return text
         }
         let keyLength: Int
+        let mode: DLOpenSSHAESMode
         switch String(decoding: cipher, as: UTF8.self) {
-        case "aes128-ctr": keyLength = 16
-        case "aes256-ctr": keyLength = 32
+        case "aes128-ctr": (keyLength, mode) = (16, DLOpenSSHAESModeCTR)
+        case "aes192-ctr": (keyLength, mode) = (24, DLOpenSSHAESModeCTR)
+        case "aes256-ctr": (keyLength, mode) = (32, DLOpenSSHAESModeCTR)
+        case "aes128-cbc": (keyLength, mode) = (16, DLOpenSSHAESModeCBC)
+        case "aes192-cbc": (keyLength, mode) = (24, DLOpenSSHAESModeCBC)
+        case "aes256-cbc": (keyLength, mode) = (32, DLOpenSSHAESModeCBC)
         default: throw CocoaError(.fileReadUnsupportedScheme)
         }
         guard kdf == Data("bcrypt".utf8), try container.integer() == 1 else { throw CocoaError(.fileReadUnsupportedScheme) }
@@ -45,7 +50,7 @@ enum SSHKeyFile {
         }
         var plain = [UInt8](repeating: 0, count: encrypted.count)
         let status = DLDecryptOpenSSHKey(Array(passphrase.utf8), passphrase.utf8.count, Array(salt), salt.count,
-                                         UInt32(rounds), keyLength, Array(encrypted), encrypted.count, &plain)
+                                         UInt32(rounds), mode, keyLength, Array(encrypted), encrypted.count, &plain)
         guard status == 0 else { throw CocoaError(.fileReadUnknown) }
         var checks = Reader(data: Data(plain))
         guard try checks.integer() == checks.integer() else {

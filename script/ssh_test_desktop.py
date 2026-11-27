@@ -7,6 +7,7 @@ import json
 import os
 import socket
 import subprocess
+import tempfile
 from pathlib import Path
 
 import paramiko
@@ -41,6 +42,22 @@ class ChartLogin(paramiko.ServerInterface):
         return paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
 
 
+def open_ssh_cipher_fixtures(ssh_keygen, original):
+    variants = {}
+    with tempfile.TemporaryDirectory() as directory:
+        key_file = Path(directory) / "fixture"
+        for bits in (128, 192, 256):
+            for mode in ("ctr", "cbc"):
+                cipher = f"aes{bits}-{mode}"
+                key_file.write_bytes(original)
+                key_file.chmod(0o600)
+                subprocess.run([ssh_keygen, "-q", "-p", "-a", "4", "-P", "chart-key-phrase",
+                                "-N", "chart-key-phrase", "-Z", cipher, "-f", str(key_file)],
+                               check=True, stdout=subprocess.DEVNULL)
+                variants[cipher] = key_file.read_text()
+    return variants
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ready", required=True, type=Path)
@@ -66,6 +83,9 @@ def main():
         encrypted_pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
                                           serialization.BestAvailableEncryption(b"chart-key-phrase"))
         fixture = {"key": encoded.decode(), "public": public.decode(), "encryptedPEM": encrypted_pem.decode()}
+        ssh_keygen = os.environ.get("DESKLINK_FIXTURE_SSH_KEYGEN")
+        if ssh_keygen and isinstance(key, ed25519.Ed25519PrivateKey):
+            fixture["openSSHCipherVariants"] = open_ssh_cipher_fixtures(ssh_keygen, encoded)
         if isinstance(key, rsa.RSAPrivateKey):
             fixture["pem"] = [
                 key.private_bytes(serialization.Encoding.PEM, format, serialization.NoEncryption()).decode()
