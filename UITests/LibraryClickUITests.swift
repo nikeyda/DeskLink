@@ -28,6 +28,19 @@ final class LibraryClickUITests: XCTestCase {
         XCTAssertEqual(host.value as? String, "selection.fixture.invalid")
     }
 
+    func testFocusedGridTileOpensWithSpace() {
+        let app = libraryWithComputer()
+        let item = computer(in: app)
+        item.click()
+        XCTAssertTrue(item.wait(for: \.isSelected, toEqual: true, timeout: 4))
+        XCTAssertFalse(app.textFields["connection.host"].exists)
+
+        app.typeKey(" ", modifierFlags: [])
+        let host = app.textFields["connection.host"]
+        XCTAssertTrue(host.waitForExistence(timeout: 6))
+        XCTAssertEqual(host.value as? String, "selection.fixture.invalid")
+    }
+
     func testFocusedListRowOpensWithReturnWithoutCapturingSearchInput() {
         let app = libraryWithComputer()
         showList(in: app)
@@ -48,6 +61,13 @@ final class LibraryClickUITests: XCTestCase {
         let host = app.textFields["connection.host"]
         XCTAssertTrue(host.waitForExistence(timeout: 6))
         XCTAssertEqual(host.value as? String, "selection.fixture.invalid")
+        let window = app.windows.containing(.textField, identifier: "connection.host").firstMatch
+        if window.exists {
+            let capture = XCTAttachment(screenshot: window.screenshot())
+            capture.name = "Connection opened with Return"
+            capture.lifetime = .keepAlways
+            add(capture)
+        }
     }
 
     private func showList(in app: XCUIApplication) {
@@ -56,8 +76,29 @@ final class LibraryClickUITests: XCTestCase {
         if list.exists { list.click() } else { app.buttons["列表"].firstMatch.click() }
     }
     #else
-    func testTouchOpensSavedConnectionOnTheFirstTap() {
-        let app = libraryWithComputer()
+    func testTouchOpensSavedConnectionOnTheFirstTap() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]
+        app.launch()
+        XCTAssertTrue(app.buttons["library.new"].firstMatch.waitForExistence(timeout: 10))
+
+        let id = UUID()
+        let file = FileManager.default.temporaryDirectory.appending(path: id.uuidString + ".screens")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let fixture = """
+            {"filename":"Selection test","folders":[],"screens":[{
+            "version":6,"id":"\(id.uuidString)","type":{"saved":{}},
+            "hostname":"selection.fixture.invalid","port":5900,"clientProtocol":"vnc",
+            "users":[],"authenticationMethod":2,"operatingSystem":6,"startInObserveMode":false,
+            "onDisconnectAction":0,"useSharedClipboard":true,"useSecureConnection":false}]}
+            """
+        try Data(fixture.utf8).write(to: file)
+        app.open(file)
+        let imported = app.alerts["导入完成"]
+        XCTAssertTrue(imported.waitForExistence(timeout: 10))
+        imported.buttons["完成"].tap()
+
         computer(in: app).tap()
         let host = app.textFields["connection.host"]
         XCTAssertTrue(host.waitForExistence(timeout: 6))
@@ -65,6 +106,7 @@ final class LibraryClickUITests: XCTestCase {
     }
     #endif
 
+    #if targetEnvironment(macCatalyst)
     private func libraryWithComputer() -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -72,23 +114,17 @@ final class LibraryClickUITests: XCTestCase {
         app.launch()
         let add = app.buttons["library.new"].firstMatch
         XCTAssertTrue(add.waitForExistence(timeout: 10))
-        press(add)
+        add.click()
         let host = app.textFields["connection.host"]
         XCTAssertTrue(host.waitForExistence(timeout: 6))
-        press(host)
+        host.click()
         host.typeText("selection.fixture.invalid")
-        press(app.buttons["connection.submit"])
+        app.buttons["connection.submit"].click()
         XCTAssertTrue(host.waitForNonExistence(timeout: 6))
         return app
     }
 
-    private func press(_ element: XCUIElement) {
-        #if targetEnvironment(macCatalyst)
-        element.click()
-        #else
-        element.tap()
-        #endif
-    }
+    #endif
 
     private func computer(in app: XCUIApplication) -> XCUIElement {
         let item = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.computer.")).firstMatch
