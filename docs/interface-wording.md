@@ -187,3 +187,7 @@ iPhone 的「设置 → 侧栏」提供「显示附近设备数量」，英文�
 ## iPhone 连接库统一搜索
 
 侧栏和连接分类内的搜索提示为「搜索所有来源」。匹配项按「已保存的电脑」「最近连接」「临时链接」「附近」和「Tailscale」分组。英文新增 “Search All Sources”、“Saved Computers” 和 “Temporary Links”。
+
+## iPhone 与 iPad 的远程应用切换
+
+「设置 → 控制方式」可启用「用 Command–Return 切换远程 Mac 的应用」。英文为 “Switch Remote Mac Apps with Command–Return”。默认关闭。

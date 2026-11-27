@@ -494,6 +494,7 @@ import UIKit
 final class HardwareKeyboardController {
     private let keyboardHandler: KeyboardInputHandler
     private var state = HardwareKeyboardState()
+    private var remappedUsages: [UInt32: UInt32] = [:]
     private var commandModifiers = CommandModifierState()
     var swapsCommandAndControl: Bool {
         get { commandModifiers.swapsCommandAndControl }
@@ -538,21 +539,23 @@ final class HardwareKeyboardController {
     }
 
     @discardableResult
-    func press(usage: UInt32, keysym: UInt32) -> Bool {
+    func press(usage: UInt32, keysym: UInt32, sendingAs remoteUsage: UInt32? = nil) -> Bool {
         if controlOptionAsCommand, (0xE0...0xE7).contains(usage) {
             commandModifiers.press(usage: usage, keysym: keysym).forEach(sendModifier)
             return true
         }
         // Dead keys and some JIS keys produce no local character before composition.
-        let positionOnly = keysym == 0 && keyboardHandler.forwardsPhysicalKey(usage: usage)
+        let target = remoteUsage ?? usage
+        let positionOnly = keysym == 0 && keyboardHandler.forwardsPhysicalKey(usage: target)
         guard let transition = state.press(usage: usage, keysym: keysym, allowEmptyKeysym: positionOnly) else {
             // UIKit and UIKeyCommand can both report OS repeat callbacks. The
             // controller owns repeat timing, so duplicate begins are consumed.
             return state.contains(usage)
         }
+        remappedUsages[usage] = remoteUsage
         send(transition, usage: usage)
         // A physical-key host is a USB keyboard; the remote OS repeats held keys.
-        if keyRepeat.enabled, Self.isRepeatable(usage), !keyboardHandler.forwardsPhysicalKey(usage: usage) {
+        if keyRepeat.enabled, Self.isRepeatable(target), !keyboardHandler.forwardsPhysicalKey(usage: target) {
             startRepeat(for: usage)
         }
         return true
@@ -567,6 +570,7 @@ final class HardwareKeyboardController {
         guard let transition = state.release(usage: usage) else { return false }
         if repeatingUsage == usage { stopRepeat() }
         send(transition, usage: usage)
+        remappedUsages.removeValue(forKey: usage)
         return true
     }
 
@@ -584,6 +588,7 @@ final class HardwareKeyboardController {
     func releaseAll() {
         stopRepeat()
         state.releaseAllWithUsages().forEach { send($0.transition, usage: $0.usage) }
+        remappedUsages.removeAll(keepingCapacity: true)
         commandModifiers.releaseAll().forEach(sendModifier)
     }
 
@@ -708,7 +713,7 @@ final class HardwareKeyboardController {
 
     private func send(_ transition: HardwareKeyboardTransition, usage: UInt32) {
         let swapped = commandModifiers.swappedModifier(for: usage)
-        let remoteUsage = swapped?.usage ?? usage
+        let remoteUsage = swapped?.usage ?? remappedUsages[usage] ?? usage
         let remoteKey = HardwareKeyboardTransition(downFlag: transition.downFlag, keysym: swapped?.keysym ?? transition.keysym)
         if let routeModifier, (0xE0...0xE7).contains(usage) {
             routeModifier(remoteKey, remoteUsage)

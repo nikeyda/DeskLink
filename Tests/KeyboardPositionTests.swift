@@ -27,7 +27,55 @@ import UIKit
         XCTAssertNil(IPadSessionShortcut.matching("2", flags: [.control, .shift]))
         XCTAssertNil(IPadSessionShortcut.matching("x", flags: chord))
     }
+
+    func testAppSwitcherMatchesOnlyTheEffectiveCommandAndReturn() {
+        func tab(_ usage: UInt32, _ flags: UIKeyModifierFlags, swapped: Bool = false) -> UInt32? {
+            IPadSessionShortcut.appSwitcherTabUsage(for: usage, flags: flags, swapsCommandAndControl: swapped)
+        }
+        XCTAssertEqual(tab(0x28, .command), 0x2B)
+        XCTAssertEqual(tab(0x28, [.command, .shift]), 0x2B)
+        XCTAssertEqual(tab(0x28, .control, swapped: true), 0x2B)
+        XCTAssertNil(tab(0x28, .command, swapped: true))
+        XCTAssertNil(tab(0x28, []))
+        XCTAssertNil(tab(0x28, [.command, .alternate]))
+        XCTAssertNil(tab(0x2B, .command))
+    }
     #endif
+
+    func testReturnCanSendTabPositionTwiceWithoutReleasingHeldCommand() {
+        struct Event: Equatable {
+            let down: Bool
+            let usage: UInt32?
+            let keysym: UInt32
+        }
+        var wire: [Event] = []
+        let handler = KeyboardInputHandler(sendKeyEvent: { down, key in
+            wire.append(.init(down: down, usage: nil, keysym: key))
+        }, sendPhysicalKeyEvent: { down, usage, key in
+            wire.append(.init(down: down, usage: usage, keysym: key))
+        })
+        let input = HardwareKeyboardController(keyboardHandler: handler)
+        input.synchronizeModifiers(.command)
+        for _ in 0..<2 {
+            XCTAssertTrue(input.press(usage: 0x28, keysym: 0xFF09, sendingAs: 0x2B))
+            XCTAssertTrue(input.release(usage: 0x28))
+        }
+        input.synchronizeModifiers([])
+        XCTAssertEqual(wire, [
+            .init(down: true, usage: nil, keysym: 0xFFEB),
+            .init(down: true, usage: 0x2B, keysym: 0xFF09),
+            .init(down: false, usage: 0x2B, keysym: 0xFF09),
+            .init(down: true, usage: 0x2B, keysym: 0xFF09),
+            .init(down: false, usage: 0x2B, keysym: 0xFF09),
+            .init(down: false, usage: nil, keysym: 0xFFEB),
+        ])
+        input.press(usage: 0x28, keysym: 0xFF09, sendingAs: 0x2B)
+        input.releaseAll()
+        XCTAssertEqual(wire.last, .init(down: false, usage: 0x2B, keysym: 0xFF09))
+        input.press(usage: 0x28, keysym: 0xFF0D)
+        input.release(usage: 0x28)
+        XCTAssertEqual(wire.last, .init(down: false, usage: 0x28, keysym: 0xFF0D))
+    }
 
     #if targetEnvironment(macCatalyst)
     func testMacLocalOptionUsesTheActualKeyboardLayoutAndIsolatesDeadKeys() throws {

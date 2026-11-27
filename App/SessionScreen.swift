@@ -54,6 +54,7 @@ struct SessionScreen: View {
     @AppStorage("toolbar.twoFingerToggle") private var twoFingerToggle = true
     @AppStorage("gesture.holdDuration") private var holdDuration = RemoteTouchGestureConfiguration.defaultHoldDuration
     @AppStorage("keyboard.repeat") private var repeatKeys = true
+    @AppStorage("keyboard.commandReturnSwitchesApps") private var commandReturnSwitchesApps = false
     @AppStorage("keyboard.delay") private var keyDelay = VNCKeyRepeat().delay
     @AppStorage("keyboard.interval") private var keyInterval = VNCKeyRepeat().interval
     #endif
@@ -324,6 +325,9 @@ struct SessionScreen: View {
         #if !targetEnvironment(macCatalyst)
         .onChange(of: VNCKeyRepeat(enabled: repeatKeys, delay: keyDelay, interval: keyInterval), initial: true) { _, value in
             toolbar.keyboard.keyRepeat = value
+        }
+        .onChange(of: commandReturnSwitchesApps, initial: true) { _, value in
+            toolbar.keyboard.usesReturnForRemoteAppSwitcher = value
         }
         .background {
             if #available(iOS 27.0, *), session.connectionState.isConnected {

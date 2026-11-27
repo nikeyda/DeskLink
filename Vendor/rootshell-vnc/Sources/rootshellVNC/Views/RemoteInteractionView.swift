@@ -1568,6 +1568,15 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
             if handleRemoteSystemAlias(key: key, flags: remoteFlags, usage: usage) {
                 continue
             }
+            #if os(iOS)
+            if keyboardCapture.usesReturnForRemoteAppSwitcher, keyboardHandler.commandPlatform == .mac,
+               let tab = IPadSessionShortcut.appSwitcherTabUsage(
+                   for: usage, flags: key.modifierFlags, swapsCommandAndControl: hardwareKeyboard.swapsCommandAndControl) {
+                beginSupplementalModifiersIfNeeded(for: usage)
+                _ = hardwareKeyboard.press(usage: usage, keysym: KeyboardInputHandler.keysymTab, sendingAs: tab)
+                continue
+            }
+            #endif
             #else
             if isCatalystWindowChord(usage: usage, flags: remoteFlags) {
                 catalystWindowChordClaims[usage] = CACurrentMediaTime()

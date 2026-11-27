@@ -209,6 +209,8 @@ public final class VNCKeyboardCapture {
     /// Option side reserved for character input in the device's keyboard layout.
     public var localOptionKey: VNCLocalOptionKey = .off
     public var keyRepeat = VNCKeyRepeat()
+    /// iPhone and iPad can use Return in place of the system-owned Tab chord.
+    public var usesReturnForRemoteAppSwitcher = false
 
     /// Mac: the host has turned off the local system shortcuts on Space
     /// (Spotlight, input sources). Those presses then reach no responder,

@@ -42,6 +42,14 @@ import UIKit
         return bindings.first { $0.input == key && $0.modifiers == modifiers }?.action
     }
 
+    static func appSwitcherTabUsage(for usage: UInt32, flags: UIKeyModifierFlags,
+                                    swapsCommandAndControl: Bool) -> UInt32? {
+        guard usage == 0x28 else { return nil } // Return
+        let command: UIKeyModifierFlags = swapsCommandAndControl ? .control : .command
+        let modifiers = flags.intersection([.shift, .control, .command, .alternate])
+        return modifiers == command || modifiers == command.union(.shift) ? 0x2B : nil // Tab
+    }
+
     var title: String {
         switch self {
         case .screenshot: String(localized: "Save Screenshot", bundle: .module)

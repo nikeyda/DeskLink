@@ -12,6 +12,9 @@ struct ApplicationPreferences: View {
     @AppStorage("connection.clientCursor") private var clientCursor = true
     @AppStorage("pointer.speed") private var pointerSpeed = 1.0
     @AppStorage("keyboard.localOptionKey") private var localOptionKey = VNCLocalOptionKey.off
+    #if !targetEnvironment(macCatalyst)
+    @AppStorage("keyboard.commandReturnSwitchesApps") private var commandReturnSwitchesApps = false
+    #endif
     @AppStorage(SyncedPreference.pointerMode.rawValue) private var pointerMode = RemotePointerMode.direct
     @AppStorage("gesture.upFingers") private var upFingers = RemoteSwipeFingers.three
     @AppStorage("gesture.downFingers") private var downFingers = RemoteSwipeFingers.three
@@ -50,6 +53,8 @@ struct ApplicationPreferences: View {
                         .accessibilityIdentifier("preferences.toolbar")
                     NavigationLink("键盘重复") { KeyRepeatPreferences() }
                         .accessibilityIdentifier("preferences.keyRepeat")
+                    Toggle("用 Command–Return 切换远程 Mac 的应用", isOn: $commandReturnSwitchesApps)
+                        .accessibilityIdentifier("preferences.remoteAppSwitcher")
                     VStack(alignment: .leading) {
                         Text("光标跟踪速度")
                         Slider(value: $pointerSpeed, in: 0.5...3.0, step: 0.25) {
