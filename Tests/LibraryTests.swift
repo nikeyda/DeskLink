@@ -15,11 +15,13 @@ final class LibraryTests: XCTestCase {
     }
 
     func testAppleMediaEncryptionBeforeAndAfterTheFirstPicture() {
-        XCTAssertEqual(ConnectionReport.encryptionLabel(.none, usesSSH: false, awaitingHighPerformancePicture: true), "正在协商")
-        XCTAssertEqual(ConnectionReport.encryptionLabel(.none, usesSSH: false, awaitingHighPerformancePicture: false), "未加密")
-        XCTAssertEqual(ConnectionReport.encryptionLabel(.none, usesSSH: true, awaitingHighPerformancePicture: true), "SSH")
+        XCTAssertEqual(ConnectionReport.encryptionLabel(.none, route: .direct, awaitingHighPerformancePicture: true), "正在协商")
+        XCTAssertEqual(ConnectionReport.encryptionLabel(.none, route: .verifiedLocal, awaitingHighPerformancePicture: false), "未加密")
+        XCTAssertEqual(ConnectionReport.encryptionLabel(.none, route: .ssh, awaitingHighPerformancePicture: true), "SSH")
+        XCTAssertEqual(ConnectionReport.encryptionLabel(.none, route: .custom, awaitingHighPerformancePicture: false), "未确认")
+        XCTAssertEqual(ConnectionReport.encryptionLabel(.tlsX509, route: .ssh, awaitingHighPerformancePicture: false), "SSH、TLS")
         let active = ConnectionReport.encryptionLabel(.appleComCryption(cipherMode: nil, keyLength: 128, mediaSRTP: true),
-                                                     usesSSH: false, awaitingHighPerformancePicture: true)
+                                                     route: .verifiedLocal, awaitingHighPerformancePicture: true)
         XCTAssertEqual(active, "Apple 屏幕共享加密、SRTP")
     }
 
@@ -97,12 +99,15 @@ final class LibraryTests: XCTestCase {
         XCTAssertEqual(legacy.videoCodecLabel(historical: true), "未记录视频编码")
         XCTAssertEqual(legacy.videoCodecLabel(historical: false), "等待视频帧")
         XCTAssertNil(legacy.audioPlaybackLabel)
+        XCTAssertNil(legacy.connectionPathLabel)
         var measured = recent
         measured.videoCodec = 0x6876_6331
         measured.audioPlayback = .playing
+        measured.route = .ssh
         let restored = try JSONDecoder().decode(ConnectionReport.self, from: JSONEncoder().encode(measured))
         XCTAssertEqual(restored.videoCodecLabel(historical: true), "HEVC")
         XCTAssertEqual(restored.audioPlaybackLabel, "播放引擎已启动")
+        XCTAssertEqual(restored.connectionPathLabel, "SSH 隧道")
         book.keepReport(recent, for: computer)
         book.keepReport(report(start: 50, sample: 120, count: 15), for: computer)
         book.keepReport(report(start: 115, sample: 120, count: 0), for: computer)

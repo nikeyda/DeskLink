@@ -1728,8 +1728,14 @@ public actor TransportSession {
             .map { EncodingUsage(encoding: $0.key, rectangles: $0.value.rectangles, bytes: $0.value.bytes) }
             .sorted { $0.bytes > $1.bytes }
 
+        let route: RFBTransportRoute
+        if usesVerifiedLocalConnection { route = .verifiedLocal }
+        else if usesCustomTransport { route = baseConnection.transportRoute }
+        else { route = .direct }
+
         return TransportStatistics(
             handshake: handshakeInfo,
+            route: route,
             isHighPerformanceMode: acceptedAppleMediaStream,
             mediaBytesReceived: appleRCTLTotalBytesReceived,
             mediaPacketsReceived: mediaPackets,

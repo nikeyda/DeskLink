@@ -41,6 +41,15 @@ final class SSHWireTests: XCTestCase {
         await socket.close()
         XCTAssertNil(trust.prompt)
 
+        let session = VNCSession(configuration: local)
+        defer { session.disconnect() }
+        try await session.connect(credentials: .init(host: "127.0.0.1", port: port, password: ""))
+        try await until { session.hasPresentedStandardPicture }
+        let report = await ConnectionReport.capture(session: session, id: UUID(), startedAt: .now)
+        XCTAssertEqual(report?.route, .verifiedLocal)
+        XCTAssertEqual(report?.connectionPathLabel, "局域网直连")
+        XCTAssertEqual(report?.encryption, "未加密")
+
         var separate = VNCConfiguration()
         let otherHost = SSHSettings(server: "gateway.fixture.invalid", secureLocally: false)
         DesktopSSH.configureTransport(&separate, settings: otherHost, proof: .password("unused-fixture"), trust: trust)
@@ -77,6 +86,8 @@ final class SSHWireTests: XCTestCase {
         try await session.connect(credentials: VNCCredentials(host: host, port: directPort, password: ""))
         try await until { session.hasPresentedStandardPicture }
         try await until { session.connectionState.isConnected }
+        let initial = await ConnectionReport.capture(session: session, id: UUID(), startedAt: .now)
+        XCTAssertEqual(initial?.route, .verifiedLocal)
 
         for attempt in 2...3 {
             XCTAssertTrue(session.reconnect(with: session.configuration))
@@ -84,6 +95,8 @@ final class SSHWireTests: XCTestCase {
             XCTAssertEqual(session.configuration.videoQualityMode, .adaptive)
             XCTAssertTrue(session.configuration.enableHighPerformanceMode)
             XCTAssertNil(session.highPerformanceFallbackReason)
+            let report = await ConnectionReport.capture(session: session, id: UUID(), startedAt: .now)
+            XCTAssertEqual(report?.route, attempt == 2 ? .custom : .verifiedLocal)
         }
     }
 
@@ -345,6 +358,10 @@ final class SSHWireTests: XCTestCase {
         XCTAssertEqual(session.connectionState, .connected)
         XCTAssertEqual(session.currentImage?.width, 320)
         XCTAssertEqual(session.currentImage?.height, 192)
+        let report = await ConnectionReport.capture(session: session, id: UUID(), startedAt: .now)
+        XCTAssertEqual(report?.route, .ssh)
+        XCTAssertEqual(report?.connectionPathLabel, "SSH 隧道")
+        XCTAssertEqual(report?.encryption, "SSH")
         try await until { remoteText != nil }
         XCTAssertEqual(remoteText, "DeskLink clipboard fixture")
         session.sendClipboardText("DeskLink clipboard fixture")

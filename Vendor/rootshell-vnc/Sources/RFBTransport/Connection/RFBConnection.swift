@@ -71,6 +71,9 @@ public struct RFBTLSConfiguration: Sendable {
 ///   `nil` removes it.
 public protocol RFBConnection: Sendable {
 
+    /// The route of a host-provided transport, when it can identify itself.
+    var transportRoute: RFBTransportRoute { get }
+
     /// Establish the transport. Throws on failure or timeout.
     func connect() async throws
 
@@ -121,6 +124,8 @@ public protocol RFBConnection: Sendable {
 }
 
 extension RFBConnection {
+    public var transportRoute: RFBTransportRoute { .custom }
+
     public func pathCharacteristics() async -> NetworkPathCharacteristics? {
         nil
     }

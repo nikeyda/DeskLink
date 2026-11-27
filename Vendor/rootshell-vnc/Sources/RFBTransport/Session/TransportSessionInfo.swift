@@ -45,6 +45,14 @@ public struct TransportHandshakeInfo: Sendable, Equatable {
 
 // MARK: - Live statistics
 
+/// The path selected for this connection. A new attempt may select a different path.
+public enum RFBTransportRoute: String, Codable, Equatable, Sendable {
+    case direct
+    case verifiedLocal
+    case ssh
+    case custom
+}
+
 /// Per-encoding traffic seen in standard-mode framebuffer updates.
 public struct EncodingUsage: Sendable, Equatable {
     public let encoding: Encoding
@@ -59,6 +67,7 @@ public struct EncodingUsage: Sendable, Equatable {
 public struct TransportStatistics: Sendable, Equatable {
     /// Handshake facts from the same transport generation as the traffic counters.
     public let handshake: TransportHandshakeInfo
+    public let route: RFBTransportRoute
     /// Whether Apple's accelerated UDP media path is active.
     public let isHighPerformanceMode: Bool
 

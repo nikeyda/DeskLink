@@ -299,7 +299,7 @@ final class LinuxDesktopTests: XCTestCase {
         try await waitUntil {
             session.connectionState.isConnected && self.pixels(matching: [241, 183, 69], in: session.currentImage) > 40
         }
-        let report = await ConnectionReport.capture(session: session, usesSSH: false, id: UUID(), startedAt: .now)
+        let report = await ConnectionReport.capture(session: session, id: UUID(), startedAt: .now)
         XCTAssertEqual(report?.reconnectTrigger, .manual)
         session.sendKeyEvent(downFlag: true, key: 0xff0d)
         session.sendKeyEvent(downFlag: false, key: 0xff0d)

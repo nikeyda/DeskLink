@@ -510,8 +510,8 @@ struct SessionScreen: View {
             return
         }
         while !Task.isCancelled {
-            if let value = await ConnectionReport.capture(session: session, usesSSH: request.computer.ssh != nil,
-                                                          id: request.id, startedAt: reportStartedAt), !Task.isCancelled {
+            if let value = await ConnectionReport.capture(session: session, id: request.id,
+                                                          startedAt: reportStartedAt), !Task.isCancelled {
                 let firstPicture = value.frames > 0 && (liveReport?.frames ?? 0) == 0
                 let firstSound = (value.audioPackets ?? 0) > 0 && (liveReport?.audioPackets ?? 0) == 0
                 let mediaChanged = value.videoCodec != liveReport?.videoCodec || value.audioPlayback != liveReport?.audioPlayback
@@ -698,8 +698,7 @@ struct SessionScreen: View {
         }
         Task { @MainActor in
             if action != nil { await session.flushPendingInput() }
-            if !stopped, let final = await ConnectionReport.capture(session: session, usesSSH: request.computer.ssh != nil,
-                                                                    id: request.id, startedAt: reportStartedAt) {
+            if !stopped, let final = await ConnectionReport.capture(session: session, id: request.id, startedAt: reportStartedAt) {
                 library.keepReport(final, for: request.computer)
             }
             timeout.cancel()

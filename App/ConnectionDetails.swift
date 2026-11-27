@@ -22,8 +22,18 @@ struct ConnectionReport: Identifiable, Codable, Equatable {
     var audioPlayback: VNCSessionStatistics.AudioPlayback?
     var reconnectTrigger: VNCSession.ReconnectTrigger?
     var fileDrag: VNCFileTransferController.DragStatistics?
+    var route: RFBTransportRoute?
 
     var hasReceivedMedia: Bool { frames > 0 || (audioPackets ?? 0) > 0 }
+
+    var connectionPathLabel: String? {
+        switch route {
+        case .direct: "直接连接"
+        case .verifiedLocal: "局域网直连"
+        case .ssh: "SSH 隧道"
+        case .custom, nil: nil
+        }
+    }
 
     var reconnectLabel: String? {
         switch reconnectTrigger {
@@ -60,29 +70,31 @@ struct ConnectionReport: Identifiable, Codable, Equatable {
         }
     }
 
-    static func encryptionLabel(_ value: VNCContentEncryption, usesSSH: Bool,
+    static func encryptionLabel(_ value: VNCContentEncryption, route: RFBTransportRoute,
                                 awaitingHighPerformancePicture: Bool) -> String {
+        let sshPrefix = route == .ssh ? "SSH、" : ""
         switch value {
-        case .rsaAES(let bits): return (usesSSH ? "SSH、" : "") + "RSA-AES-\(bits)"
-        case .tlsX509: return usesSSH ? "SSH、TLS" : "TLS"
+        case .rsaAES(let bits): return sshPrefix + "RSA-AES-\(bits)"
+        case .tlsX509: return sshPrefix + "TLS"
         case .appleComCryption(_, _, let media):
             let apple = media ? "Apple 屏幕共享加密、SRTP" : "Apple 屏幕共享加密"
-            return usesSSH ? "SSH、" + apple : apple
+            return sshPrefix + apple
         case .none:
-            if usesSSH { return "SSH" }
-            return awaitingHighPerformancePicture ? "正在协商" : "未加密"
+            if route == .ssh { return "SSH" }
+            if awaitingHighPerformancePicture { return "正在协商" }
+            return route == .custom ? "未确认" : "未加密"
         }
     }
 
     @MainActor
-    static func capture(session: VNCSession, usesSSH: Bool, id: UUID, startedAt: Date) async -> Self? {
+    static func capture(session: VNCSession, id: UUID, startedAt: Date) async -> Self? {
         guard session.connectionState.isConnected, let stats = await session.currentStatistics(),
               session.connectionState.isConnected else { return nil }
         let wire = stats.transport
         let version = wire.handshake.negotiatedVersion
         let frames = wire.isHighPerformanceMode ? stats.framesDecoded : wire.framebufferUpdateCount
         let awaitingPicture = version?.isApple == true && session.configuration.enableHighPerformanceMode && frames == 0
-        let encryption = encryptionLabel(wire.handshake.contentEncryption, usesSSH: usesSSH,
+        let encryption = encryptionLabel(wire.handshake.contentEncryption, route: wire.route,
                                          awaitingHighPerformancePicture: awaitingPicture)
         return Self(id: id, startedAt: startedAt, capturedAt: stats.capturedAt,
                     version: version?.description, encryption: encryption,
@@ -93,7 +105,7 @@ struct ConnectionReport: Identifiable, Codable, Equatable {
                     receiveRate: wire.recentBitrateKbps, pointerEvents: wire.pointerEventsSent, keyEvents: wire.keyEventsSent,
                     videoCodec: stats.decodedVideoCodec, audioPlayback: stats.audioPlayback,
                     reconnectTrigger: session.lastReconnectTrigger,
-                    fileDrag: session.fileTransfers.dragStatistics)
+                    fileDrag: session.fileTransfers.dragStatistics, route: wire.route)
     }
 }
 
@@ -109,6 +121,7 @@ struct ConnectionDetails: View {
                     Section {
                         if historical { row("记录时间", report.capturedAt.formatted(date: .abbreviated, time: .standard), id: "date") }
                         if let version = report.version { row("协议", version, id: "protocol") }
+                        if let path = report.connectionPathLabel { row("连接路径", path, id: "route") }
                         row("传输加密", report.encryption, id: "encryption")
                         row("桌面像素", "\(report.width) × \(report.height)", id: "dimensions")
                         if let trigger = report.reconnectLabel { row("上次重连原因", trigger, id: "reconnect") }

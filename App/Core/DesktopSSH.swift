@@ -276,6 +276,7 @@ private final class SSHFailureHandler: ChannelInboundHandler {
 
 /// One authenticated SSH channel carries the selected desktop session.
 actor DesktopSSH: RFBConnection {
+    nonisolated let transportRoute: RFBTransportRoute = .ssh
     let host: String
     let desktopPort: UInt16
     let settings: SSHSettings

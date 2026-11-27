@@ -41,6 +41,17 @@ final class ConnectionRecoveryUITests: XCTestCase {
         XCTAssertFalse(connect.exists)
         XCTAssertTrue(app.buttons["session.mode"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertFalse(retry.exists)
+
+        app.buttons["session.info"].firstMatch.tap()
+        let route = app.descendants(matching: .any)["details.route"].firstMatch
+        let encryption = app.descendants(matching: .any)["details.encryption"].firstMatch
+        XCTAssertTrue(route.waitForExistence(timeout: 8))
+        XCTAssertEqual(route.value as? String, "直接连接")
+        XCTAssertEqual(encryption.value as? String, "未加密")
+        let connectionInfo = XCTAttachment(screenshot: app.screenshot())
+        connectionInfo.name = "Direct transport and encryption details"
+        connectionInfo.lifetime = .keepAlways
+        add(connectionInfo)
     }
 
     func testCancelWhileWaitingForTheHandshakeClosesTheConnection() async throws {
