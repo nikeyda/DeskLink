@@ -133,6 +133,7 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
     var disabledVNCCodecs: [Int32]?
     var screensOperatingSystem: Int?
     var screensAuthenticationMethod: Int?
+    var screensLegacyHardwareMapping: Bool?
     private var selectedDesktopAuthentication: DesktopAuthentication?
 
     var authentication: DesktopAuthentication {

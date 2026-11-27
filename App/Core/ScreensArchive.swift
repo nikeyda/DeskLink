@@ -2,6 +2,12 @@ import Foundation
 import RFBTransport
 import rootshellVNC
 
+private enum ScreensHardwareKeyboardMode: Int {
+    case keystrokes = 0
+    case unicode = 1
+    case legacy = 2
+}
+
 private extension FramebufferQuality.Scope {
     init?(screensPolicy: Int) {
         switch screensPolicy {
@@ -218,9 +224,11 @@ struct ScreensArchive: Decodable {
                 }
                 result.pcScrollSpeed = speed == .standard ? nil : speed
             }
-            if operatingSystem != 1 || hardwareKeyboardMode == 2 {
-                result.usesMacHardwareKeyPositions = false
-            }
+            let keyboardMode = hardwareKeyboardMode.flatMap(ScreensHardwareKeyboardMode.init(rawValue:))
+            result.usesMacHardwareKeyPositions = operatingSystem == 1 && (keyboardMode == nil || keyboardMode == .keystrokes)
+            // Keep the legacy selection for export. Sessions currently use
+            // character input when a legacy profile is opened.
+            result.screensLegacyHardwareMapping = keyboardMode == .legacy ? true : nil
             result.viewOnly = startInObserveMode
             // The application-wide clipboard preference still applies when sharing was permitted.
             result.automaticallySharesClipboard = useSharedClipboard ? nil : false
@@ -336,7 +344,10 @@ extension ScreensArchive {
             record["port"] = Int(computer.endpoint.port)
             record["operatingSystem"] = system
             record["authenticationMethod"] = authentication
-            record["hardwareKeyboardMode"] = system == 1 && computer.usesMacHardwareKeyPositions == true ? 0 : 2
+            let keyboardMode: ScreensHardwareKeyboardMode
+            if system == 1 && computer.usesMacHardwareKeyPositions == true { keyboardMode = .keystrokes }
+            else { keyboardMode = computer.screensLegacyHardwareMapping == true ? .legacy : .unicode }
+            record["hardwareKeyboardMode"] = keyboardMode.rawValue
             func user(_ name: String?, role: String) -> [String: Any] {
                 let identity = "local.nikey.desklink/screens/" + id + "/" + role + "/" + (name ?? "")
                 var entry: [String: Any] = ["id": UUID.derived(from: identity).uuidString, "username": NSNull()]

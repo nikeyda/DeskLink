@@ -306,8 +306,30 @@ final class ScreensArchiveTests: XCTestCase {
         XCTAssertEqual(source.computers.first?.usesMacHardwareKeyPositions, true)
         source.computers[0].usesMacHardwareKeyPositions = false
         let exported = try ScreensArchive.export(source, knownMacs: [], sharedClipboard: false)
+        let document = try XCTUnwrap(JSONSerialization.jsonObject(with: exported) as? [String: Any])
+        let entries = try XCTUnwrap(document["screens"] as? [[String: Any]])
+        XCTAssertEqual(entries.first?["hardwareKeyboardMode"] as? Int, 1)
         let imported = try ScreensArchive.convert(exported)
         XCTAssertEqual(imported.computers.first?.usesMacHardwareKeyPositions, false)
+    }
+
+    func testOriginalHardwareKeyboardModesSurviveNativeAndScreensArchives() throws {
+        for (wireMode, usesPositions) in [(0, true), (1, false), (2, false)] {
+            let input = try modified { $0["hardwareKeyboardMode"] = wireMode }
+            let imported = try ScreensArchive.convert(input)
+            let saved = try LibraryArchive.read(imported.encoded())
+            let computer = try XCTUnwrap(saved.computers.first)
+            XCTAssertEqual(computer.configuration.usesMacHardwareKeyPositions, usesPositions)
+            let exported = try ScreensArchive.export(saved, knownMacs: [], sharedClipboard: false)
+            let document = try XCTUnwrap(JSONSerialization.jsonObject(with: exported) as? [String: Any])
+            let entries = try XCTUnwrap(document["screens"] as? [[String: Any]])
+            XCTAssertEqual(entries.first?["hardwareKeyboardMode"] as? Int, wireMode)
+        }
+
+        let unspecified = try modified { $0.removeValue(forKey: "hardwareKeyboardMode") }
+        XCTAssertTrue(try XCTUnwrap(ScreensArchive.convert(unspecified).computers.first).configuration.usesMacHardwareKeyPositions)
+        let pc = try modified(fixture: "screens-generic") { $0["hardwareKeyboardMode"] = 0 }
+        XCTAssertFalse(try XCTUnwrap(ScreensArchive.convert(pc).computers.first).configuration.usesMacHardwareKeyPositions)
     }
 
     func testPerComputerCursorAndDragDelaySurviveBothArchiveFormats() throws {

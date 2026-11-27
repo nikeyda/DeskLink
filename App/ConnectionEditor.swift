@@ -880,6 +880,7 @@ struct ConnectionEditor: View {
         entry.touchHoldDuration = touchHoldDuration
         entry.preparesTigerVNCKeyboard = preparesTigerVNCKeyboard ? true : nil
         entry.usesMacHardwareKeyPositions = macHardwareKeyPositions
+        if macHardwareKeyPositions { entry.screensLegacyHardwareMapping = nil }
         entry.swapsHardwareCommandAndControl = swapsHardwareCommandAndControl ? true : nil
         entry.framebufferQuality = framebuffer == FramebufferQuality() ? nil : framebuffer
         entry.disabledVNCCodecs = disabledVNCCodecs.isEmpty ? nil : disabledVNCCodecs.sorted()
