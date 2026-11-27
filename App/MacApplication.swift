@@ -3,6 +3,13 @@ import Foundation
 
 @MainActor
 enum MacApplication {
+    enum TabPreference: Int {
+        // NSWindowUserTabbingPreference uses NSInteger.
+        case manual = 0
+        case always = 1
+        case inFullScreen = 2
+    }
+
     private enum ActivationPolicy: Int {
         // NSApplicationActivationPolicy uses NSInteger.
         case regular = 0
@@ -25,6 +32,13 @@ enum MacApplication {
 
     static var isDockHidden: Bool {
         shared?.value(forKey: "activationPolicy") as? Int == ActivationPolicy.accessory.rawValue
+    }
+
+    static var tabPreference: TabPreference? {
+        let selector = NSSelectorFromString("userTabbingPreference")
+        guard let window = NSClassFromString("NSWindow"), let method = class_getClassMethod(window, selector) else { return nil }
+        typealias GetTabPreference = @convention(c) (AnyObject, Selector) -> Int
+        return TabPreference(rawValue: unsafeBitCast(method_getImplementation(method), to: GetTabPreference.self)(window, selector))
     }
 }
 

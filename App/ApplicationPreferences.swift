@@ -12,7 +12,9 @@ struct ApplicationPreferences: View {
     @AppStorage("connection.clientCursor") private var clientCursor = true
     @AppStorage("pointer.speed") private var pointerSpeed = 1.0
     @AppStorage("keyboard.localOptionKey") private var localOptionKey = VNCLocalOptionKey.off
-    #if !targetEnvironment(macCatalyst)
+    #if targetEnvironment(macCatalyst)
+    @AppStorage(MacConnectionTabs.preference) private var connectionTabs = MacConnectionTabs.system
+    #else
     @AppStorage("keyboard.commandReturnSwitchesApps") private var commandReturnSwitchesApps = false
     #endif
     @AppStorage(SyncedPreference.pointerMode.rawValue) private var pointerMode = RemotePointerMode.direct
@@ -33,6 +35,11 @@ struct ApplicationPreferences: View {
                     Toggle("允许文件传输", isOn: $transfers).accessibilityIdentifier("preferences.transfers")
                     Toggle("新连接默认共享剪贴板", isOn: $sharedClipboard).accessibilityIdentifier("preferences.sharedClipboard")
                     #if targetEnvironment(macCatalyst)
+                    Picker("连接标签页", selection: $connectionTabs) {
+                        Text("遵循系统设置").tag(MacConnectionTabs.system)
+                        Text("始终打开独立窗口").tag(MacConnectionTabs.never)
+                    }
+                    .accessibilityIdentifier("preferences.connectionTabs")
                     MacVNCLinkPreferences()
                     #endif
                 }

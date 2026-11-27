@@ -169,10 +169,26 @@ struct LibraryWindow: View {
     @State private var selectedPreview: SavedDesktopPreview?
     #if targetEnvironment(macCatalyst)
     @Environment(MacAvailability.self) private var availability
+    @SceneStorage("mac.connectionWindow.savedID") private var restoredConnectionID: String?
+    @State private var windowSource = MacWindowSceneSource()
+    @State private var isConnectionWindow = false
     @State private var showsDiagnostics = false
     #endif
 
     private var hiddenItems: HiddenSidebarItems { HiddenSidebarItems(rawValue: hiddenSidebarItems) }
+
+    #if targetEnvironment(macCatalyst)
+    private var connectionTabs: MacConnectionTabs {
+        preferences.string(forKey: MacConnectionTabs.preference).flatMap(MacConnectionTabs.init(rawValue:)) ?? .system
+    }
+    #endif
+
+    private var startupRequest: LibraryWindowRequest? {
+        #if targetEnvironment(macCatalyst)
+        if initialRequest == nil, let restoredConnectionID, let id = UUID(uuidString: restoredConnectionID) { return .connection(id) }
+        #endif
+        return initialRequest
+    }
 
     private var usesUnifiedSearch: Bool { UIDevice.current.userInterfaceIdiom == .phone }
     private var offersNearbyCount: Bool { usesUnifiedSearch && showsNearbyCount }
@@ -226,6 +242,12 @@ struct LibraryWindow: View {
                 SessionScreen(request: activeSession, library: library, preferences: preferences, pasteboard: pasteboard) { edit in
                     sessionToEdit = edit ? activeSession.computer : nil
                     self.activeSession = nil
+                    #if targetEnvironment(macCatalyst)
+                    if !edit, isConnectionWindow, queuedRoute == nil, pendingArchives.isEmpty,
+                       let scene = windowSource.scene {
+                        UIApplication.shared.requestSceneSessionDestruction(scene.session, options: nil)
+                    }
+                    #endif
                 }
                 .id(activeSession.id)
             } else {
@@ -265,13 +287,17 @@ struct LibraryWindow: View {
                 .focusedSceneValue(\.deskLinkLibrary, libraryMenu)
                 #endif
                 .onAppear {
+                    let startupRequest = self.startupRequest
                     #if targetEnvironment(macCatalyst)
-                    availability.libraryStartup.libraryAppeared(openingRequestedContent: initialRequest != nil)
+                    availability.libraryStartup.libraryAppeared(openingRequestedContent: startupRequest != nil)
                     #endif
                     importPendingArchives()
-                    if !openedInitialRequest, let initialRequest {
+                    if !openedInitialRequest, let startupRequest {
                         openedInitialRequest = true
-                        open(initialRequest)
+                        #if targetEnvironment(macCatalyst)
+                        if case .connection = startupRequest { isConnectionWindow = true }
+                        #endif
+                        open(startupRequest)
                     } else if let sessionToEdit {
                         editor = EditorRequest(purpose: .connect, computer: sessionToEdit)
                         self.sessionToEdit = nil
@@ -282,6 +308,26 @@ struct LibraryWindow: View {
                 }
             }
         }
+        #if targetEnvironment(macCatalyst)
+        .background {
+            let title = privacy.locked ? AppName.display : activeSession?.computer.displayName ?? AppName.display
+            MacWindowSceneCapture(source: windowSource, title: title).frame(width: 0, height: 0)
+        }
+        .onContinueUserActivity(MacConnectionWindows.activityType) { activity in
+            guard let content = availability.connectionWindows.take(activity) else { return }
+            isConnectionWindow = true
+            switch content {
+            case .session(let request): start(request)
+            case .route(let route):
+                if case .saved(let id) = route {
+                    openedInitialRequest = true
+                    restoredConnectionID = id.uuidString
+                }
+                present(route)
+            }
+        }
+        .handlesExternalEvents(preferring: [], allowing: ["desklink://", "vnc://", "ssh://", "screens-ssh://", "file://"])
+        #endif
         .onChange(of: discoversNearbyComputers, initial: true) { _, browsing in
             if browsing { nearby.start() }
             else { nearby.stop() }
@@ -300,8 +346,7 @@ struct LibraryWindow: View {
                 } else { route = .desktopLink(try DesktopLink(text: value)) }
                 editor = try editorRequest(for: route)
             }) { offer in
-                editor = nil
-                activeSession = offer
+                start(offer)
             }
         }
         .sheet(isPresented: $settings) { ApplicationPreferences(preferences: preferences) }
@@ -413,8 +458,9 @@ struct LibraryWindow: View {
             availability.libraryStartup.openRequestedContent()
             availability.restoreDockPolicyIfNeeded()
             if let request = MacStatusMenu.request(for: url) {
-                if activeSession != nil { openWindow(id: "desklink-library", value: request) }
-                else { open(request) }
+                if activeSession == nil { open(request) }
+                else if case .connection(let id) = request { openConnectionWindow(id, tabs: connectionTabs) }
+                else { openWindow(id: "desklink-library", value: request) }
                 return
             }
             #endif
@@ -427,6 +473,14 @@ struct LibraryWindow: View {
                 if url.isFileURL && url.pathExtension.lowercased() == "vncloc" {
                     route = .desktopLink(try InternetLocation.read(url))
                 } else { route = try ConnectionRoute(url: url) }
+                #if targetEnvironment(macCatalyst)
+                if activeSession != nil, let source = windowSource.scene {
+                    availability.connectionWindows.open(.route(route), from: source, tabs: connectionTabs) {
+                        queuedRoute = route
+                    }
+                    return
+                }
+                #endif
                 if activeSession != nil { queuedRoute = route } else { present(route) }
             } catch { ownError = error.localizedDescription }
         }
@@ -854,7 +908,13 @@ struct LibraryWindow: View {
             }
         }
         if supportsMultipleWindows {
-            Button("在新窗口中连接") { openWindow(value: LibraryWindowRequest.connection(item.id)) }
+            Button("在新窗口中连接") {
+                #if targetEnvironment(macCatalyst)
+                openConnectionWindow(item.id, tabs: .never)
+                #else
+                openWindow(value: LibraryWindowRequest.connection(item.id))
+                #endif
+            }
         }
         if item.lastConnected != nil {
             Button("上次连接信息") {
@@ -931,12 +991,34 @@ struct LibraryWindow: View {
         guard !privacy.locked else { queuedRoute = .saved(entry.id); return }
         if entry.saved || entry.lastConnected != nil,
            let request = try? SessionRequest.remembered(for: entry, synchronize: preferences.bool(forKey: "credentials.synchronize")) {
-            editor = nil
-            activeSession = request
+            start(request)
         } else {
             editor = EditorRequest(purpose: .connect, computer: entry, suggestedSSHPort: suggestedSSHPort)
         }
     }
+
+    private func start(_ request: SessionRequest) {
+        editor = nil
+        #if targetEnvironment(macCatalyst)
+        if !isConnectionWindow, let source = windowSource.scene {
+            availability.connectionWindows.open(.session(request), from: source, tabs: connectionTabs) {
+                activeSession = request
+            }
+            return
+        }
+        #endif
+        activeSession = request
+    }
+
+    #if targetEnvironment(macCatalyst)
+    private func openConnectionWindow(_ id: UUID, tabs: MacConnectionTabs) {
+        let request = LibraryWindowRequest.connection(id)
+        guard let source = windowSource.scene else { openWindow(value: request); return }
+        availability.connectionWindows.open(.route(.saved(id)), from: source, tabs: tabs) {
+            openWindow(value: request)
+        }
+    }
+    #endif
 
     private func saveDiscovered(_ entry: Computer, suggestedSSHPort: UInt16? = nil) {
         let existing = library.existingComputer(matching: entry)

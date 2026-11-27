@@ -11,6 +11,7 @@ final class MacAvailability {
     let remoteAccess: MacRemoteAccess
     let libraryStartup: MacLibraryStartup
     let statusMenu: MacStatusMenu
+    let connectionWindows = MacConnectionWindows()
     private(set) var hidesDockIcon = false
     private(set) var dockVisibilityChangeFailed = false
     private var appliedDockPreference = false

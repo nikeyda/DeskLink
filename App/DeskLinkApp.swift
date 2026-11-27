@@ -120,6 +120,9 @@ struct DeskLinkApp: App {
                     }
                 }
         }
+        #if targetEnvironment(macCatalyst)
+        .handlesExternalEvents(matching: ["*"])
+        #endif
         .onChange(of: phase) { _, phase in if phase == .background { privacy.lock() } }
         .commands {
             SharedClipboardCommands()
