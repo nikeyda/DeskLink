@@ -32,6 +32,11 @@ enum CollectionPage: Codable, Hashable {
     case remoteAccess
     #endif
 
+    static func startup(computers: [Computer], hiddenItems: HiddenSidebarItems) -> Self {
+        if hiddenItems.contains(.recent) || computers.contains(where: \.saved) { return .all }
+        return .recent
+    }
+
     var title: Text {
         switch self {
         case .all: Text("所有连接")
@@ -154,7 +159,7 @@ struct LibraryWindow: View {
     let preferences: UserDefaults
     let pasteboard: UIPasteboard
     var initialRequest: LibraryWindowRequest?
-    @State private var page: CollectionPage? = .all
+    @State private var page: CollectionPage?
     @State private var selectedConnection: String?
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.scenePhase) private var scenePhase
@@ -205,6 +210,16 @@ struct LibraryWindow: View {
     @State private var showsDiagnostics = false
     @State private var hasVisitedNearby = false
     #endif
+
+    init(library: ConnectionLibrary, preferences: UserDefaults, pasteboard: UIPasteboard,
+         initialRequest: LibraryWindowRequest? = nil) {
+        self.library = library
+        self.preferences = preferences
+        self.pasteboard = pasteboard
+        self.initialRequest = initialRequest
+        let hiddenItems = HiddenSidebarItems(rawValue: preferences.integer(forKey: HiddenSidebarItems.preferenceKey))
+        _page = State(initialValue: CollectionPage.startup(computers: library.archive.computers, hiddenItems: hiddenItems))
+    }
 
     private var hiddenItems: HiddenSidebarItems { HiddenSidebarItems(rawValue: hiddenSidebarItems) }
 
@@ -393,6 +408,8 @@ struct LibraryWindow: View {
                     route = try ConnectionRoute(url: url)
                 } else { route = .desktopLink(try DesktopLink(text: value)) }
                 editor = try editorRequest(for: route)
+            }, didSave: {
+                if request.purpose == .new, page == .recent { page = .all }
             }) { offer in
                 start(offer)
             }
@@ -543,6 +560,7 @@ struct LibraryWindow: View {
 
     private func importPendingArchives() {
         guard !privacy.locked, activeSession == nil, !pendingArchives.isEmpty else { return }
+        let hadSavedConnections = library.archive.computers.contains(where: \.saved)
         let files = pendingArchives
         pendingArchives.removeAll()
         var total = importResult ?? ArchiveImportResult()
@@ -556,6 +574,9 @@ struct LibraryWindow: View {
                 total.importedScreens = total.importedScreens || file.fromScreens
                 importResult = total
             } catch { ownError = error.localizedDescription }
+        }
+        if page == .recent, !hadSavedConnections, library.archive.computers.contains(where: \.saved) {
+            page = .all
         }
     }
 
@@ -1000,7 +1021,13 @@ struct LibraryWindow: View {
                     Label("没有最近连接", systemImage: "clock")
                 } description: {
                     Text("成功连接过的电脑会显示在这里。")
-                } actions: { Button("快速连接") { editor = EditorRequest(purpose: .quick) } }
+                } actions: {
+                    Button("快速连接") { editor = EditorRequest(purpose: .quick) }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("library.empty.quick")
+                    Button("新建连接", action: newEntry)
+                        .accessibilityIdentifier("library.empty.new")
+                }
             case .all:
                 ContentUnavailableView {
                     Text("添加第一台电脑").font(.title2.weight(.semibold))

@@ -192,6 +192,7 @@ struct ConnectionEditor: View {
     let request: EditorRequest
     let library: ConnectionLibrary
     let openLink: (String) throws -> Void
+    let didSave: () -> Void
     let connect: (SessionRequest) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
@@ -263,10 +264,11 @@ struct ConnectionEditor: View {
     @FocusState private var editingHost: Bool
 
     init(request: EditorRequest, library: ConnectionLibrary, openLink: @escaping (String) throws -> Void,
-         connect: @escaping (SessionRequest) -> Void) {
+         didSave: @escaping () -> Void, connect: @escaping (SessionRequest) -> Void) {
         self.request = request
         self.library = library
         self.openLink = openLink
+        self.didSave = didSave
         self.connect = connect
         let c = request.computer
         let link = request.link
@@ -935,6 +937,7 @@ struct ConnectionEditor: View {
                 if useSSH, entry.ssh?.keyName == nil, remember || restoredSSH != nil {
                     try PasswordStore.write(remember ? selectedSecret : nil, for: entry, kind: kind, synchronize: synchronizeCredentials)
                 }
+                didSave()
                 dismiss()
             } catch { self.error = error.localizedDescription }
         } else {

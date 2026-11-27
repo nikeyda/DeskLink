@@ -172,8 +172,16 @@ final class LibraryUITests: XCTestCase {
 
     func testEmptyLibraryOpensTheSaveAndQuickConnectionEditors() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--test-library", UUID().uuidString]
+        app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]
         app.launch()
+        XCTAssertTrue(app.staticTexts["没有最近连接"].firstMatch.waitForExistence(timeout: 10))
+        let recentQuick = app.buttons["library.empty.quick"].firstMatch
+        XCTAssertTrue(recentQuick.isHittable)
+        recentQuick.tap()
+        XCTAssertTrue(app.textFields["connection.host"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.textFields["connection.name"].firstMatch.exists)
+        app.buttons["取消"].firstMatch.tap()
+        selectCollection("library.all", in: app)
         let save = app.buttons["library.empty.new"].firstMatch
         XCTAssertTrue(save.waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["添加第一台电脑"].firstMatch.exists)
@@ -191,12 +199,7 @@ final class LibraryUITests: XCTestCase {
         XCTAssertFalse(app.textFields["connection.name"].firstMatch.exists)
         XCTAssertFalse(app.buttons["connection.submit"].firstMatch.isEnabled)
         app.buttons["取消"].firstMatch.tap()
-        let favorites = app.staticTexts["收藏"].firstMatch
-        if !favorites.isHittable, app.buttons["显示边栏"].firstMatch.isHittable {
-            app.buttons["显示边栏"].firstMatch.tap()
-        }
-        XCTAssertTrue(favorites.waitForExistence(timeout: 5))
-        favorites.tap()
+        selectCollection("library.favorites", in: app)
         XCTAssertTrue(app.staticTexts["还没有收藏的电脑"].firstMatch.waitForExistence(timeout: 5))
         app.buttons["library.empty.all"].firstMatch.tap()
         XCTAssertTrue(save.waitForExistence(timeout: 5))
@@ -222,6 +225,7 @@ final class LibraryUITests: XCTestCase {
             let action = app.buttons[title].firstMatch
             if action.exists { press(action) } else { press(app.menuItems[title].firstMatch) }
         }
+        selectCollection("library.all", in: app)
         choose("新建文件夹")
         #if targetEnvironment(macCatalyst)
         let folderPrompt = app.sheets["新建文件夹"].firstMatch
@@ -417,10 +421,14 @@ final class LibraryUITests: XCTestCase {
     }
 
     func testCreateRelaunchAndDeleteSavedDesktop() throws {
+        continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--test-library", UUID().uuidString]
+        app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]
         app.launch()
-        let create = app.buttons["library.new"]
+        let emptyRecent = app.staticTexts["没有最近连接"].firstMatch
+        XCTAssertTrue(emptyRecent.waitForExistence(timeout: 10))
+        attachLibraryScreenshot(app, name: "Empty recent connections")
+        let create = app.buttons["library.empty.new"].firstMatch
         XCTAssertTrue(create.waitForExistence(timeout: 12))
         create.tap()
         let name = app.textFields["connection.name"]
@@ -433,6 +441,7 @@ final class LibraryUITests: XCTestCase {
         let entry = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
                                                      "library.computer.", "DeskLink QA")).firstMatch
         XCTAssertTrue(entry.waitForExistence(timeout: 6))
+        attachLibraryScreenshot(app, name: "First saved computer")
         app.terminate()
         app.launch()
         XCTAssertTrue(entry.waitForExistence(timeout: 12))
@@ -440,6 +449,9 @@ final class LibraryUITests: XCTestCase {
         app.buttons["删除"].firstMatch.tap()
         app.alerts.buttons["删除"].tap()
         XCTAssertTrue(entry.waitForNonExistence(timeout: 5))
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(emptyRecent.waitForExistence(timeout: 10))
         app.buttons["library.more"].tap()
         app.buttons["设置"].firstMatch.tap()
         let backups = app.buttons["preferences.backups"]
@@ -615,5 +627,28 @@ final class LibraryUITests: XCTestCase {
         openPreferences()
         XCTAssertTrue(setting.waitForExistence(timeout: 5))
         XCTAssertEqual(setting.value as? String, changed)
+    }
+
+    private func selectCollection(_ identifier: String, in app: XCUIApplication) {
+        let item = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        if !item.isHittable {
+            let sidebar = app.buttons["ToggleSideBar"].firstMatch
+            if sidebar.isHittable { sidebar.tap() }
+            else if app.buttons["BackButton"].firstMatch.isHittable { app.buttons["BackButton"].firstMatch.tap() }
+            else if app.buttons["显示边栏"].firstMatch.isHittable { app.buttons["显示边栏"].firstMatch.tap() }
+        }
+        XCTAssertTrue(item.waitForExistence(timeout: 5))
+        #if targetEnvironment(macCatalyst)
+        item.click()
+        #else
+        item.tap()
+        #endif
+    }
+
+    private func attachLibraryScreenshot(_ app: XCUIApplication, name: String) {
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = name
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 }

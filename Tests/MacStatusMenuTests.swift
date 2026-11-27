@@ -99,6 +99,7 @@ final class MacStatusMenuTests: XCTestCase {
         let nearby = String(localized: "附近")
 
         refresh()
+        XCTAssertEqual(items(in: menu).first.flatMap(request), .collection(.all))
         XCTAssertTrue([all, favorites, recent, links, nearby, "Tailscale"].allSatisfy(titles(in: menu).contains))
         let studio = try child("Studio", of: child(all, of: menu))
         let linkFolder = try child("Lab", of: child(links, of: menu))
@@ -123,6 +124,9 @@ final class MacStatusMenuTests: XCTestCase {
         library.remove(favorite)
         refresh()
         XCTAssertEqual(items(in: menu).compactMap(request), [.collection(.all), .quickConnect, .collection(.all)])
+        defaults.removeObject(forKey: HiddenSidebarItems.preferenceKey)
+        refresh()
+        XCTAssertEqual(items(in: menu).first.flatMap(request), .collection(.recent))
     }
 
     @MainActor private func items(in menu: NSObject) -> [NSObject] {

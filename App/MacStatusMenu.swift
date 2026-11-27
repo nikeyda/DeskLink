@@ -54,7 +54,10 @@ final class MacStatusMenu: NSObject {
 
     @objc private func menuNeedsUpdate(_ menu: NSObject) {
         menu.perform(NSSelectorFromString("removeAllItems"))
-        append(String(localized: "打开连接库"), request: .collection(.all), to: menu)
+        let archive = library?.archive
+        let hidden = HiddenSidebarItems(rawValue: defaults.integer(forKey: HiddenSidebarItems.preferenceKey))
+        let startupPage = CollectionPage.startup(computers: archive?.computers ?? [], hiddenItems: hidden)
+        append(String(localized: "打开连接库"), request: .collection(startupPage), to: menu)
         append(String(localized: "快速连接…"), request: .quickConnect, to: menu)
         defer {
             if restoreDock != nil {
@@ -63,9 +66,7 @@ final class MacStatusMenu: NSObject {
                 append(String(localized: "退出远程随航"), action: #selector(quit), to: menu)
             }
         }
-        guard let library, privacy?.locked == false else { return }
-        let archive = library.archive
-        let hidden = HiddenSidebarItems(rawValue: defaults.integer(forKey: HiddenSidebarItems.preferenceKey))
+        guard let archive, privacy?.locked == false else { return }
 
         appendSeparator(to: menu)
         if !hidden.contains(.nearby) { append(String(localized: "附近"), request: .collection(.nearby), to: menu) }
