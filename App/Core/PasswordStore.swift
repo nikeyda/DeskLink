@@ -110,7 +110,8 @@ enum PasswordStore {
                       synchronize: Bool = false) throws {
         let shared = synchronize && kind != .tailnet
         let target = query(entry, kind: kind, synchronized: shared)
-        if let password, !password.isEmpty {
+        // Some desktop accounts have an empty password. Only nil forgets an explicitly saved desktop credential.
+        if let password, kind == .desktop || !password.isEmpty {
             let updates = [kSecValueData as String: Data(password.utf8)] as CFDictionary
             let status = SecItemUpdate(target as CFDictionary, updates)
             if status == errSecItemNotFound {

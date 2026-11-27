@@ -100,7 +100,7 @@ struct SessionRequest: Identifiable {
     var sshSecretToRemember: String?
 
     static func remembered(for computer: Computer, synchronize: Bool) throws -> Self? {
-        guard let password = try PasswordStore.read(computer, synchronize: synchronize), !password.isEmpty else { return nil }
+        guard let password = try PasswordStore.read(computer, synchronize: synchronize) else { return nil }
         var request = Self(computer: computer, password: password, rememberPassword: true, synchronizeCredentials: synchronize)
         if let ssh = computer.ssh {
             guard !ssh.username.isEmpty else { return nil }
@@ -187,6 +187,7 @@ struct ConnectionEditor: View {
     @State private var usesRaspberryPiRSAAES: Bool
     @State private var loadedAccount: Computer?
     @State private var remember = false
+    @State private var choseRememberPassword = false
     @AppStorage("credentials.synchronize") private var synchronizeCredentials = false
     @State private var quality: PictureQuality
     @State private var colorDepth: ColorDepth
@@ -472,7 +473,10 @@ struct ConnectionEditor: View {
             SecureField("密码", text: $password)
                 .textContentType(.password)
                 .accessibilityIdentifier("connection.password")
-            Toggle("记住密码", isOn: $remember).accessibilityIdentifier("connection.remember")
+            Toggle("记住密码", isOn: Binding(get: { remember }, set: {
+                remember = $0
+                choseRememberPassword = $0
+            })).accessibilityIdentifier("connection.remember")
         }
     }
 
@@ -838,8 +842,10 @@ struct ConnectionEditor: View {
             if request.computer == nil { entry.folder = request.folder }
             guard library.save(entry) else { error = library.errorMessage; return }
             do {
-                if remember || loadedAccount != nil {
-                    try PasswordStore.write(remember ? password : nil, for: entry, synchronize: synchronizeCredentials)
+                // An SSH-only credential may have turned on Remember Password when the editor opened.
+                let savesDesktopPassword = remember && (!password.isEmpty || loadedAccount != nil || choseRememberPassword)
+                if savesDesktopPassword || loadedAccount != nil {
+                    try PasswordStore.write(savesDesktopPassword ? password : nil, for: entry, synchronize: synchronizeCredentials)
                 }
                 if useSSH, entry.ssh?.keyName == nil, remember || restoredSSH != nil {
                     try PasswordStore.write(remember ? selectedSecret : nil, for: entry, kind: kind, synchronize: synchronizeCredentials)

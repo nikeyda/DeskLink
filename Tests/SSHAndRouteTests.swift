@@ -5,6 +5,27 @@ import XCTest
 @testable import DeskLink
 
 final class SSHAndRouteTests: XCTestCase {
+    func testSavedEmptyDesktopPasswordIsDistinctFromMissingCredentials() throws {
+        var computer = Computer(endpoint: try Endpoint(address: UUID().uuidString.lowercased() + ".fixture.invalid"))
+        computer.username = "fixture-viewer"
+        var otherAccount = computer
+        otherAccount.username = "fixture-different-viewer"
+        defer { try? PasswordStore.write(nil, for: computer) }
+
+        XCTAssertNil(try SessionRequest.remembered(for: computer, synchronize: false))
+        try PasswordStore.write("old-fixture-password", for: computer)
+        try PasswordStore.write("", for: computer)
+        XCTAssertEqual(try PasswordStore.read(computer), "")
+        XCTAssertNil(try PasswordStore.read(otherAccount))
+        let saved = try XCTUnwrap(SessionRequest.remembered(for: computer, synchronize: false))
+        XCTAssertEqual(saved.password, "")
+        XCTAssertTrue(saved.rememberPassword)
+
+        try PasswordStore.write(nil, for: computer)
+        XCTAssertNil(try PasswordStore.read(computer))
+        XCTAssertNil(try SessionRequest.remembered(for: computer, synchronize: false))
+    }
+
     func testRememberedConnectionWaitsForBothDesktopAndTunnelCredentials() throws {
         var computer = Computer(endpoint: try Endpoint(address: UUID().uuidString.lowercased() + ".fixture.invalid"))
         computer.username = "fixture-viewer"
@@ -16,6 +37,8 @@ final class SSHAndRouteTests: XCTestCase {
         XCTAssertNil(try SessionRequest.remembered(for: computer, synchronize: false))
         try PasswordStore.write("fixture-desktop", for: computer)
         XCTAssertNil(try SessionRequest.remembered(for: computer, synchronize: false))
+        try PasswordStore.write("", for: computer, kind: .sshPassword)
+        XCTAssertNil(try PasswordStore.read(computer, kind: .sshPassword))
         try PasswordStore.write("fixture-tunnel", for: computer, kind: .sshPassword)
         let remembered = try XCTUnwrap(SessionRequest.remembered(for: computer, synchronize: false))
         XCTAssertEqual(remembered.password, "fixture-desktop")
