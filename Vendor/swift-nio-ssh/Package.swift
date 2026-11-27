@@ -9,6 +9,8 @@
 // See LICENSE.txt for license information
 // See CONTRIBUTORS.txt for the list of SwiftNIO project authors
 //
+// Modified by the Telescope project to add RFC 8332 user authentication.
+//
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
@@ -38,7 +40,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.81.0"),
-        .package(url: "https://github.com/apple/swift-crypto.git", "1.0.0"..<"6.0.0"),
+        .package(url: "https://github.com/apple/swift-crypto.git", "5.2.0"..<"6.0.0"),
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.0.2"),
     ],
     targets: [
@@ -49,6 +51,7 @@ let package = Package(
                 .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
                 .product(name: "NIOFoundationCompat", package: "swift-nio"),
                 .product(name: "Crypto", package: "swift-crypto"),
+                .product(name: "CryptoExtras", package: "swift-crypto"),
                 .product(name: "Atomics", package: "swift-atomics"),
             ],
             swiftSettings: swiftSettings

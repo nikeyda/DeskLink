@@ -52,7 +52,7 @@
 		DA0000000000000000000059 = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/UITests.xcconfig; sourceTree = SOURCE_ROOT; };
 		DA000000000000000000005A = {isa = PBXTargetDependency; target = DA0000000000000000000005; targetProxy = DA000000000000000000005B; };
 		DA000000000000000000005B = {isa = PBXContainerItemProxy; containerPortal = DA0000000000000000000001; proxyType = 1; remoteGlobalIDString = DA0000000000000000000005; remoteInfo = DeskLink; };
-		DA0000000000000000000060 = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/apple/swift-nio-ssh.git"; requirement = {kind = exactVersion; version = 0.15.2; }; };
+		DA0000000000000000000060 = {isa = XCLocalSwiftPackageReference; relativePath = "Vendor/swift-nio-ssh"; };
 		DA0000000000000000000061 = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/apple/swift-nio.git"; requirement = {kind = exactVersion; version = 2.95.0; }; };
 		DA0000000000000000000062 = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/apple/swift-nio-transport-services.git"; requirement = {kind = exactVersion; version = 1.26.0; }; };
 		DA0000000000000000000063 = {isa = XCSwiftPackageProductDependency; package = DA0000000000000000000060; productName = NIOSSH; };

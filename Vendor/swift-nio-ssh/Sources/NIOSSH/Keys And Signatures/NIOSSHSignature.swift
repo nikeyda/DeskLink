@@ -8,6 +8,8 @@
 // See LICENSE.txt for license information
 // See CONTRIBUTORS.txt for the list of SwiftNIO project authors
 //
+// Modified by the Telescope project to add RFC 8332 user authentication.
+//
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
@@ -24,6 +26,11 @@ import NIOFoundationCompat
 public struct NIOSSHSignature: Hashable, Sendable {
     internal var backingSignature: BackingSignature
 
+    var rsaAlgorithm: NIOSSHRSAUserAuthentication? {
+        if case .rsa(let algorithm, _) = self.backingSignature { return algorithm }
+        return nil
+    }
+
     internal init(backingSignature: BackingSignature) {
         self.backingSignature = backingSignature
     }
@@ -34,6 +41,7 @@ extension NIOSSHSignature {
     /// The various signature types that can be used with NIOSSH.
     internal enum BackingSignature: Sendable {
         // There is no structured Signature type for Curve25519, and we may want Data or ByteBuffer.
+        case rsa(NIOSSHRSAUserAuthentication, RawBytes)
         case ed25519(RawBytes)
 
         case ecdsaP256(P256.Signing.ECDSASignature)
@@ -45,6 +53,13 @@ extension NIOSSHSignature {
         internal enum RawBytes {
             case byteBuffer(ByteBuffer)
             case data(Data)
+
+            var asData: Data {
+                switch self {
+                case .byteBuffer(let buffer): return Data(buffer.readableBytesView)
+                case .data(let bytes): return bytes
+                }
+            }
         }
     }
 
@@ -85,6 +100,8 @@ extension NIOSSHSignature.BackingSignature: Equatable {
     static func == (lhs: NIOSSHSignature.BackingSignature, rhs: NIOSSHSignature.BackingSignature) -> Bool {
         // We implement equatable in terms of the key representation.
         switch (lhs, rhs) {
+        case (.rsa(let lhsAlgorithm, let lhs), .rsa(let rhsAlgorithm, let rhs)):
+            return lhsAlgorithm == rhsAlgorithm && lhs == rhs
         case (.ed25519(let lhs), .ed25519(let rhs)):
             return lhs == rhs
         case (.ecdsaP256(let lhs), .ecdsaP256(let rhs)):
@@ -93,7 +110,7 @@ extension NIOSSHSignature.BackingSignature: Equatable {
             return lhs.rawRepresentation == rhs.rawRepresentation
         case (.ecdsaP521(let lhs), .ecdsaP521(let rhs)):
             return lhs.rawRepresentation == rhs.rawRepresentation
-        case (.ed25519, _),
+        case (.rsa, _), (.ed25519, _),
             (.ecdsaP256, _),
             (.ecdsaP384, _),
             (.ecdsaP521, _):
@@ -105,6 +122,9 @@ extension NIOSSHSignature.BackingSignature: Equatable {
 extension NIOSSHSignature.BackingSignature: Hashable {
     func hash(into hasher: inout Hasher) {
         switch self {
+        case .rsa(let algorithm, let bytes):
+            hasher.combine(algorithm)
+            hasher.combine(bytes)
         case .ed25519(let bytes):
             hasher.combine(0)
             hasher.combine(bytes)
@@ -126,8 +146,10 @@ extension ByteBuffer {
     @discardableResult
     mutating func writeSSHSignature(_ sig: NIOSSHSignature) -> Int {
         switch sig.backingSignature {
+        case .rsa(let algorithm, let sig):
+            return self.writeRawSignature(algorithm: algorithm.rawValue.utf8, signatureBytes: sig)
         case .ed25519(let sig):
-            return self.writeEd25519Signature(signatureBytes: sig)
+            return self.writeRawSignature(algorithm: NIOSSHSignature.ed25519SignaturePrefix, signatureBytes: sig)
         case .ecdsaP256(let sig):
             return self.writeECDSAP256Signature(baseSignature: sig)
         case .ecdsaP384(let sig):
@@ -137,10 +159,12 @@ extension ByteBuffer {
         }
     }
 
-    private mutating func writeEd25519Signature(signatureBytes: NIOSSHSignature.BackingSignature.RawBytes) -> Int {
+    private mutating func writeRawSignature(
+        algorithm: String.UTF8View, signatureBytes: NIOSSHSignature.BackingSignature.RawBytes
+    ) -> Int {
         // The Ed25519 signature format is easy: the ed25519 signature prefix, followed by
         // the raw signature bytes.
-        var writtenLength = self.writeSSHString(NIOSSHSignature.ed25519SignaturePrefix)
+        var writtenLength = self.writeSSHString(algorithm)
 
         switch signatureBytes {
         case .byteBuffer(var buf):
@@ -221,7 +245,10 @@ extension ByteBuffer {
 
             // Now we need to check if they match our supported signature algorithms.
             let bytesView = signatureIdentifierBytes.readableBytesView
-            if bytesView.elementsEqual(NIOSSHSignature.ed25519SignaturePrefix) {
+            if let algorithm = NIOSSHRSAUserAuthentication(identifier: bytesView) {
+                guard let signature = buffer.readSSHString() else { return nil }
+                return NIOSSHSignature(backingSignature: .rsa(algorithm, .byteBuffer(signature)))
+            } else if bytesView.elementsEqual(NIOSSHSignature.ed25519SignaturePrefix) {
                 return try buffer.readEd25519Signature()
             } else if bytesView.elementsEqual(NIOSSHSignature.ecdsaP256SignaturePrefix) {
                 return try buffer.readECDSAP256Signature()

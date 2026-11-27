@@ -8,6 +8,8 @@
 // See LICENSE.txt for license information
 // See CONTRIBUTORS.txt for the list of SwiftNIO project authors
 //
+// Modified by the Telescope project to add RFC 8332 user authentication.
+//
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
@@ -203,14 +205,18 @@ extension NIOSSHUserAuthenticationOffer.Offer {
         /// This is sent to the server.
         public var publicKey: NIOSSHPublicKey
 
-        public init(privateKey: NIOSSHPrivateKey) {
+        public var rsaAlgorithm: NIOSSHRSAUserAuthentication
+
+        public init(privateKey: NIOSSHPrivateKey, rsaAlgorithm: NIOSSHRSAUserAuthentication = .sha512) {
             self.privateKey = privateKey
             self.publicKey = privateKey.publicKey
+            self.rsaAlgorithm = rsaAlgorithm
         }
 
         public init(privateKey: NIOSSHPrivateKey, certifiedKey: NIOSSHCertifiedPublicKey) {
             self.privateKey = privateKey
             self.publicKey = NIOSSHPublicKey(certifiedKey)
+            self.rsaAlgorithm = .sha512
         }
     }
 
@@ -246,9 +252,10 @@ extension SSHMessage.UserAuthRequestMessage {
                 sessionIdentifier: sessionID,
                 userName: self.username,
                 serviceName: self.service,
-                publicKey: privateKeyRequest.publicKey
+                publicKey: privateKeyRequest.publicKey,
+                rsaAlgorithm: privateKeyRequest.rsaAlgorithm
             )
-            let signature = try privateKeyRequest.privateKey.sign(dataToSign)
+            let signature = try privateKeyRequest.privateKey.sign(dataToSign, rsaAlgorithm: privateKeyRequest.rsaAlgorithm)
             self.method = .publicKey(.known(key: privateKeyRequest.publicKey, signature: signature))
         case .password(let passwordRequest):
             self.method = .password(passwordRequest.password)

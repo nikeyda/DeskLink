@@ -8,6 +8,8 @@
 // See LICENSE.txt for license information
 // See CONTRIBUTORS.txt for the list of SwiftNIO project authors
 //
+// Modified by the Telescope project to add RFC 8332 user authentication.
+//
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
@@ -351,6 +353,8 @@ extension NIOSSHCertifiedPublicKey {
 
     internal var keyPrefix: String.UTF8View {
         switch self.key.backingKey {
+        case .rsa:
+            return Self.rsaKeyPrefix
         case .ed25519:
             return Self.ed25519KeyPrefix
         case .ecdsaP256:
@@ -376,9 +380,13 @@ extension NIOSSHCertifiedPublicKey {
         self.key.isValidSignature(signature, for: payload)
     }
 
+    private static let rsaKeyPrefix = "ssh-rsa-cert-v01@openssh.com".utf8
+
     internal static func baseKeyPrefixForKeyPrefix<Bytes: Collection>(_ prefix: Bytes) throws -> String.UTF8View
     where Bytes.Element == UInt8 {
-        if prefix.elementsEqual(Self.ed25519KeyPrefix) {
+        if prefix.elementsEqual(Self.rsaKeyPrefix) {
+            return NIOSSHPublicKey.rsaPublicKeyPrefix
+        } else if prefix.elementsEqual(Self.ed25519KeyPrefix) {
             return NIOSSHPublicKey.ed25519PublicKeyPrefix
         } else if prefix.elementsEqual(Self.p256KeyPrefix) {
             return NIOSSHPublicKey.ecdsaP256PublicKeyPrefix

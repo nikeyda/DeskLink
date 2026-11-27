@@ -8,6 +8,8 @@
 // See LICENSE.txt for license information
 // See CONTRIBUTORS.txt for the list of SwiftNIO project authors
 //
+// Modified by the Telescope project to add RFC 8332 user authentication.
+//
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
@@ -96,7 +98,7 @@ extension NIOSSHPublicKey {
             }
         case (.certified(let key), _):
             return key.isValidSignature(signature, for: digest)
-        case (.ed25519, _),
+        case (.rsa, _), (.ed25519, _),
             (.ecdsaP256, _),
             (.ecdsaP384, _),
             (.ecdsaP521, _):
@@ -116,9 +118,11 @@ extension NIOSSHPublicKey {
             return key.isValidSignature(sig, for: bytes.readableBytesView)
         case (.ecdsaP521(let key), .ecdsaP521(let sig)):
             return key.isValidSignature(sig, for: bytes.readableBytesView)
+        case (.rsa(let key), .rsa(let algorithm, let sig)):
+            return algorithm.verify(bytes.readableBytesView, signature: sig.asData, with: key.key)
         case (.certified(let key), _):
             return key.isValidSignature(signature, for: bytes)
-        case (.ed25519, _),
+        case (.rsa, _), (.ed25519, _),
             (.ecdsaP256, _),
             (.ecdsaP384, _),
             (.ecdsaP521, _):
@@ -138,9 +142,11 @@ extension NIOSSHPublicKey {
             return key.isValidSignature(sig, for: payload.bytes.readableBytesView)
         case (.ecdsaP521(let key), .ecdsaP521(let sig)):
             return key.isValidSignature(sig, for: payload.bytes.readableBytesView)
+        case (.rsa(let key), .rsa(let algorithm, let sig)):
+            return algorithm.verify(payload.bytes.readableBytesView, signature: sig.asData, with: key.key)
         case (.certified(let key), _):
             return key.isValidSignature(signature, for: payload)
-        case (.ed25519, _),
+        case (.rsa, _), (.ed25519, _),
             (.ecdsaP256, _),
             (.ecdsaP384, _),
             (.ecdsaP521, _):
@@ -153,6 +159,7 @@ extension NIOSSHPublicKey {
 extension NIOSSHPublicKey {
     /// The various key types that can be used with NIOSSH.
     internal enum BackingKey {
+        case rsa(RSAPublicKey)
         case ed25519(Curve25519.Signing.PublicKey)
         case ecdsaP256(P256.Signing.PublicKey)
         case ecdsaP384(P384.Signing.PublicKey)
@@ -172,8 +179,17 @@ extension NIOSSHPublicKey {
     /// The prefix of a P521 ECDSA public key.
     internal static let ecdsaP521PublicKeyPrefix = "ecdsa-sha2-nistp521".utf8
 
+    internal static let rsaPublicKeyPrefix = "ssh-rsa".utf8
+
+    internal func userAuthenticationPrefix(rsaAlgorithm: NIOSSHRSAUserAuthentication? = nil) -> String.UTF8View {
+        if case .rsa = self.backingKey { return (rsaAlgorithm ?? .sha512).rawValue.utf8 }
+        return self.keyPrefix
+    }
+
     internal var keyPrefix: String.UTF8View {
         switch self.backingKey {
+        case .rsa:
+            return Self.rsaPublicKeyPrefix
         case .ed25519:
             return Self.ed25519PublicKeyPrefix
         case .ecdsaP256:
@@ -199,6 +215,8 @@ extension NIOSSHPublicKey.BackingKey: Equatable {
     static func == (lhs: NIOSSHPublicKey.BackingKey, rhs: NIOSSHPublicKey.BackingKey) -> Bool {
         // We implement equatable in terms of the key representation.
         switch (lhs, rhs) {
+        case (.rsa(let lhs), .rsa(let rhs)):
+            return lhs == rhs
         case (.ed25519(let lhs), .ed25519(let rhs)):
             return lhs.rawRepresentation == rhs.rawRepresentation
         case (.ecdsaP256(let lhs), .ecdsaP256(let rhs)):
@@ -209,7 +227,7 @@ extension NIOSSHPublicKey.BackingKey: Equatable {
             return lhs.rawRepresentation == rhs.rawRepresentation
         case (.certified(let lhs), .certified(let rhs)):
             return lhs == rhs
-        case (.ed25519, _),
+        case (.rsa, _), (.ed25519, _),
             (.ecdsaP256, _),
             (.ecdsaP384, _),
             (.ecdsaP521, _),
@@ -222,6 +240,9 @@ extension NIOSSHPublicKey.BackingKey: Equatable {
 extension NIOSSHPublicKey.BackingKey: Hashable {
     func hash(into hasher: inout Hasher) {
         switch self {
+        case .rsa(let key):
+            hasher.combine("ssh-rsa")
+            hasher.combine(key)
         case .ed25519(let pkey):
             hasher.combine(1)
             hasher.combine(pkey.rawRepresentation)
@@ -248,6 +269,9 @@ extension ByteBuffer {
         var writtenBytes = 0
 
         switch key.backingKey {
+        case .rsa(let key):
+            writtenBytes += self.writeSSHString(NIOSSHPublicKey.rsaPublicKeyPrefix)
+            writtenBytes += self.writeRSAKey(key)
         case .ed25519(let key):
             writtenBytes += self.writeSSHString(NIOSSHPublicKey.ed25519PublicKeyPrefix)
             writtenBytes += self.writeEd25519PublicKey(baseKey: key)
@@ -273,6 +297,8 @@ extension ByteBuffer {
     @discardableResult
     mutating func writePublicKeyWithoutPrefix(_ key: NIOSSHPublicKey) -> Int {
         switch key.backingKey {
+        case .rsa(let key):
+            return self.writeRSAKey(key)
         case .ed25519(let key):
             return self.writeEd25519PublicKey(baseKey: key)
         case .ecdsaP256(let key):
@@ -302,7 +328,9 @@ extension ByteBuffer {
         _ keyIdentifierBytes: Bytes
     ) throws -> NIOSSHPublicKey? where Bytes.Element == UInt8 {
         try self.rewindOnNilOrError { buffer in
-            if keyIdentifierBytes.elementsEqual(NIOSSHPublicKey.ed25519PublicKeyPrefix) {
+            if keyIdentifierBytes.elementsEqual(NIOSSHPublicKey.rsaPublicKeyPrefix) {
+                return try buffer.readRSAKey()
+            } else if keyIdentifierBytes.elementsEqual(NIOSSHPublicKey.ed25519PublicKeyPrefix) {
                 return try buffer.readEd25519PublicKey()
             } else if keyIdentifierBytes.elementsEqual(NIOSSHPublicKey.ecdsaP256PublicKeyPrefix) {
                 return try buffer.readECDSAP256PublicKey()

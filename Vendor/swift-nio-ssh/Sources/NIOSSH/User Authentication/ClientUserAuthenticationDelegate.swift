@@ -8,6 +8,8 @@
 // See LICENSE.txt for license information
 // See CONTRIBUTORS.txt for the list of SwiftNIO project authors
 //
+// Modified by the Telescope project to read RFC 8308 server signature algorithms.
+//
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
@@ -24,6 +26,9 @@ import NIOCore
 /// enabled by allowing implementers to satisfy a promise, rather than requiring that they
 /// synchronously provide a response.
 public protocol NIOSSHClientUserAuthenticationDelegate {
+    /// Provides the signature algorithms advertised by the server during SSH extension negotiation.
+    func serverSignatureAlgorithmsReceived(_ algorithms: [String])
+
     /// Called when ``NIOSSH`` would like to attempt to offer a new authentication method.
     ///
     /// The callback is provided the authentication methods that the server is willing to accept in
@@ -38,4 +43,8 @@ public protocol NIOSSHClientUserAuthenticationDelegate {
         availableMethods: NIOSSHAvailableUserAuthenticationMethods,
         nextChallengePromise: EventLoopPromise<NIOSSHUserAuthenticationOffer?>
     )
+}
+
+extension NIOSSHClientUserAuthenticationDelegate {
+    public func serverSignatureAlgorithmsReceived(_ algorithms: [String]) {}
 }

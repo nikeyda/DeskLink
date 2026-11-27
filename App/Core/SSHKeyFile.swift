@@ -66,7 +66,7 @@ enum SSHKeyFile {
         if let key = try? P256.Signing.PrivateKey(pemRepresentation: text) { return .init(p256Key: key) }
         if let key = try? P384.Signing.PrivateKey(pemRepresentation: text) { return .init(p384Key: key) }
         if let key = try? P521.Signing.PrivateKey(pemRepresentation: text) { return .init(p521Key: key) }
-        throw CocoaError(.fileReadUnknown)
+        return try NIOSSHPrivateKey(rsaPEM: text)
     }
 
     private static let prefix = Data("openssh-key-v1\0".utf8)
@@ -95,6 +95,15 @@ enum SSHKeyFile {
             let key = try Curve25519.Signing.PrivateKey(rawRepresentation: pair.prefix(32))
             guard key.publicKey.rawRepresentation == publicBytes else { throw CocoaError(.fileReadCorruptFile) }
             result = NIOSSHPrivateKey(ed25519Key: key)
+        } else if type == "ssh-rsa" {
+            let modulus = try secret.positiveInteger(maximumBytes: 2_048)
+            let exponent = try secret.positiveInteger(maximumBytes: 8)
+            let privateExponent = try secret.positiveInteger(maximumBytes: modulus.count)
+            _ = try secret.positiveInteger(maximumBytes: modulus.count) // CRT coefficient, recomputed by CryptoExtras.
+            let prime1 = try secret.positiveInteger(maximumBytes: modulus.count)
+            let prime2 = try secret.positiveInteger(maximumBytes: modulus.count)
+            result = try NIOSSHPrivateKey(rsaModulus: modulus, publicExponent: exponent,
+                                        privateExponent: privateExponent, prime1: prime1, prime2: prime2)
         } else {
             let curve = String(decoding: try secret.field(), as: UTF8.self)
             guard type == "ecdsa-sha2-" + curve else { throw CocoaError(.fileReadUnsupportedScheme) }
@@ -138,6 +147,16 @@ enum SSHKeyFile {
             let value = data.prefix(4).reduce(0) { $0 * 256 + Int($1) }
             data = data.dropFirst(4)
             return value
+        }
+        mutating func positiveInteger(maximumBytes: Int) throws -> Data {
+            let bytes = try field()
+            let magnitude = bytes.first == 0 ? bytes.dropFirst() : bytes[...]
+            guard let leading = bytes.first, leading < 128,
+                  let first = magnitude.first, first != 0,
+                  (leading != 0 || first >= 128), magnitude.count <= maximumBytes else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            return Data(magnitude)
         }
         mutating func field() throws -> Data {
             let length = try integer()

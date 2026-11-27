@@ -8,12 +8,17 @@
 // See LICENSE.txt for license information
 // See CONTRIBUTORS.txt for the list of SwiftNIO project authors
 //
+// Modified by the Telescope project to read RFC 8308 server signature algorithms.
+//
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
 
 /// Configuration for an SSH client.
 public struct SSHClientConfiguration {
+    /// Advertises support for receiving server extension information during the initial handshake.
+    public var acceptsServerExtensionInfo = false
+
     /// The user authentication delegate to be used with this client.
     public var userAuthDelegate: NIOSSHClientUserAuthenticationDelegate
 

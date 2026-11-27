@@ -8,6 +8,8 @@
 // See LICENSE.txt for license information
 // See CONTRIBUTORS.txt for the list of SwiftNIO project authors
 //
+// Modified by the Telescope project to add RFC 8332 user authentication.
+//
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
@@ -505,7 +507,8 @@ extension UserAuthenticationStateMachine {
                 sessionIdentifier: sessionID,
                 userName: request.username,
                 serviceName: request.service,
-                publicKey: key
+                publicKey: key,
+                rsaAlgorithm: signature.rsaAlgorithm
             )
             let supportedMethods = delegate.supportedAuthenticationMethods
 
@@ -528,6 +531,9 @@ extension UserAuthenticationStateMachine {
             return promise.futureResult.map { outcome in
                 .init(outcome, supportedMethods: supportedMethods)
             }
+
+        case .publicKey(.rsaProbe(let key, let algorithm)):
+            return self.loop.makeSucceededFuture(.publicKeyOK(.init(key: key, rsaAlgorithm: algorithm)))
 
         case .publicKey(.known(key: let key, signature: .none)):
             // This is a weird wrinkle in public key auth: it's a request to ask whether a given key is valid, but not to validate that key itself.

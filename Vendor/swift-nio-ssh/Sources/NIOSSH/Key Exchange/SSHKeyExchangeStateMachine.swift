@@ -8,6 +8,8 @@
 // See LICENSE.txt for license information
 // See CONTRIBUTORS.txt for the list of SwiftNIO project authors
 //
+// Modified by the Telescope project to read RFC 8308 server signature algorithms.
+//
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
@@ -126,10 +128,17 @@ struct SSHKeyExchangeStateMachine {
 
         let encryptionAlgorithms = self.supportedEncryptionAlgorithms
         let macAlgorithms = self.supportedMacAlgorithms
+        var keyExchangeAlgorithms = Self.supportedKeyExchangeAlgorithms
+        if self.previousSessionIdentifier == nil,
+            case .client(let configuration) = self.role, configuration.acceptsServerExtensionInfo
+        {
+            // RFC 8308's marker is sent in KEXINIT but is never selected as an algorithm.
+            keyExchangeAlgorithms.append("ext-info-c")
+        }
 
         return .init(
             cookie: rng.randomCookie(allocator: self.allocator),
-            keyExchangeAlgorithms: Self.supportedKeyExchangeAlgorithms,
+            keyExchangeAlgorithms: keyExchangeAlgorithms,
             serverHostKeyAlgorithms: self.supportedHostKeyAlgorithms,
             encryptionAlgorithmsClientToServer: encryptionAlgorithms,
             encryptionAlgorithmsServerToClient: encryptionAlgorithms,

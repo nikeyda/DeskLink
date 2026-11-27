@@ -8,11 +8,14 @@
 // See LICENSE.txt for license information
 // See CONTRIBUTORS.txt for the list of SwiftNIO project authors
 //
+// Modified by the Telescope project to add RFC 8332 user authentication.
+//
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
 
 @preconcurrency import Crypto
+import CryptoExtras
 import NIOCore
 
 #if canImport(FoundationEssentials)
@@ -58,6 +61,27 @@ public struct NIOSSHPrivateKey: Sendable {
     }
     #endif
 
+    /// Imports an RSA user authentication key from unencrypted PKCS#1 or PKCS#8 PEM.
+    public init(rsaPEM: String) throws {
+        try self.init(rsaKey: _RSA.Signing.PrivateKey(pemRepresentation: rsaPEM))
+    }
+
+    /// Imports the unsigned components of an RSA user authentication key.
+    public init(rsaModulus: Data, publicExponent: Data, privateExponent: Data, prime1: Data, prime2: Data) throws {
+        try self.init(rsaKey: _RSA.Signing.PrivateKey(
+            n: rsaModulus, e: publicExponent, d: privateExponent, p: prime1, q: prime2
+        ))
+    }
+
+    private init(rsaKey: _RSA.Signing.PrivateKey) throws {
+        self.backingKey = try .rsa(rsaKey, RSAPublicKey(rsaKey.publicKey))
+    }
+
+    public var isRSA: Bool {
+        if case .rsa = self.backingKey { return true }
+        return false
+    }
+
     // The algorithms that apply to this host key.
     internal var hostKeyAlgorithms: [Substring] {
         switch self.backingKey {
@@ -69,6 +93,8 @@ public struct NIOSSHPrivateKey: Sendable {
             return ["ecdsa-sha2-nistp384"]
         case .ecdsaP521:
             return ["ecdsa-sha2-nistp521"]
+        case .rsa:
+            return []
         #if canImport(Darwin)
         case .secureEnclaveP256:
             return ["ecdsa-sha2-nistp256"]
@@ -84,6 +110,7 @@ extension NIOSSHPrivateKey {
         case ecdsaP256(P256.Signing.PrivateKey)
         case ecdsaP384(P384.Signing.PrivateKey)
         case ecdsaP521(P521.Signing.PrivateKey)
+        case rsa(_RSA.Signing.PrivateKey, RSAPublicKey)
 
         #if canImport(Darwin)
         case secureEnclaveP256(SecureEnclave.P256.Signing.PrivateKey)
@@ -114,6 +141,8 @@ extension NIOSSHPrivateKey {
                 try key.signature(for: ptr)
             }
             return NIOSSHSignature(backingSignature: .ecdsaP521(signature))
+        case .rsa:
+            throw NIOSSHError.invalidSSHMessage(reason: "RSA user key cannot sign a host exchange")
 
         #if canImport(Darwin)
         case .secureEnclaveP256(let key):
@@ -125,7 +154,9 @@ extension NIOSSHPrivateKey {
         }
     }
 
-    func sign(_ payload: UserAuthSignablePayload) throws -> NIOSSHSignature {
+    func sign(
+        _ payload: UserAuthSignablePayload, rsaAlgorithm: NIOSSHRSAUserAuthentication = .sha512
+    ) throws -> NIOSSHSignature {
         switch self.backingKey {
         case .ed25519(let key):
             let signature = try key.signature(for: payload.bytes.readableBytesView)
@@ -139,6 +170,9 @@ extension NIOSSHPrivateKey {
         case .ecdsaP521(let key):
             let signature = try key.signature(for: payload.bytes.readableBytesView)
             return NIOSSHSignature(backingSignature: .ecdsaP521(signature))
+        case .rsa(let key, _):
+            let signature = try rsaAlgorithm.sign(payload.bytes.readableBytesView, with: key)
+            return NIOSSHSignature(backingSignature: .rsa(rsaAlgorithm, .data(signature)))
         #if canImport(Darwin)
         case .secureEnclaveP256(let key):
             let signature = try key.signature(for: payload.bytes.readableBytesView)
@@ -160,6 +194,8 @@ extension NIOSSHPrivateKey {
             return NIOSSHPublicKey(backingKey: .ecdsaP384(privateKey.publicKey))
         case .ecdsaP521(let privateKey):
             return NIOSSHPublicKey(backingKey: .ecdsaP521(privateKey.publicKey))
+        case .rsa(_, let key):
+            return NIOSSHPublicKey(backingKey: .rsa(key))
         #if canImport(Darwin)
         case .secureEnclaveP256(let privateKey):
             return NIOSSHPublicKey(backingKey: .ecdsaP256(privateKey.publicKey))

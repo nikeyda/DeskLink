@@ -8,6 +8,8 @@
 // See LICENSE.txt for license information
 // See CONTRIBUTORS.txt for the list of SwiftNIO project authors
 //
+// Modified by the Telescope project to read RFC 8308 server signature algorithms.
+//
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
@@ -278,6 +280,11 @@ struct SSHConnectionStateMachine {
                         self = .receivedNewKeys(state)
                         return result
 
+                    case .extensionInfo(let message):
+                        try SSHConnectionStateMachine.receiveServerExtensionInfo(message, role: state.role)
+                        self = .receivedNewKeys(state)
+                        return .noMessage
+
                     case .disconnect:
                         self = .receivedDisconnect(state.role)
                         return .disconnect
@@ -320,6 +327,11 @@ struct SSHConnectionStateMachine {
                         let result = try state.receiveServiceRequest(message)
                         self = .userAuthentication(state)
                         return result
+
+                    case .extensionInfo(let message):
+                        try SSHConnectionStateMachine.receiveServerExtensionInfo(message, role: state.role)
+                        self = .userAuthentication(state)
+                        return .noMessage
 
                     case .serviceAccept(let message):
                         let result = try state.receiveServiceAccept(message)
@@ -1192,6 +1204,15 @@ struct SSHConnectionStateMachine {
 }
 
 extension SSHConnectionStateMachine {
+    private static func receiveServerExtensionInfo(
+        _ message: SSHMessage.ExtensionInfoMessage, role: SSHConnectionRole
+    ) throws {
+        guard case .client(let configuration) = role, configuration.acceptsServerExtensionInfo else {
+            throw NIOSSHError.protocolViolation(protocolName: "extension negotiation", violation: "Unexpected EXT_INFO")
+        }
+        configuration.userAuthDelegate.serverSignatureAlgorithmsReceived(message.serverSignatureAlgorithms)
+    }
+
     /// The result of spinning the state machine with an inbound message.
     ///
     /// When the state machine processes a message, several things may happen. Firstly, it may generate an

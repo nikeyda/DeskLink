@@ -133,7 +133,15 @@ private final class ServerIdentity: NIOSSHClientServerAuthenticationDelegate, Se
 private final class LoginProof: NIOSSHClientUserAuthenticationDelegate {
     let username: String
     var proof: SSHProof?
+    private var rsaAlgorithms: [NIOSSHRSAUserAuthentication] = [.sha512, .sha256]
+
     init(username: String, proof: SSHProof) { self.username = username; self.proof = proof }
+
+    func serverSignatureAlgorithmsReceived(_ algorithms: [String]) {
+        let advertised = Set(algorithms)
+        let supported = rsaAlgorithms.filter { advertised.contains($0.rawValue) }
+        if !supported.isEmpty { rsaAlgorithms = supported }
+    }
 
     func nextAuthenticationType(availableMethods: NIOSSHAvailableUserAuthenticationMethods,
                                 nextChallengePromise: EventLoopPromise<NIOSSHUserAuthenticationOffer?>) {
@@ -141,13 +149,20 @@ private final class LoginProof: NIOSSHClientUserAuthenticationDelegate {
         switch proof {
         case .password(let password) where availableMethods.contains(.password):
             offer = .password(.init(password: password))
+            proof = nil
         case .privateKey(let key) where availableMethods.contains(.publicKey):
-            offer = .privateKey(.init(privateKey: key))
+            if key.isRSA, let algorithm = rsaAlgorithms.first {
+                rsaAlgorithms.removeFirst()
+                offer = .privateKey(.init(privateKey: key, rsaAlgorithm: algorithm))
+                if rsaAlgorithms.isEmpty { proof = nil }
+            } else {
+                offer = .privateKey(.init(privateKey: key))
+                proof = nil
+            }
         default:
             nextChallengePromise.fail(URLError(.userAuthenticationRequired))
             return
         }
-        proof = nil
         nextChallengePromise.succeed(.init(username: username, serviceName: "", offer: offer))
     }
 }
@@ -304,8 +319,11 @@ actor DesktopSSH: RFBConnection {
             .connectTimeout(.seconds(12))
             .channelInitializer { channel in
                 channel.eventLoop.makeCompletedFuture {
-                    let role = SSHClientConfiguration(userAuthDelegate: LoginProof(username: settings.username, proof: proof),
+                    var role = SSHClientConfiguration(userAuthDelegate: LoginProof(username: settings.username, proof: proof),
                                                       serverAuthDelegate: verifier)
+                    if case .privateKey(let key) = proof {
+                        role.acceptsServerExtensionInfo = key.isRSA
+                    }
                     let pipeline = channel.pipeline.syncOperations
                     try pipeline.addHandler(NIOSSHHandler(role: .client(role), allocator: channel.allocator, inboundChildChannelInitializer: nil))
                     try pipeline.addHandler(SSHFailureHandler())

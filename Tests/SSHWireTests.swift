@@ -14,6 +14,7 @@ final class SSHWireTests: XCTestCase {
     private struct GeneratedKey: Decodable {
         let key: String
         let `public`: String
+        let pem: [String]?
     }
 
     func testOnlyAnOptedInLocalSocketBypassesSSH() async throws {
@@ -90,7 +91,7 @@ final class SSHWireTests: XCTestCase {
             throw XCTSkip("Requires fresh encrypted identities from the loopback SSH test peer.")
         }
         let fixtures = try JSONDecoder().decode([GeneratedKey].self, from: data)
-        XCTAssertEqual(fixtures.count, 4)
+        XCTAssertEqual(fixtures.count, 5)
         let first = try XCTUnwrap(fixtures.first)
         XCTAssertThrowsError(try SSHKeyFile.opened(first.key)) { XCTAssertEqual(($0 as NSError).code, Int(errSecPassphraseRequired)) }
         XCTAssertThrowsError(try SSHKeyFile.opened(first.key, passphrase: "invalid")) {
@@ -123,6 +124,63 @@ final class SSHWireTests: XCTestCase {
         XCTAssertTrue(matches)
         try await attempt.value
         try await until { session.currentImage?.width == 320 }
+    }
+
+    func testRSAKeyFormatsAndForwardedDesktop() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let encoded = env["DESKLINK_KEY_FIXTURES"], let data = Data(base64Encoded: encoded),
+              let port = env["DESKLINK_SSH_PORT"].flatMap(UInt16.init), let pin = env["DESKLINK_SSH_PIN"] else {
+            throw XCTSkip("Requires a fresh RSA identity and the loopback SSH test peer.")
+        }
+        let fixtures = try JSONDecoder().decode([GeneratedKey].self, from: data)
+        let rsa = try XCTUnwrap(fixtures.first { $0.public.hasPrefix("ssh-rsa ") })
+        XCTAssertThrowsError(try SSHKeyFile.opened(rsa.key, passphrase: "invalid")) {
+            XCTAssertEqual(($0 as NSError).code, Int(errSecAuthFailed))
+        }
+        let encryptedKey = try SSHKeyFile.identity(SSHKeyFile.opened(rsa.key, passphrase: "chart-key-phrase"))
+        XCTAssertTrue(encryptedKey.isRSA)
+        let pemKeys = try XCTUnwrap(rsa.pem)
+        XCTAssertEqual(pemKeys.count, 2)
+        for pem in pemKeys {
+            let key = try SSHKeyFile.identity(SSHKeyFile.opened(pem))
+            XCTAssertEqual(String(openSSHPublicKey: key.publicKey), rsa.public)
+        }
+
+        let domain = "DeskLinkRSAKeyLogin." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let settings = SSHSettings(port: port, username: "fixture-rsa", usesKey: true)
+        let trust = HostTrust(defaults: defaults)
+        let rejected = DesktopSSH(host: peerHost, desktopPort: 5900, settings: settings,
+                                  proof: .privateKey(encryptedKey), trust: trust)
+        let untrusted = Task { try await rejected.connect() }
+        defer { untrusted.cancel() }
+        try await until { trust.prompt != nil }
+        XCTAssertEqual(trust.prompt?.fingerprint, pin)
+        trust.answer(false)
+        do {
+            try await untrusted.value
+            XCTFail("Connected after rejecting the SSH gateway fingerprint")
+        } catch {
+            XCTAssertNil(trust.prompt)
+        }
+        await rejected.close()
+
+        var configuration = VNCConfiguration(enableHighPerformanceMode: false, videoQualityMode: .standard)
+        configuration.transportProvider = { host, port in
+            DesktopSSH(host: host, desktopPort: port, settings: settings, proof: .privateKey(encryptedKey), trust: trust)
+        }
+        let session = VNCSession(configuration: configuration)
+        defer { trust.cancel(); session.disconnect() }
+        let connection = Task { try await session.connect(credentials: .init(host: peerHost, password: "")) }
+        defer { connection.cancel() }
+        try await until { trust.prompt != nil }
+        let matches = trust.prompt?.fingerprint == pin
+        trust.answer(matches)
+        XCTAssertTrue(matches)
+        try await connection.value
+        try await until { session.currentImage?.width == 320 }
+        XCTAssertEqual(session.currentImage?.height, 192)
     }
 
     func testSeparateSSHServerUsesItsOwnFingerprintAndTheSelectedDesktop() async throws {
