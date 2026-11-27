@@ -6,6 +6,7 @@ struct TailnetView: View {
     var search: String
     var select: (Computer, UInt16?) -> Void
     var save: (Computer, UInt16?) -> Void
+    @State private var selectedDevice: String?
     @State private var editing = false
     @State private var unlinking = false
     @State private var managingHiddenDevices = false
@@ -67,6 +68,7 @@ struct TailnetView: View {
             }
         }
         .task { if directory.devices.isEmpty { await directory.refresh() } }
+        .onChange(of: directory.selectedFolder?.id) { selectedDevice = nil }
         .sheet(isPresented: $editing) { TailnetLogin(directory: directory) }
         .sheet(item: $portsEditor) { TailnetPortsEditor(request: $0, directory: directory) }
         .sheet(item: $folderEditor) { TailnetFolderEditor(request: $0, directory: directory) }
@@ -104,7 +106,9 @@ struct TailnetView: View {
         let ports = id.flatMap { directory.ports(for: $0) }
         let membership = directory.folderID(for: device)
         let folderName = directory.folders.first { $0.id == membership }?.name
-        return Button { select(computer, ports?.ssh) } label: {
+        return LibraryConnectionItem(id: "tailnet.device." + device.id, selection: $selectedDevice) {
+            select(computer, ports?.ssh)
+        } label: {
             Label {
                 VStack(alignment: .leading) {
                     Text(computer.displayName)
@@ -113,7 +117,6 @@ struct TailnetView: View {
                 }
             } icon: { Image(systemName: "desktopcomputer") }
         }
-        .accessibilityIdentifier("tailnet.device." + device.id)
         .contextMenu {
             Button("保存到连接库") { save(computer, ports?.ssh) }
             if let id {

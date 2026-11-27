@@ -128,6 +128,7 @@ struct LibraryWindow: View {
     let pasteboard: UIPasteboard
     var initialRequest: LibraryWindowRequest?
     @State private var page: CollectionPage? = .all
+    @State private var selectedConnection: String?
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openURL) private var openURL
@@ -283,6 +284,7 @@ struct LibraryWindow: View {
                         self.page = .all
                     }
                 }
+                .onChange(of: page) { selectedConnection = nil }
                 #if targetEnvironment(macCatalyst)
                 .focusedSceneValue(\.deskLinkLibrary, libraryMenu)
                 #endif
@@ -683,7 +685,8 @@ struct LibraryWindow: View {
                     ScrollView {
                         LazyVGrid(columns: gridColumns, spacing: 14) {
                             ForEach(results) { entry in
-                                Button {
+                                LibraryConnectionItem(id: "nearby.computer." + entry.id, selection: $selectedConnection,
+                                                      cornerRadius: 16) {
                                     nearby.select(entry) { editor = EditorRequest(purpose: .connect, computer: $0) }
                                 } label: { ConnectionTile(name: entry.name, address: nil, symbol: "bonjour") }
                                 .buttonStyle(.plain)
@@ -702,7 +705,9 @@ struct LibraryWindow: View {
             List {
                 ForEach(visible) { item in
                     HStack {
-                        Button { open(item) } label: {
+                        LibraryConnectionItem(id: "library.computer." + item.id.uuidString, selection: $selectedConnection) {
+                            open(item)
+                        } label: {
                             HStack {
                                 Label {
                                     VStack(alignment: .leading, spacing: 4) {
@@ -721,7 +726,6 @@ struct LibraryWindow: View {
                             }
                             .contentShape(Rectangle())
                         }
-                        .accessibilityIdentifier("library.computer." + item.id.uuidString)
                         .contextMenu { actions(for: item) }
                         resumeVideoButton(for: item)
                     }
@@ -763,8 +767,10 @@ struct LibraryWindow: View {
     }
 
     @ViewBuilder private func gridButton<Content: View>(_ item: Computer, @ViewBuilder label: () -> Content) -> some View {
-        let button = Button { open(item) } label: { label() }
-            .accessibilityIdentifier("library.computer." + item.id.uuidString)
+        let button = LibraryConnectionItem(id: "library.computer." + item.id.uuidString, selection: $selectedConnection,
+                                           cornerRadius: 16) {
+            open(item)
+        } label: { label() }
             .contextMenu { actions(for: item) }
         if page != .recent, order.wrappedValue == .manual {
             button.draggable(item.id.uuidString)
