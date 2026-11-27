@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Observation
 
 struct TailnetAccount: Codable, Equatable, Sendable {
@@ -138,6 +139,7 @@ final class TailnetDirectory {
 
     private let defaults: UserDefaults
     private let transport: Transport
+    private let localAddresses: Set<String>?
     private var secret: String?
     private var attempt = UUID()
     private var hiddenIDs: Set<UUID>
@@ -188,8 +190,11 @@ final class TailnetDirectory {
         }
     }
 
-    init(defaults: UserDefaults = .standard, transport: Transport? = nil) {
+    init(defaults: UserDefaults = .standard,
+         localAddresses: Set<String>? = nil,
+         transport: Transport? = nil) {
         self.defaults = defaults
+        self.localAddresses = localAddresses
         hiddenIDs = Set((defaults.stringArray(forKey: Self.hiddenDevicesKey) ?? []).compactMap(UUID.init(uuidString:)))
         devicePorts = defaults.data(forKey: Self.devicePortsKey)
             .flatMap { try? JSONDecoder().decode([UUID: TailnetDevicePorts].self, from: $0) } ?? [:]
@@ -248,7 +253,9 @@ final class TailnetDirectory {
                 hasLoadedDevices = true
                 error = nil
             }
-        } catch { if attempt == generation { self.error = error.localizedDescription } }
+        } catch {
+            if attempt == generation, !Task.isCancelled { self.error = Self.authErrorMessage(error) }
+        }
     }
 
     func unlink() throws {
@@ -437,8 +444,29 @@ final class TailnetDirectory {
         var request = URLRequest(url: account.devicesURL)
         request.setValue("Bearer " + token.access_token, forHTTPHeaderField: "Authorization")
         let response = try await data(for: request)
-        return try JSONDecoder().decode(Listing.self, from: response).devices
-            .filter { $0.computer != nil }.sorted { $0.hostname.localizedStandardCompare($1.hostname) == .orderedAscending }
+        try Task.checkCancellation()
+        let localHosts = Self.numericHosts(localAddresses ?? NearbyLocalIdentity.interfaceAddresses())
+        return try JSONDecoder().decode(Listing.self, from: response).devices.filter { device in
+            let hosts = Self.numericHosts(device.addresses)
+            return device.computer != nil && (hosts.isEmpty || !hosts.isSubset(of: localHosts))
+        }.sorted { $0.hostname.localizedStandardCompare($1.hostname) == .orderedAscending }
+    }
+
+    private static func numericHosts(_ addresses: some Sequence<String>) -> Set<NWEndpoint.Host> {
+        Set(addresses.compactMap { address in
+            let host = NWEndpoint.Host(String(address.prefix { $0 != "%" }))
+            switch host {
+            case .ipv4, .ipv6: return host
+            default: return nil
+            }
+        })
+    }
+
+    static func authErrorMessage(_ error: Error) -> String {
+        if (error as? URLError)?.code == .userAuthenticationRequired {
+            return String(localized: "Tailscale 无法授权。请检查账户信息及读取设备的权限。")
+        }
+        return error.localizedDescription
     }
 
     private func data(for request: URLRequest) async throws -> Data {

@@ -5,6 +5,8 @@ struct TailnetView: View {
     @Bindable var directory: TailnetDirectory
     let archiveFolders: [ScreensDirectoryFolder]
     var search: String
+    var listLayout: Bool
+    var gridColumns: [GridItem]
     var select: (Computer, UInt16?) -> Void
     var save: (Computer, UInt16?) -> Void
     @State private var selectedDevice: String?
@@ -23,40 +25,23 @@ struct TailnetView: View {
                 ContentUnavailableView {
                     Label("访问 Tailscale 设备", systemImage: "point.3.connected.trianglepath.dotted")
                 } description: {
-                    Text("关联账户后，可在这里查看和连接同一 Tailscale 网络中的设备。")
+                    Text("关联 Tailscale 账户以发现设备。连接前，请让两台设备加入同一网络，并在远端开启屏幕共享或 VNC。")
                 } actions: {
                     Button("关联账户") { editing = true }
                         .buttonStyle(.borderedProminent)
                         .accessibilityIdentifier("tailnet.linkAccount")
                 }
             } else {
-                let results = directory.devicesInSelectedFolder.filter(matches)
-                List {
-                    if let error = directory.error { Text(error).foregroundStyle(.red) }
-                    if let result = archiveImportResult {
-                        Text("新增文件夹 \(result.foldersAdded) 个，归组设备 \(result.devicesAssigned) 台，未应用分组 \(result.groupsSkipped) 个。")
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier("tailnet.folder.importResult")
-                    }
-                    if !directory.folders.isEmpty { folderPicker }
-                    ForEach(results) { item in
-                        if let computer = directory.computer(for: item) {
-                            deviceRow(item, computer: computer)
-                        }
-                    }
-                    if !directory.loading && results.isEmpty {
-                        if search.isEmpty, directory.selectedFolder != nil {
-                            Text("此文件夹没有设备").foregroundStyle(.secondary)
-                        } else if search.isEmpty && !directory.hiddenDevices.isEmpty {
-                            Button("查看隐藏的设备") { managingHiddenDevices = true }
-                        } else {
-                            Text("未找到匹配的连接")
-                        }
-                    }
-                }
-                .refreshable { await directory.refresh() }
+                devicesCollection
+                    .refreshable { await directory.refresh() }
                 .toolbar {
-                    ToolbarItem { Button { Task { await directory.refresh() } } label: { Label("重试", systemImage: "arrow.clockwise") } }
+                    ToolbarItem {
+                        Button { Task { await directory.refresh() } } label: {
+                            Label("刷新设备", systemImage: "arrow.clockwise")
+                        }
+                        .accessibilityIdentifier("tailnet.refresh")
+                        .disabled(directory.loading)
+                    }
                     ToolbarItem {
                         Menu {
                             Button("新建文件夹", systemImage: "folder.badge.plus") {
@@ -124,6 +109,79 @@ struct TailnetView: View {
         } message: { Text(verbatim: directory.account?.tailnet ?? "") }
     }
 
+    private var devicesCollection: some View {
+        let results = directory.devicesInSelectedFolder.filter(matches)
+        return Group {
+            if listLayout {
+                List {
+                    directoryStatus
+                    if !directory.folders.isEmpty { folderPicker }
+                    devices(results)
+                    if results.isEmpty { emptyDirectory }
+                }
+                .listStyle(.plain)
+                .accessibilityIdentifier("tailnet.list")
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        directoryStatus
+                        if !directory.folders.isEmpty { folderPicker }
+                        if results.isEmpty {
+                            emptyDirectory
+                                .frame(maxWidth: .infinity, alignment: .center)
+                        } else {
+                            LazyVGrid(columns: gridColumns, spacing: 14) { devices(results) }
+                        }
+                    }
+                    .padding(24)
+                }
+                .background(Color(uiColor: .systemGroupedBackground))
+                .accessibilityIdentifier("tailnet.grid")
+            }
+        }
+    }
+
+    @ViewBuilder private var directoryStatus: some View {
+        if let error = directory.error {
+            Label {
+                Text(verbatim: error)
+            } icon: {
+                Image(systemName: "exclamationmark.circle")
+            }
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("tailnet.refreshError")
+        }
+        if let result = archiveImportResult {
+            Text("新增文件夹 \(result.foldersAdded) 个，归组设备 \(result.devicesAssigned) 台，未应用分组 \(result.groupsSkipped) 个。")
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("tailnet.folder.importResult")
+        }
+    }
+
+    @ViewBuilder private var emptyDirectory: some View {
+        if directory.loading {
+            ProgressView("正在查找 Tailscale 设备…")
+        } else if directory.error == nil {
+            if !search.isEmpty {
+                Text("未找到匹配的连接").foregroundStyle(.secondary)
+            } else if directory.selectedFolder != nil {
+                Text("此文件夹没有设备").foregroundStyle(.secondary)
+            } else if !directory.hiddenDevices.isEmpty {
+                Button("查看隐藏的设备") { managingHiddenDevices = true }
+            } else {
+                ContentUnavailableView("未找到其他设备", systemImage: "desktopcomputer")
+            }
+        }
+    }
+
+    private func devices(_ results: [TailnetDevice]) -> some View {
+        ForEach(results) { item in
+            if let computer = directory.computer(for: item) {
+                deviceItem(item, computer: computer)
+            }
+        }
+    }
+
     private var folderPicker: some View {
         Picker("文件夹", selection: Binding(get: { directory.selectedFolder?.id }, set: directory.selectFolder)) {
             Text("所有设备").tag(nil as UUID?)
@@ -135,22 +193,29 @@ struct TailnetView: View {
         .accessibilityIdentifier("tailnet.folder.selection")
     }
 
-    private func deviceRow(_ device: TailnetDevice, computer: Computer) -> some View {
+    private func deviceItem(_ device: TailnetDevice, computer: Computer) -> some View {
         let id = directory.directoryID(for: device)
         let ports = id.flatMap { directory.ports(for: $0) }
         let membership = directory.folderID(for: device)
         let folderName = directory.folders.first { $0.id == membership }?.name
-        return LibraryConnectionItem(id: "tailnet.device." + device.id, selection: $selectedDevice) {
+        return LibraryConnectionItem(id: "tailnet.device." + device.id, selection: $selectedDevice,
+                                     cornerRadius: listLayout ? 8 : 16) {
             select(computer, ports?.ssh)
         } label: {
-            Label {
-                VStack(alignment: .leading) {
-                    Text(computer.displayName)
-                    Text([computer.endpoint.address, device.os, folderName].compactMap { $0 }.joined(separator: " · "))
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            } icon: { Image(systemName: "desktopcomputer") }
+            if listLayout {
+                Label {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(verbatim: computer.displayName)
+                        Text(verbatim: [computer.endpoint.address, device.os, folderName].compactMap { $0 }.joined(separator: " · "))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                } icon: { Image(systemName: "desktopcomputer").foregroundStyle(Color.accentColor) }
+            } else {
+                ConnectionTile(name: computer.displayName, address: computer.endpoint.address,
+                               symbol: "desktopcomputer", folder: folderName)
+            }
         }
+        .buttonStyle(.plain)
         .contextMenu {
             Button("保存到连接库") { save(computer, ports?.ssh) }
             if let id {
@@ -324,10 +389,17 @@ private struct TailnetLogin: View {
     var body: some View {
         NavigationStack {
             Form {
-                TextField("Tailnet ID", text: $tailnet)
-                TextField("Client ID", text: $identifier)
-                SecureField("Client Secret", text: $secret)
-                Toggle("记住密码", isOn: $remember)
+                Section {
+                    TextField("Tailnet ID", text: $tailnet)
+                    TextField("Client ID", text: $identifier)
+                    SecureField("Client Secret", text: $secret)
+                    Toggle("记住凭据", isOn: $remember)
+                } footer: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("请在 Tailscale 管理控制台创建具有设备基本信息读取权限的 OAuth 客户端。")
+                        Link("查看 Tailscale 设置说明", destination: URL(string: "https://tailscale.com/docs/features/oauth-clients")!)
+                    }
+                }
                 if directory.loading { ProgressView() }
                 if let error { Text(error).foregroundStyle(.red) }
             }
@@ -344,7 +416,7 @@ private struct TailnetLogin: View {
                                 try await directory.link(account, secret: secret, remember: remember)
                                 dismiss()
                             } catch is CancellationError {
-                            } catch { self.error = error.localizedDescription }
+                            } catch { self.error = TailnetDirectory.authErrorMessage(error) }
                         }
                     }.disabled(directory.loading || secret.isEmpty || (try? TailnetAccount(tailnet: tailnet, clientID: identifier)) == nil)
                 }

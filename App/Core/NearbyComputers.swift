@@ -35,7 +35,7 @@ enum NearbyLocalIdentity {
             .caseInsensitiveCompare(current) == .orderedSame
     }
 
-    private static func interfaceAddresses() -> Set<String> {
+    static func interfaceAddresses() -> Set<String> {
         var first: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&first) == 0, let first else { return [] }
         defer { freeifaddrs(first) }

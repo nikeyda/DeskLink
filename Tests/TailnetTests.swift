@@ -120,6 +120,47 @@ final class TailnetTests: XCTestCase {
         XCTAssertTrue(directory.devices.isEmpty)
     }
 
+    @MainActor func testLocalNodeIsExcludedFromDirectorySearchAndWidgets() async throws {
+        let domain = "TelescopeTailnetLocalNode." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        let service = DirectoryFixture()
+        await service.changeListing(to: #"{"devices":[{"id":"local","hostname":"Notebook","name":"local.fixture","addresses":["100.64.1.42","FD7A:115C:A1E0:0:0:0:0:42"],"os":"macOS"},{"id":"peer","hostname":"Notebook","name":"peer.fixture","addresses":["100.64.1.42","fd7a:115c:a1e0::43"],"os":"macOS"},{"id":"v6","hostname":"IPv6 only","name":"v6.fixture","addresses":["FD7A:115C:A1E0:0:0:0:0:42"],"os":"macOS"},{"id":"named","hostname":"Name only","name":"remote.fixture","addresses":[],"os":"linux"}]}"#)
+        let directory = TailnetDirectory(defaults: defaults, localAddresses: ["100.64.1.42", "fd7a:115c:a1e0::42"]) {
+            try await service.reply(to: $0)
+        }
+        let account = try TailnetAccount(tailnet: "fixture.example", clientID: "local-" + UUID().uuidString)
+        defer {
+            try? directory.unlink()
+            defaults.removePersistentDomain(forName: domain)
+        }
+        try await directory.link(account, secret: "test-only-local-node-credential", remember: true)
+        XCTAssertEqual(Set(directory.visibleDevices.map(\.id)), ["peer", "named"])
+        XCTAssertEqual(directory.searchMatches(LibrarySearchQuery("Notebook")).map(\.id), ["peer"])
+        XCTAssertEqual(Set(directory.widgetComputers.map(\.name)), ["Notebook", "Name only"])
+        XCTAssertEqual(directory.widgetComputers, TailnetDirectory(defaults: defaults).widgetComputers)
+    }
+
+    @MainActor func testRefreshKeepsExistingDevicesWhenAuthorizationIsRevoked() async throws {
+        let domain = "TelescopeTailnetRefresh." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let service = DirectoryFixture()
+        let directory = TailnetDirectory(defaults: defaults, localAddresses: []) { try await service.reply(to: $0) }
+        let account = try TailnetAccount(tailnet: "fixture.example", clientID: "fixture")
+        try await directory.link(account, secret: "generated-credential", remember: false)
+
+        await service.changeListingStatus(to: 403)
+        await directory.refresh()
+        XCTAssertFalse(directory.loading)
+        XCTAssertNotNil(directory.error)
+        XCTAssertEqual(directory.devices.map(\.id), ["a"])
+
+        await service.changeListingStatus(to: 200)
+        await directory.refresh()
+        XCTAssertNil(directory.error)
+        XCTAssertEqual(directory.devices.map(\.id), ["a"])
+    }
+
     @MainActor func testRememberedDirectoryUpdatesWidgetTargetsAcrossRenameHidingAndRevocation() async throws {
         let domain = "TelescopeTailnetWidget." + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
@@ -336,21 +377,26 @@ final class TailnetTests: XCTestCase {
 private actor DirectoryFixture {
     var methods = [String]()
     var listing = #"{"devices":[{"id":"a","hostname":"Desk","name":"desk.fixture","addresses":["fd7a:115c:a1e0::1"],"os":"linux","authorized":true},{"id":"b","hostname":"Unapproved","name":"other.fixture","addresses":["100.64.1.2"],"os":"linux","authorized":false}]}"#
+    private var listingStatus = 200
     func changeListing(to value: String) { listing = value }
+    func changeListingStatus(to value: Int) { listingStatus = value }
     func reply(to request: URLRequest) throws -> (Data, HTTPURLResponse) {
         let url = try XCTUnwrap(request.url)
         XCTAssertEqual(url.host, "api.tailscale.com")
         methods.append(request.httpMethod ?? "")
         let body: String
+        let status: Int
         switch url.path {
         case "/api/v2/oauth/token":
             body = #"{"access_token":"generated-access","token_type":"Bearer"}"#
+            status = 200
         case "/api/v2/tailnet/fixture.example/devices", "/api/v2/tailnet/other.fixture/devices":
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer generated-access")
             body = listing
+            status = listingStatus
         default: throw URLError(.badURL)
         }
-        let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))
+        let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil))
         return (Data(body.utf8), response)
     }
 }

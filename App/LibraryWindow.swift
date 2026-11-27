@@ -736,7 +736,8 @@ struct LibraryWindow: View {
     @ViewBuilder private var connectionCollection: some View {
         if page == .tailscale {
             TailnetView(directory: tailnet, archiveFolders: library.archive.screensDirectoryFolders?.tailscale ?? [],
-                        search: categorySearch, select: open, save: saveDiscovered)
+                        search: categorySearch, listLayout: listLayout, gridColumns: gridColumns,
+                        select: open, save: saveDiscovered)
         } else if page == .nearby {
             let results = nearby.entries.filter { categorySearch.isEmpty || $0.name.localizedCaseInsensitiveContains(categorySearch) }
             Group {
@@ -1056,7 +1057,7 @@ struct LibraryWindow: View {
                         showFolder = true
                     } label: { Label("新建文件夹", systemImage: "folder.badge.plus") }
                 }
-                if supportsLibraryOrganization || page == .nearby {
+                if supportsLibraryOrganization || page == .nearby || (page == .tailscale && tailnet.account != nil) {
                     Button { listLayout.toggle() } label: {
                         Label(listLayout ? "网格" : "列表", systemImage: listLayout ? "square.grid.2x2" : "list.bullet")
                     }
