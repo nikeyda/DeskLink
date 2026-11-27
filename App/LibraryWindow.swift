@@ -829,12 +829,12 @@ struct LibraryWindow: View {
 
     private func nearbyItem<Content: View>(_ entry: NearbyComputer, cornerRadius: CGFloat,
                                            @ViewBuilder label: () -> Content) -> some View {
-        LibraryConnectionItem(id: "nearby.computer." + entry.id, selection: $selectedConnection,
-                              cornerRadius: cornerRadius) {
+        DiscoveredConnectionItem(id: "nearby.computer." + entry.id, selection: $selectedConnection,
+                                 cornerRadius: cornerRadius, endpoint: entry.address.flatMap { try? Endpoint(address: $0) }) {
             nearby.select(entry) { editor = EditorRequest(purpose: .connect, computer: $0) }
-        } label: { label() }
-        .buttonStyle(.plain)
-        .contextMenu {
+        } label: {
+            label()
+        } actions: {
             Button("保存到连接库") { nearby.select(entry) { saveDiscovered($0) } }
         }
     }

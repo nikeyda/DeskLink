@@ -198,8 +198,8 @@ struct TailnetView: View {
         let ports = id.flatMap { directory.ports(for: $0) }
         let membership = directory.folderID(for: device)
         let folderName = directory.folders.first { $0.id == membership }?.name
-        return LibraryConnectionItem(id: "tailnet.device." + device.id, selection: $selectedDevice,
-                                     cornerRadius: listLayout ? 8 : 16) {
+        return DiscoveredConnectionItem(id: "tailnet.device." + device.id, selection: $selectedDevice,
+                                        cornerRadius: listLayout ? 8 : 16, endpoint: computer.endpoint) {
             select(computer, ports?.ssh)
         } label: {
             if listLayout {
@@ -214,9 +214,7 @@ struct TailnetView: View {
                 ConnectionTile(name: computer.displayName, address: computer.endpoint.address,
                                symbol: "desktopcomputer", folder: folderName)
             }
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
+        } actions: {
             Button("保存到连接库") { save(computer, ports?.ssh) }
             if let id {
                 let destinations = directory.folders.filter { $0.id != membership }
