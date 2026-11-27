@@ -52,6 +52,15 @@ final class TelescopeNotificationDelegate: NSObject, UIApplicationDelegate, UNUs
         return true
     }
 
+    #if targetEnvironment(macCatalyst)
+    func application(_ application: UIApplication, configurationForConnecting session: UISceneSession,
+                     options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        let configuration = session.configuration
+        if session.role == .windowApplication { configuration.delegateClass = MacDockSceneDelegate.self }
+        return configuration
+    }
+    #endif
+
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                             willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         notification.request.identifier.hasPrefix(ClipboardNotifications.requestPrefix) ? [.banner, .list] : []

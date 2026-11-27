@@ -78,7 +78,11 @@ struct DeskLinkApp: App {
                 #if targetEnvironment(macCatalyst)
                 .environment(monitorWindows)
                 .environment(availability)
-                .onAppear { availability.attachStatusMenu(library: library, privacy: privacy) }
+                .onAppear {
+                    availability.attachStatusMenu(library: library, privacy: privacy)
+                    refreshDockShortcuts()
+                }
+                .onChange(of: privacy.locked) { _, _ in refreshDockShortcuts() }
                 #endif
                 .defaultAppStorage(preferences)
                 #if DEBUG && !targetEnvironment(macCatalyst)
@@ -89,9 +93,15 @@ struct DeskLinkApp: App {
                 .overlay { if privacy.locked { PrivacyGate(privacy: privacy) } }
                 .background { PrivacyCover(privacy: privacy).frame(width: 0, height: 0) }
                 .onChange(of: library.archive) {
+                    #if targetEnvironment(macCatalyst)
+                    refreshDockShortcuts()
+                    #endif
                     if sync.folderName != nil { Task { await sync.refresh(library) } }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
+                    #if targetEnvironment(macCatalyst)
+                    refreshDockShortcuts()
+                    #endif
                     if sync.preferencesChanged { Task { await sync.refresh(library) } }
                 }
                 .onChange(of: library.archive.widgetComputers(including: tailnet.widgetComputers), initial: true) { _, entries in
@@ -142,4 +152,12 @@ struct DeskLinkApp: App {
             #endif
         }
     }
+
+    #if targetEnvironment(macCatalyst)
+    private func refreshDockShortcuts() {
+        let hidden = HiddenSidebarItems(rawValue: preferences.integer(forKey: HiddenSidebarItems.preferenceKey))
+        UIApplication.shared.shortcutItems = MacDockShortcuts.items(in: library.archive, locked: privacy.locked,
+                                                                     showsRecents: !hidden.contains(.recent))
+    }
+    #endif
 }
