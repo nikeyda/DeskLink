@@ -6,11 +6,11 @@ final class LibraryClickUITests: XCTestCase {
     func testGridClickSelectsAndDoubleClickOpensTheConnection() {
         let app = libraryWithComputer()
         let item = computer(in: app)
-        item.tap()
+        item.click()
         XCTAssertTrue(item.wait(for: \.isSelected, toEqual: true, timeout: 4))
         XCTAssertFalse(app.textFields["connection.host"].exists)
 
-        item.doubleTap()
+        item.doubleClick()
         let host = app.textFields["connection.host"]
         XCTAssertTrue(host.waitForExistence(timeout: 6))
         XCTAssertEqual(host.value as? String, "selection.fixture.invalid")
@@ -19,10 +19,10 @@ final class LibraryClickUITests: XCTestCase {
         let app = libraryWithComputer()
         showList(in: app)
         let item = computer(in: app)
-        item.tap()
+        item.click()
         XCTAssertTrue(item.wait(for: \.isSelected, toEqual: true, timeout: 4))
         XCTAssertFalse(app.textFields["connection.host"].exists)
-        item.doubleTap()
+        item.doubleClick()
         let host = app.textFields["connection.host"]
         XCTAssertTrue(host.waitForExistence(timeout: 6))
         XCTAssertEqual(host.value as? String, "selection.fixture.invalid")
@@ -32,18 +32,18 @@ final class LibraryClickUITests: XCTestCase {
         let app = libraryWithComputer()
         showList(in: app)
         let item = computer(in: app)
-        item.tap()
+        item.click()
         XCTAssertTrue(item.wait(for: \.isSelected, toEqual: true, timeout: 4))
         XCTAssertFalse(app.textFields["connection.host"].exists)
 
         let search = app.searchFields.firstMatch
         XCTAssertTrue(search.waitForExistence(timeout: 6))
-        search.tap()
+        search.click()
         search.typeText("selection")
         app.typeKey(.return, modifierFlags: [])
         XCTAssertFalse(app.textFields["connection.host"].exists)
 
-        item.tap()
+        item.click()
         app.typeKey(.return, modifierFlags: [])
         let host = app.textFields["connection.host"]
         XCTAssertTrue(host.waitForExistence(timeout: 6))
@@ -51,9 +51,9 @@ final class LibraryClickUITests: XCTestCase {
     }
 
     private func showList(in app: XCUIApplication) {
-        app.buttons["library.more"].firstMatch.tap()
+        app.buttons["library.more"].firstMatch.click()
         let list = app.menuItems["列表"].firstMatch
-        if list.exists { list.tap() } else { app.buttons["列表"].firstMatch.tap() }
+        if list.exists { list.click() } else { app.buttons["列表"].firstMatch.click() }
     }
     #else
     func testTouchOpensSavedConnectionOnTheFirstTap() {
@@ -72,14 +72,22 @@ final class LibraryClickUITests: XCTestCase {
         app.launch()
         let add = app.buttons["library.new"].firstMatch
         XCTAssertTrue(add.waitForExistence(timeout: 10))
-        add.tap()
+        press(add)
         let host = app.textFields["connection.host"]
         XCTAssertTrue(host.waitForExistence(timeout: 6))
-        host.tap()
+        press(host)
         host.typeText("selection.fixture.invalid")
-        app.buttons["connection.submit"].tap()
+        press(app.buttons["connection.submit"])
         XCTAssertTrue(host.waitForNonExistence(timeout: 6))
         return app
+    }
+
+    private func press(_ element: XCUIElement) {
+        #if targetEnvironment(macCatalyst)
+        element.click()
+        #else
+        element.tap()
+        #endif
     }
 
     private func computer(in app: XCUIApplication) -> XCUIElement {

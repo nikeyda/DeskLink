@@ -203,46 +203,69 @@ final class LibraryUITests: XCTestCase {
     }
 
     func testListShowsTheFolderBesideTheSavedComputer() throws {
+        continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["--test-library", UUID().uuidString]
         app.launch()
         let more = app.buttons["library.more"]
         XCTAssertTrue(more.waitForExistence(timeout: 10))
 
-        func choose(_ title: String) {
-            more.tap()
-            let action = app.buttons[title].firstMatch
-            if action.exists { action.tap() } else { app.menuItems[title].firstMatch.tap() }
+        func press(_ element: XCUIElement) {
+            #if targetEnvironment(macCatalyst)
+            element.click()
+            #else
+            element.tap()
+            #endif
         }
-        let folder = "Studio QA"
+        func choose(_ title: String) {
+            press(more)
+            let action = app.buttons[title].firstMatch
+            if action.exists { press(action) } else { press(app.menuItems[title].firstMatch) }
+        }
         choose("新建文件夹")
-        let name = app.alerts.textFields.firstMatch
+        #if targetEnvironment(macCatalyst)
+        let folderPrompt = app.sheets["新建文件夹"].firstMatch
+        #else
+        let folderPrompt = app.alerts["新建文件夹"].firstMatch
+        #endif
+        let name = folderPrompt.textFields.firstMatch
         XCTAssertTrue(name.waitForExistence(timeout: 5))
-        name.tap()
-        name.typeText(folder)
-        let saveFolder = app.alerts.buttons["保存"].firstMatch
-        XCTAssertEqual(name.value as? String, folder)
+        press(name)
+        name.typeText("QA114-Desk")
+        let folder = try XCTUnwrap(name.value as? String)
+        XCTAssertFalse(folder.isEmpty)
+        let saveFolder = folderPrompt.buttons["保存"].firstMatch
         XCTAssertTrue(saveFolder.wait(for: \.isEnabled, toEqual: true, timeout: 5))
-        saveFolder.tap()
-        XCTAssertTrue(app.alerts["新建文件夹"].waitForNonExistence(timeout: 5))
-        app.buttons["library.new"].tap()
+        press(saveFolder)
+        XCTAssertTrue(folderPrompt.waitForNonExistence(timeout: 5))
+        press(app.buttons["library.new"])
         let host = app.textFields["connection.host"]
         XCTAssertTrue(host.waitForExistence(timeout: 5))
-        host.tap()
+        press(host)
         host.typeText("group-test.invalid")
-        app.buttons["connection.submit"].tap()
+        press(app.buttons["connection.submit"])
         let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.computer.")).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 5))
         choose("列表")
+        let folderHeading = app.staticTexts["library.list.folderHeading"].firstMatch
+        XCTAssertFalse(folderHeading.exists)
         XCTAssertFalse(row.label.contains(folder))
-        app.descendants(matching: .any).matching(identifier: "library.all").firstMatch.tap()
+        press(app.descendants(matching: .any).matching(identifier: "library.all").firstMatch)
+        #if targetEnvironment(macCatalyst)
+        XCTAssertTrue(folderHeading.waitForExistence(timeout: 5))
+        XCTAssertEqual(folderHeading.label, "文件夹")
+        XCTAssertTrue(row.buttons["group-test.invalid"].firstMatch.exists)
+        let grouped = row.buttons[folder].firstMatch
+        XCTAssertTrue(grouped.waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(abs(grouped.frame.minX - folderHeading.frame.minX), 2)
+        let window = app.windows.containing(.button, identifier: "library.more").firstMatch
+        let capture = XCTAttachment(screenshot: window.screenshot())
+        #else
         let grouped = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@ AND label CONTAINS %@",
             "library.computer.", "group-test.invalid", folder)).firstMatch
         XCTAssertTrue(grouped.waitForExistence(timeout: 5))
-        #if targetEnvironment(macCatalyst)
-        let capture = XCTAttachment(screenshot: app.screenshot())
-        #else
         let capture = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        XCTAssertFalse(folderHeading.exists)
         #endif
         capture.name = "Grouped connection list"
         capture.lifetime = .keepAlways

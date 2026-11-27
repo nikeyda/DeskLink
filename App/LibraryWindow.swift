@@ -48,6 +48,13 @@ enum CollectionPage: Codable, Hashable {
         }
     }
 
+    var showsConnectionListFolders: Bool {
+        switch self {
+        case .all, .links: true
+        default: false
+        }
+    }
+
     func displayedFolder(for computer: Computer) -> String? {
         switch self {
         case .folder, .linkFolder: nil
@@ -155,6 +162,7 @@ struct LibraryWindow: View {
     @State private var deletion: Computer?
     @State private var ownError: String?
     @AppStorage("library.listLayout") private var listLayout = false
+    @ScaledMetric(relativeTo: .body) private var connectionListFolderWidth: CGFloat = 144
     @AppStorage(HiddenSidebarItems.preferenceKey) private var hiddenSidebarItems = 0
     @AppStorage("library.showsNearbyCount") private var showsNearbyCount = true
     @AppStorage("library.savedOrder") private var savedOrder = ComputerOrder.manual
@@ -709,40 +717,15 @@ struct LibraryWindow: View {
             emptyCollection
         } else if listLayout {
             let visible = entries
-            List {
-                ForEach(visible) { item in
-                    HStack {
-                        LibraryConnectionItem(id: "library.computer." + item.id.uuidString, selection: $selectedConnection) {
-                            open(item)
-                        } label: {
-                            HStack {
-                                Label {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(item.displayName)
-                                        if item.endpoint.address != item.displayName {
-                                            Text(item.endpoint.address).font(.caption).foregroundStyle(.secondary)
-                                        }
-                                    }
-                                } icon: { Image(systemName: "desktopcomputer") }
-                                Spacer(minLength: 8)
-                                if let folder = (page ?? .all).displayedFolder(for: item) {
-                                    Label(folder, systemImage: "folder")
-                                        .labelStyle(.titleAndIcon).font(.caption)
-                                        .foregroundStyle(.secondary).lineLimit(2)
-                                }
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .contextMenu { actions(for: item) }
-                        resumeVideoButton(for: item)
-                    }
-                }
-                .onMove(perform: page != .recent && order.wrappedValue == .manual ? { sources, destination in
-                    var ids = visible.map(\.id)
-                    ids.move(fromOffsets: sources, toOffset: destination)
-                    _ = library.reorder(ids)
-                } : nil)
-            }.listStyle(.plain)
+            #if targetEnvironment(macCatalyst)
+            GeometryReader { geometry in
+                let showsFolders = (page ?? .all).showsConnectionListFolders
+                    && !typeSize.isAccessibilitySize && geometry.size.width >= connectionListFolderWidth + 270
+                connectionList(visible, showsFolderColumn: showsFolders)
+            }
+            #else
+            connectionList(visible, showsFolderColumn: false)
+            #endif
         } else {
             ScrollView {
                 LazyVGrid(columns: gridColumns, spacing: 14) {
@@ -758,6 +741,87 @@ struct LibraryWindow: View {
                     }
                 }.padding(24)
             }.background(Color(uiColor: .systemGroupedBackground))
+        }
+    }
+
+    private func connectionList(_ visible: [Computer], showsFolderColumn: Bool) -> some View {
+        let reservesVideoSpace = showsFolderColumn && visible.contains { library.videoRetryDate(for: $0) != nil }
+        return VStack(spacing: 0) {
+            if showsFolderColumn {
+                HStack(spacing: 8) {
+                    Text("连接")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text("文件夹")
+                        .frame(width: connectionListFolderWidth, alignment: .leading)
+                        .accessibilityIdentifier("library.list.folderHeading")
+                    if reservesVideoSpace {
+                        Color.clear.frame(width: 44, height: 1).accessibilityHidden(true)
+                    }
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityAddTraits(.isHeader)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                Divider()
+            }
+            List {
+                ForEach(visible) { item in
+                    connectionListRow(item, showsFolderColumn: showsFolderColumn, reservesVideoSpace: reservesVideoSpace)
+                        .listRowInsets(showsFolderColumn ? EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16) : nil)
+                }
+                .onMove(perform: page != .recent && order.wrappedValue == .manual ? { sources, destination in
+                    var ids = visible.map(\.id)
+                    ids.move(fromOffsets: sources, toOffset: destination)
+                    _ = library.reorder(ids)
+                } : nil)
+            }
+            .listStyle(.plain)
+        }
+    }
+
+    private func connectionListRow(
+        _ item: Computer, showsFolderColumn: Bool, reservesVideoSpace: Bool
+    ) -> some View {
+        let folder = (page ?? .all).displayedFolder(for: item)
+        return HStack(spacing: 8) {
+            LibraryConnectionItem(id: "library.computer." + item.id.uuidString, selection: $selectedConnection) {
+                open(item)
+            } label: {
+                HStack(spacing: 8) {
+                    Label {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(item.displayName)
+                            if item.endpoint.address != item.displayName {
+                                Text(item.endpoint.address).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    } icon: { Image(systemName: "desktopcomputer") }
+                    Spacer(minLength: 8)
+                    if showsFolderColumn {
+                        Group {
+                            if let folder {
+                                Text(verbatim: folder).foregroundStyle(.secondary).lineLimit(2)
+                            } else {
+                                Color.clear.frame(height: 1).accessibilityHidden(true)
+                            }
+                        }
+                        .frame(width: connectionListFolderWidth, alignment: .leading)
+                    } else if let folder {
+                        Label(folder, systemImage: "folder")
+                            .labelStyle(.titleAndIcon).font(.caption)
+                            .foregroundStyle(.secondary).lineLimit(2)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .contextMenu { actions(for: item) }
+            if reservesVideoSpace {
+                Color.clear.frame(width: 44, height: 44)
+                    .overlay { resumeVideoButton(for: item) }
+            } else {
+                resumeVideoButton(for: item)
+            }
         }
     }
 
