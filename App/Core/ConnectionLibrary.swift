@@ -201,6 +201,10 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
     var pcScrollSpeed: RemoteScrollSpeed?
     var ssh: SSHSettings?
 
+    func sharesClipboard(defaultValue: Bool) -> Bool {
+        automaticallySharesClipboard ?? defaultValue
+    }
+
     init(name: String = "", endpoint: Endpoint) {
         self.name = name
         self.endpoint = endpoint

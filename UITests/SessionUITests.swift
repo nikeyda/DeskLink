@@ -4,6 +4,111 @@ import XCTest
 @MainActor
 final class SessionUITests: XCTestCase {
     #if !targetEnvironment(macCatalyst)
+    func testSavedClipboardPolicyOverridesTheDefaultAndKeepsManualTransfers() async throws {
+        continueAfterFailure = false
+        let desktop = LocalTestDisplay()
+        desktop.sendsClipboardWithFrames = false
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]
+        app.launch()
+        XCTAssertTrue(app.buttons["library.new"].firstMatch.waitForExistence(timeout: 10))
+
+        let id = UUID().uuidString
+        let file = FileManager.default.temporaryDirectory.appending(path: id + ".screens")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let archive = """
+            {"filename":"Clipboard policy fixture","folders":[],"screens":[{
+            "version":6,"id":"\(id)","type":{"saved":{}},"name":"Clipboard Policy Fixture",
+            "hostname":"127.0.0.1","port":\(port),"clientProtocol":"vnc",
+            "users":[],"authenticationMethod":3,"operatingSystem":6,"startInObserveMode":false,
+            "onDisconnectAction":0,"useSharedClipboard":false,"useSecureConnection":false}]}
+            """
+        try Data(archive.utf8).write(to: file)
+        app.open(file)
+        let imported = app.alerts["导入完成"]
+        XCTAssertTrue(imported.waitForExistence(timeout: 10))
+        imported.buttons["完成"].tap()
+
+        let row = app.buttons["library.computer." + id].firstMatch
+        let clipboard = app.buttons["session.clipboard"].firstMatch
+        func connect() async throws {
+            let frames = desktop.frameCount
+            XCTAssertTrue(row.waitForExistence(timeout: 8))
+            row.tap()
+            try await waitUntil { desktop.frameCount > frames && clipboard.isHittable }
+        }
+        func disconnect() async throws {
+            let closed = desktop.closedConnections
+            desktop.expectsClientDisconnect = true
+            app.buttons["session.close"].firstMatch.tap()
+            try await waitUntil { desktop.closedConnections > closed && row.isHittable }
+            desktop.expectsClientDisconnect = false
+        }
+        func clipboardAction(_ name: String) async throws {
+            clipboard.tap()
+            let button = app.buttons[name].firstMatch
+            do { try await waitUntil { button.exists && button.isEnabled } }
+            catch {
+                XCTFail("The clipboard action \(name) was unavailable: \(button.debugDescription)")
+                throw error
+            }
+            button.tap()
+        }
+        func sendLocalClipboard(_ expected: String) async throws {
+            let writes = desktop.clipboardWrites
+            try await clipboardAction("发送剪贴板")
+            do {
+                try await waitUntil { desktop.clipboardWrites > writes && desktop.receivedClipboard == Data(expected.utf8) }
+            } catch {
+                XCTFail("Unexpected clipboard fixture data: \(String(decoding: desktop.receivedClipboard, as: UTF8.self)); peer: \(desktop.failure ?? "available")")
+                throw error
+            }
+        }
+
+        try await connect()
+        try await desktop.publishClipboard("First remote value")
+        try await clipboardAction("接收剪贴板")
+        try await sendLocalClipboard("First remote value")
+        try await desktop.publishClipboard("This value must stay remote")
+        try await Task.sleep(for: .milliseconds(250))
+        try await sendLocalClipboard("First remote value")
+        try await disconnect()
+
+        app.buttons["library.more"].firstMatch.tap()
+        app.buttons["设置"].firstMatch.tap()
+        let applicationDefault = app.switches["preferences.sharedClipboard"].firstMatch
+        XCTAssertTrue(applicationDefault.waitForExistence(timeout: 8))
+        XCTAssertEqual(applicationDefault.value as? String, "1")
+        applicationDefault.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        XCTAssertEqual(applicationDefault.value as? String, "0")
+        app.buttons["关闭"].firstMatch.tap()
+
+        row.press(forDuration: 0.8)
+        app.buttons["编辑连接"].firstMatch.tap()
+        let form = app.collectionViews["connection.form"].firstMatch
+        let policy = form.buttons["connection.sharedClipboard"].firstMatch
+        for _ in 0..<5 where !policy.isHittable { form.swipeUp() }
+        XCTAssertTrue(policy.isHittable, form.debugDescription)
+        XCTAssertTrue(policy.label.hasSuffix("关闭"), policy.debugDescription)
+        policy.tap()
+        app.buttons["开启"].firstMatch.tap()
+        XCTAssertTrue(policy.label.hasSuffix("开启"), policy.debugDescription)
+        attachToolbarScreenshot(app, name: "Clipboard override enabled for one saved computer")
+        app.buttons["connection.submit"].firstMatch.tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 8))
+        app.terminate()
+        app.launch()
+
+        try await connect()
+        try await desktop.publishClipboard("Automatically received on this saved connection")
+        try await Task.sleep(for: .milliseconds(250))
+        try await sendLocalClipboard("Automatically received on this saved connection")
+        XCTAssertEqual(desktop.acceptedConnections, 2)
+        try await disconnect()
+    }
+
     func testSavedDesktopRestoresObservationAfterRelaunchWithoutSendingInput() async throws {
         continueAfterFailure = false
         let desktop = LocalTestDisplay()

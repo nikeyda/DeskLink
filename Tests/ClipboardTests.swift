@@ -1,5 +1,6 @@
 import UIKit
 import XCTest
+import Observation
 import RFBProtocol
 @testable import DeskLink
 @testable import RFBTransport
@@ -68,6 +69,26 @@ import RFBProtocol
         controller.getClipboard()
         controller.handleClipboardEvent(.manualRequestFailed)
         XCTAssertEqual(results, [.received, .receiveFailed, .receiveFailed])
+    }
+
+    func testManualReceiveRefreshesSendAvailabilityWhenSharingIsOff() async {
+        let board = UIPasteboard.withUniqueName()
+        defer { UIPasteboard.remove(withName: board.name) }
+        let controller = VNCClipboardSynchronizer(clipboard: VNCSystemClipboard(pasteboard: board), canSend: { true },
+            send: { _ in }, observesApplicationLifecycle: false, automaticallyMonitors: false)
+        defer { controller.invalidate() }
+        let availabilityChanged = expectation(description: "Send action refreshes after a manual receive")
+        withObservationTracking {
+            XCTAssertFalse(controller.canSendClipboard)
+        } onChange: {
+            availabilityChanged.fulfill()
+        }
+        controller.receiveRemoteClipboardText("manual clipboard fixture")
+        XCTAssertFalse(controller.canSendClipboard)
+        controller.getClipboard()
+        await fulfillment(of: [availabilityChanged], timeout: 2)
+        XCTAssertTrue(controller.canSendClipboard)
+        XCTAssertFalse(controller.sharedClipboardEnabled)
     }
 
     func testExpiredManualReceiveCannotWriteItsLateAppleReply() async throws {

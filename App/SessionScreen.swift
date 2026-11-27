@@ -150,7 +150,7 @@ struct SessionScreen: View {
         self.pasteboard = pasteboard
         self.preferences = preferences
         let clipboardEnabled = preferences.object(forKey: "connection.sharedClipboard") as? Bool ?? true
-        _sharesClipboard = State(initialValue: clipboardEnabled && request.computer.automaticallySharesClipboard != false)
+        _sharesClipboard = State(initialValue: request.computer.sharesClipboard(defaultValue: clipboardEnabled))
         self.close = close
         let trust = HostTrust(defaults: preferences)
         _hostTrust = State(initialValue: trust)

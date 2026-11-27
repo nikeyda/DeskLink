@@ -275,7 +275,9 @@ public final class VNCClipboardSynchronizer {
     }
 
     public var canSendClipboard: Bool {
-        canSend() && clipboard.hasTransferableContent(for: contentSupport())
+        // A manual receive also changes the available contents while sharing is disabled.
+        _ = observedLocalChangeCount
+        return canSend() && clipboard.hasTransferableContent(for: contentSupport())
     }
 
     /// Internal visibility for deterministic observer lifecycle tests.
@@ -352,7 +354,6 @@ public final class VNCClipboardSynchronizer {
     /// from or sent to the remote. Servers repeat unchanged deliveries.
     @ObservationIgnored
     private var syncedLocalContent: (content: VNCClipboardContent, changeCount: Int)?
-    @ObservationIgnored
     private var observedLocalChangeCount: Int
     @ObservationIgnored
     private var backgroundLocalChangeCount: Int

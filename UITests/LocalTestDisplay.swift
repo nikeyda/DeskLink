@@ -47,6 +47,7 @@ final class LocalTestDisplay {
     var expectsClientDisconnect = false
     private(set) var receivedClipboard = Data()
     private(set) var clipboardWrites = 0
+    var sendsClipboardWithFrames = true
     private(set) var failure: String?
 
     init(hasTwoMonitors: Bool = false, servesJPEG: Bool = false,
@@ -194,7 +195,7 @@ final class LocalTestDisplay {
                         try await serveFileDrag(on: connection, completes: completesDraggedFile)
                         return
                     }
-                    if appleScalingCapability == nil {
+                    if appleScalingCapability == nil, sendsClipboardWithFrames {
                         let sample = Array("DeskLink clipboard fixture".utf8)
                         try await send([3,0,0,0,0,0,0,UInt8(sample.count)] + sample, to: connection)
                     }

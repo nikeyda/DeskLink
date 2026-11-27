@@ -227,7 +227,7 @@ struct ScreensArchive: Decodable {
             result.softwareKeyboardMode = softwareKeyboardMode.flatMap(DesktopKeyboardMode.init(rawValue:)) ?? oldMode
             result.viewOnly = startInObserveMode
             // The application-wide clipboard preference still applies when sharing was permitted.
-            result.automaticallySharesClipboard = useSharedClipboard ? nil : false
+            result.automaticallySharesClipboard = useSharedClipboard
             result.allowsRemoteBell = allowBellSignal == false ? false : nil
             result.momentumScrolling = enableMomentumScrolling
             if let media = streamVideoAndAudio, !media {
@@ -376,7 +376,7 @@ extension ScreensArchive {
             record["initialScalingMode"] = (computer.initialViewportSizing ?? .fit).rawValue
             record["onScreenDragDelay"] = computer.touchHoldDuration ?? (preferences.object(forKey: "gesture.holdDuration") as? Double
                 ?? RemoteTouchGestureConfiguration.defaultHoldDuration)
-            record["useSharedClipboard"] = sharedClipboard && computer.automaticallySharesClipboard != false
+            record["useSharedClipboard"] = computer.sharesClipboard(defaultValue: sharedClipboard)
             record["allowBellSignal"] = computer.allowsRemoteBell != false
             record["permuteCmdAndCtrlModifierKeys"] = computer.swapsHardwareCommandAndControl == true
             record["enableMomentumScrolling"] = computer.momentumScrolling ?? true

@@ -233,6 +233,7 @@ struct ConnectionEditor: View {
     @State private var layout: DisplayLayout
     @State private var rememberMonitor: Bool
     @State private var observe: Bool
+    @State private var automaticallySharesClipboard: Bool?
     @State private var curtainsDisplayOnConnect: Bool
     @State private var curtainMessage: String
     @State private var sizing: DesktopSizing
@@ -315,6 +316,7 @@ struct ConnectionEditor: View {
             request.purpose == .connect ? library.startsInObservation(computer) : computer.viewOnly
         }
         _observe = State(initialValue: request.sharedOptions.observe ?? link?.observe ?? observation ?? false)
+        _automaticallySharesClipboard = State(initialValue: c?.automaticallySharesClipboard)
         _curtainsDisplayOnConnect = State(initialValue: c?.curtainsDisplayOnConnect == true)
         _curtainMessage = State(initialValue: c?.curtainMessage ?? "")
         let dimensions = display.fixedDesktop ?? .standard
@@ -619,6 +621,12 @@ struct ConnectionEditor: View {
     private var displaySection: some View {
         Section {
             Toggle("仅观察", isOn: $observe).accessibilityIdentifier("connection.observe")
+            Picker("自动共享剪贴板", selection: $automaticallySharesClipboard) {
+                Text("跟随应用设置").tag(nil as Bool?)
+                Text("开启").tag(true as Bool?)
+                Text("关闭").tag(false as Bool?)
+            }
+            .accessibilityIdentifier("connection.sharedClipboard")
             Toggle("播放远程响铃", isOn: $allowsRemoteBell)
                 .accessibilityIdentifier("connection.remoteBell")
             DisclosureGroup("显示器", isExpanded: $showSettings) {
@@ -898,6 +906,7 @@ struct ConnectionEditor: View {
         entry.username = desktopUsername
         entry.authentication = authentication
         if isSaving || request.purpose == .quick { entry.viewOnly = observe }
+        entry.automaticallySharesClipboard = automaticallySharesClipboard
         entry.curtainsDisplayOnConnect = curtainsDisplayOnConnect ? true : nil
         entry.curtainMessage = curtainMessage.isEmpty ? nil : curtainMessage
         entry.disconnectAction = disconnectAction

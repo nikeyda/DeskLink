@@ -420,7 +420,9 @@ final class ScreensArchiveTests: XCTestCase {
 
     func testExportSavedProfilesAndPreserveSSHWithoutIncludingSecretsOrRecents() throws {
         var source = try ScreensArchive.convert(fixture("screens-group-ssh"))
-        let generic = try XCTUnwrap(ScreensArchive.convert(fixture("screens-generic")).computers.first)
+        var generic = try XCTUnwrap(ScreensArchive.convert(fixture("screens-generic")).computers.first)
+        XCTAssertEqual(generic.automaticallySharesClipboard, true)
+        generic.automaticallySharesClipboard = nil
         source.computers.append(generic)
         var recent = Computer(name: "Recent only", endpoint: try Endpoint(address: "temporary.invalid"))
         recent.saved = false
@@ -432,11 +434,32 @@ final class ScreensArchiveTests: XCTestCase {
         XCTAssertEqual(again.folders, source.folders)
         XCTAssertEqual(again.computers.first?.ssh, source.computers.first?.ssh)
         XCTAssertEqual(again.computers.first?.folder, source.folders.first)
-        XCTAssertTrue(again.computers.allSatisfy { $0.automaticallySharesClipboard == false })
+        XCTAssertEqual(again.computers.map(\.automaticallySharesClipboard), [true, false])
         let attachment = XCTAttachment(data: data, uniformTypeIdentifier: ArchiveDocument.screensType.identifier)
         attachment.name = "Telescope-Interop.screens"
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    func testClipboardPolicyKeepsExplicitChoicesAndResolvesTheDefaultOnlyForScreensExport() throws {
+        var source = LibraryArchive()
+        let policies: [Bool?] = [nil, true, false]
+        for (index, policy) in policies.enumerated() {
+            let endpoint = try Endpoint(address: "clipboard-\(index).fixture.invalid")
+            var entry = Computer(name: "Clipboard \(index)", endpoint: endpoint)
+            entry.authentication = .vncPassword
+            entry.automaticallySharesClipboard = policy
+            source.computers.append(entry)
+        }
+        let restored = try LibraryArchive.read(source.encoded())
+        XCTAssertEqual(restored.computers.map(\.automaticallySharesClipboard), policies)
+        for applicationDefault in [false, true] {
+            let expected = [applicationDefault, true, false]
+            XCTAssertEqual(restored.computers.map { $0.sharesClipboard(defaultValue: applicationDefault) }, expected)
+            let data = try ScreensArchive.export(restored, knownMacs: [], sharedClipboard: applicationDefault)
+            let screens = try ScreensArchive.convert(data)
+            XCTAssertEqual(screens.computers.map(\.automaticallySharesClipboard), expected.map(Optional.some))
+        }
     }
 
     func testExportRequiresKnownAuthenticationForNewNamedAccounts() throws {
