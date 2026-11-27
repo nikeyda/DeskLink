@@ -165,6 +165,7 @@ public actor TCPConnection: RFBConnection {
                                       connectTimeoutSeconds: 2, localOnlyAllowsLoopback: allowsLoopback)
         do {
             try await candidate.connect()
+            guard await candidate.remoteEndpointHost() != nil else { throw URLError(.cannotConnectToHost) }
             try Task.checkCancellation()
             return candidate
         } catch {

@@ -138,7 +138,8 @@ extension Computer {
         case .virtualPair: .twoVirtualDisplays
         }
         var configuration = VNCConfiguration(
-            enableHighPerformanceMode: display.quality == .adaptive && display.smoothVideo != false && ssh == nil && !streamingPaused,
+            enableHighPerformanceMode: display.quality == .adaptive && display.smoothVideo != false
+                && (ssh == nil || ssh?.secureLocally == false) && !streamingPaused,
             videoQualityMode: picture,
             displaySizingMode: display.matchWindow ? .matchClient : .remoteDisplay,
             displayMode: topology,

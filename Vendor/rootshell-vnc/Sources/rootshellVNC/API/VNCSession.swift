@@ -1031,6 +1031,14 @@ public final class VNCSession {
 
     // MARK: - Configuration
 
+    // Negotiated independently of the user's profile and recomputed for every dial.
+    private var activeRouteSupportsMedia = true
+
+    /// Whether the current attempt can request a media stream.
+    private var canStreamOnActiveRoute: Bool {
+        activeRouteSupportsMedia && configuration.enableHighPerformanceMode
+    }
+
     /// The configuration for this session.
     public var configuration: VNCConfiguration {
         didSet {
@@ -2371,7 +2379,7 @@ public final class VNCSession {
         let audioPlayback: VNCSessionStatistics.AudioPlayback?
         if !stats.isHighPerformanceMode {
             audioPlayback = nil
-        } else if !configuration.effectiveRemoteAudioPlaybackEnabled {
+        } else if !canStreamOnActiveRoute || !configuration.effectiveRemoteAudioPlaybackEnabled {
             audioPlayback = .disabled
         } else if let renderer = remoteAudioPlayer?.diagnosticsSnapshot() {
             if renderer.rendererFailed { audioPlayback = .failed }
@@ -3275,6 +3283,7 @@ public final class VNCSession {
         invalidateInputQueue()
         fileTransfers.transportDidEnd()
         transportSession = nil
+        activeRouteSupportsMedia = true
         invalidateStandardFramebufferPresentation()
         if clearCredentials {
             activeCredentials = nil
@@ -3916,7 +3925,7 @@ public final class VNCSession {
     /// video decodes. Returns whether a reconnect started.
     @discardableResult
     private func stepDownHighPerformance(reason: String) -> Bool {
-        guard configuration.enableHighPerformanceMode, configuration.videoQualityMode == .adaptive else { return false }
+        guard canStreamOnActiveRoute, configuration.videoQualityMode == .adaptive else { return false }
         guard configuration.highPerformanceBandwidth == .constrained else {
             var constrained = configuration
             constrained.highPerformanceBandwidth = .constrained
@@ -3937,7 +3946,7 @@ public final class VNCSession {
     /// keeping the display sizing. Returns whether the fallback started.
     @discardableResult
     private func fallBackToStandard(reason: String) -> Bool {
-        guard configuration.enableHighPerformanceMode, configuration.videoQualityMode == .adaptive,
+        guard canStreamOnActiveRoute, configuration.videoQualityMode == .adaptive,
               highPerformanceFallbackReason == nil else { return false }
         var standard = configuration
         standard.enableHighPerformanceMode = false
@@ -3961,51 +3970,58 @@ public final class VNCSession {
         await Self.transportRetirementRegistry.waitForPendingRetirement(serverKey: serverKey)
         try Task.checkCancellation()
         transportServerKey = serverKey
-        // A custom transport is built fresh here for every attempt: the
-        // reconnect loop lands on this path per retry, and the provider
-        // contract requires a usable tunnel each time.
-        let customConnection: (any RFBConnection)?
-        if let provider = configuration.transportProvider {
-            customConnection = try await provider(credentials.host, credentials.port)
+        // The reconnect loop selects a fresh route for every attempt.
+        let direct = try await configuration.preferredLocalConnection?(credentials.host, credentials.port)
+        let tunnel: (any RFBConnection)?
+        if direct == nil, let provider = configuration.transportProvider {
+            tunnel = try await provider(credentials.host, credentials.port)
         } else {
-            customConnection = nil
+            tunnel = nil
         }
-        // Read the pointer choice once, here, and publish the same value the
-        // transport negotiates from. The configuration is mutable while a
-        // session is live, and only a new dial can act on a change.
-        let cursorRendering = configuration.cursorRendering
+        if Task.isCancelled || intentionallyDisconnected {
+            await direct?.close()
+            await tunnel?.close()
+            throw CancellationError()
+        }
+        // Use framebuffer updates over a byte-stream-only tunnel. Keep the
+        // requested quality and display topology for a future local dial.
+        activeRouteSupportsMedia = tunnel == nil || configuration.datagramProvider != nil
+        var attempt = configuration
+        attempt.enableHighPerformanceMode = canStreamOnActiveRoute
+        let cursorRendering = attempt.cursorRendering
         let transport = TransportSession(
             host: credentials.host,
             port: credentials.port,
             password: credentials.password,
             username: credentials.username,
-            preferredPixelFormat: configuration.effectivePixelFormat,
-            preferredEncodings: configuration.effectiveEncodings,
-            disabledPortableCodecs: configuration.disabledPortableCodecs,
-            preferFullQualityVideo: configuration.videoQualityMode == .fullQuality,
-            framebufferQuality: configuration.effectivePixelFormat.bitsPerPixel == 32 &&
-                configuration.videoQualityMode != .fullQuality ? configuration.framebufferQuality : nil,
-            losslessFallbackEncodings: configuration.losslessFallbackEncodings,
-            targetFrameRate: configuration.targetFrameRate,
-            displayCount: configuration.displayCount,
+            preferredPixelFormat: attempt.effectivePixelFormat,
+            preferredEncodings: attempt.effectiveEncodings,
+            disabledPortableCodecs: attempt.disabledPortableCodecs,
+            preferFullQualityVideo: attempt.videoQualityMode == .fullQuality,
+            framebufferQuality: attempt.effectivePixelFormat.bitsPerPixel == 32 &&
+                attempt.videoQualityMode != .fullQuality ? attempt.framebufferQuality : nil,
+            losslessFallbackEncodings: attempt.losslessFallbackEncodings,
+            targetFrameRate: attempt.targetFrameRate,
+            displayCount: attempt.displayCount,
             requestsVirtualDisplays:
-                configuration.displaySizingMode == .matchClient,
+                attempt.displaySizingMode == .matchClient,
             appleMediaTilesPerFrameOverride:
                 appleMediaTilesPerFrameOverride,
-            appleMediaBandwidthProfile: configuration.highPerformanceBandwidth,
+            appleMediaBandwidthProfile: attempt.highPerformanceBandwidth,
             serverRendersCursor: cursorRendering == .server,
-            connection: customConnection,
-            datagramProvider: configuration.datagramProvider,
-            securityPolicy: configuration.securityPolicy,
-            certificateValidationHandler: configuration.certificateValidationHandler,
-            rsaHostValidationHandler: configuration.rsaHostValidationHandler)
+            connection: tunnel,
+            verifiedLocalConnection: direct,
+            datagramProvider: attempt.datagramProvider,
+            securityPolicy: attempt.securityPolicy,
+            certificateValidationHandler: attempt.certificateValidationHandler,
+            rsaHostValidationHandler: attempt.rsaHostValidationHandler)
         negotiatedCursorRendering = cursorRendering
         transportSession = transport
-        let centersPaddedPicture = configuration.highPerformanceBandwidth == .constrained
+        let centersPaddedPicture = attempt.highPerformanceBandwidth == .constrained
         videoBandRenderer.setCentersPaddedPicture(centersPaddedPicture)
         secondaryVideoBandRenderer.setCentersPaddedPicture(centersPaddedPicture)
 
-        if configuration.displaySizingMode == .matchClient,
+        if attempt.displaySizingMode == .matchClient,
            let preparedClientDisplaySize {
             _ = try await transport.requestRemoteDisplaySize(
                 pixelWidth: preparedClientDisplaySize.pixelWidth,
@@ -4732,7 +4748,7 @@ public final class VNCSession {
         videoBandRenderer.reset()
         secondaryVideoBandRenderer.reset()
 
-        if configuration.effectiveRemoteAudioPlaybackEnabled {
+        if canStreamOnActiveRoute, configuration.effectiveRemoteAudioPlaybackEnabled {
             // Video follows audio playback only when the user asked for sync.
             if configuration.synchronizesVideoToRemoteAudio {
                 appleMediaPlaybackSynchronizer =

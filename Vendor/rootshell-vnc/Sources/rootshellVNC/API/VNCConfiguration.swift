@@ -9,6 +9,10 @@ import RFBTransport
 public typealias VNCTransportProvider =
     @Sendable (_ host: String, _ port: UInt16) async throws -> any RFBConnection
 
+/// Selects a verified, already connected local TCP socket for one dial.
+public typealias VNCLocalConnectionProvider =
+    @Sendable (_ host: String, _ port: UInt16) async throws -> TCPConnection?
+
 /// Opens a connected datagram socket carrying UDP media to `host:remotePort`
 /// from `localPort`, for transports that bypass the OS network stack.
 /// The returned descriptor is owned and closed by the session.
@@ -199,9 +203,19 @@ public struct VNCConfiguration: Sendable {
         }
     }
 
-    /// A custom byte-stream transport with no datagram path for UDP media.
+    /// Try this verified local socket before using the custom tunnel. Set it
+    /// before the tunnel provider to retain the requested video mode.
+    public var preferredLocalConnection: VNCLocalConnectionProvider? {
+        didSet {
+            if lacksDatagramPath, enableHighPerformanceMode, videoQualityMode == .adaptive {
+                videoQualityMode = .standard
+            }
+        }
+    }
+
+    /// No attempt using this configuration can establish a UDP media path.
     var lacksDatagramPath: Bool {
-        transportProvider != nil && datagramProvider == nil
+        preferredLocalConnection == nil && transportProvider != nil && datagramProvider == nil
     }
 
     /// The quality modes selectable for the current transport and media choice.

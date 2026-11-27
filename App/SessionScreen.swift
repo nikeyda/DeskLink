@@ -156,10 +156,7 @@ struct SessionScreen: View {
         configuration.certificateValidationHandler = { await trust.verifyCertificate($0) }
         if request.computer.viewOnly { configuration.allowsFileTransfers = false }
         if let ssh = request.computer.ssh {
-            let proof = request.sshProof
-            configuration.transportProvider = { host, port in
-                try await DesktopSSH.transport(host: host, port: port, settings: ssh, proof: proof, trust: trust)
-            }
+            DesktopSSH.configureTransport(&configuration, settings: ssh, proof: request.sshProof, trust: trust)
         }
         _session = State(initialValue: VNCSession(configuration: configuration))
         _observing = State(initialValue: request.computer.viewOnly)

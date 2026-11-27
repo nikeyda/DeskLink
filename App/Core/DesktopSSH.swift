@@ -6,6 +6,7 @@ import NIOTransportServices
 import Observation
 import RFBProtocol
 import RFBTransport
+import rootshellVNC
 import os
 
 struct SSHSettings: Codable, Equatable, Sendable {
@@ -278,15 +279,17 @@ actor DesktopSSH: RFBConnection {
         self.trust = trust
     }
 
-    static func transport(host: String, port: UInt16, settings: SSHSettings, proof: SSHProof?,
-                          trust: HostTrust) async throws -> any RFBConnection {
-        if settings.secureLocally == false,
-           let direct = try await TCPConnection.connectIfLocal(host: host, port: port, allowsLoopback: settings.server == nil) {
-            return direct
+    static func configureTransport(_ configuration: inout VNCConfiguration, settings: SSHSettings,
+                                   proof: SSHProof?, trust: HostTrust) {
+        if settings.secureLocally == false {
+            configuration.preferredLocalConnection = { host, port in
+                try await TCPConnection.connectIfLocal(host: host, port: port, allowsLoopback: settings.server == nil)
+            }
         }
-        try Task.checkCancellation()
-        guard let proof else { throw URLError(.userAuthenticationRequired) }
-        return DesktopSSH(host: host, desktopPort: port, settings: settings, proof: proof, trust: trust)
+        configuration.transportProvider = { host, port in
+            guard let proof else { throw URLError(.userAuthenticationRequired) }
+            return DesktopSSH(host: host, desktopPort: port, settings: settings, proof: proof, trust: trust)
+        }
     }
 
     func connect() async throws {

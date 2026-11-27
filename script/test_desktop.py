@@ -46,7 +46,7 @@ def frame(width, height, pixel_format):
 
 
 def serve(connection, log, include_clipboard=True, two_monitors=False, bell_check=False, close_check=False,
-          *, size=(320, 192), apple_server=False, capture_test_keys=False):
+          *, size=(320, 192), apple_server=False, capture_test_keys=False, trace_negotiation=False):
     width, height = size
     expected_chord = [(1, 0xffe3), (1, 0xffe9), (1, 0xffff), (0, 0xffff), (0, 0xffe9), (0, 0xffe3)]
     chord_progress = 0
@@ -64,7 +64,9 @@ def serve(connection, log, include_clipboard=True, two_monitors=False, bell_chec
         if take(stream, 1) != b"\x01":
             raise ValueError("unexpected test security type")
         connection.sendall(bytes(4))
-        take(stream, 1)
+        client_init = take(stream, 1)[0]
+        if trace_negotiation:
+            record(log, "clientInit", flags=client_init)
         connection.sendall(struct.pack(">HH", width, height) + pixel_format + struct.pack(">I", len(label)) + label)
         record(log, "serverInit", width=width, height=height)
         while True:
@@ -76,6 +78,8 @@ def serve(connection, log, include_clipboard=True, two_monitors=False, bell_chec
                 _, count = unpack(stream, ">BH")
                 encodings = unpack(stream, ">" + "i" * count)
                 supports_layout = -308 in encodings
+                if trace_negotiation:
+                    record(log, "encodings", values=encodings)
             elif kind == 3:
                 incremental, _, _, _, _ = unpack(stream, ">BHHHH")
                 if not incremental:
@@ -131,6 +135,15 @@ def serve(connection, log, include_clipboard=True, two_monitors=False, bell_chec
                     record(log, "bell", muted=data == b"after muted bell")
             elif kind == 21 and apple_server:
                 take(stream, 7)
+            elif kind == 0x21 and apple_server:
+                _, length = unpack(stream, ">BH")
+                if length != 62:
+                    raise ValueError("unexpected Apple viewer-info length")
+                take(stream, length)
+            elif kind == 0x12 and apple_server and client_init & 0x40:
+                take(stream, 15)
+                if trace_negotiation:
+                    record(log, "mediaRequest")
             else:
                 raise ValueError(f"unexpected client message {kind}")
 
@@ -144,6 +157,8 @@ def main():
     parser.add_argument("--two-monitors", action="store_true")
     parser.add_argument("--bell-check", action="store_true")
     parser.add_argument("--close-check", action="store_true")
+    parser.add_argument("--apple-server", action="store_true")
+    parser.add_argument("--trace-negotiation", action="store_true")
     args = parser.parse_args()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server, args.log.open("w") as log:
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -154,7 +169,8 @@ def main():
             connection, _ = server.accept()
             try:
                 serve(connection, log, include_clipboard=not args.no_clipboard,
-                      two_monitors=args.two_monitors, bell_check=args.bell_check, close_check=args.close_check)
+                      two_monitors=args.two_monitors, bell_check=args.bell_check, close_check=args.close_check,
+                      apple_server=args.apple_server, trace_negotiation=args.trace_negotiation)
             except EOFError:
                 record(log, "closed")
             except (OSError, ValueError) as error:

@@ -424,6 +424,7 @@ public actor TransportSession {
     /// direct TCP path. Apple's High Performance media mode needs UDP
     /// reachability and is refused over a custom transport without a datagram path.
     private let usesCustomTransport: Bool
+    private let usesVerifiedLocalConnection: Bool
     /// Host-supplied UDP media path for custom transports.
     private let datagramProvider: AppleMediaDatagramProvider?
     private var stateMachine: ConnectionStateMachine
@@ -1009,6 +1010,8 @@ public actor TransportSession {
     ///     tunnel). When `nil`, a direct `TCPConnection` to `host:port` is
     ///     used. Apple's High Performance (UDP media) mode is refused over a
     ///     custom transport unless `datagramProvider` is set.
+    ///   - verifiedLocalConnection: An already connected, verified on-link TCP socket.
+    ///     This takes precedence over `connection` and uses its numeric peer for UDP.
     ///   - datagramProvider: Optional host-provided UDP media path.
     public init(
         host: String,
@@ -1028,6 +1031,7 @@ public actor TransportSession {
         appleMediaBandwidthProfile: AppleMediaBandwidthProfile = .full,
         serverRendersCursor: Bool = false,
         connection: (any RFBConnection)? = nil,
+        verifiedLocalConnection: TCPConnection? = nil,
         datagramProvider: AppleMediaDatagramProvider? = nil,
         securityPolicy: VNCSecurityPolicy = .automatic,
         certificateValidationHandler: VNCCertificateValidationHandler? = nil,
@@ -1056,9 +1060,11 @@ public actor TransportSession {
         self.rctlEnabled = environment["ROOTSHELL_VNC_DISABLE_RCTL"] != "1"
         self.rateControlEnabled = !preferFullQualityVideo
             && environment["ROOTSHELL_VNC_DISABLE_RATE_CONTROL"] != "1"
-        self.usesCustomTransport = connection != nil
-        self.datagramProvider = datagramProvider
-        let base = connection ?? TCPConnection(host: host, port: port)
+        self.usesVerifiedLocalConnection = verifiedLocalConnection != nil
+        self.usesCustomTransport = connection != nil && verifiedLocalConnection == nil
+        self.datagramProvider = verifiedLocalConnection == nil ? datagramProvider : nil
+        let base: any RFBConnection = verifiedLocalConnection.map { $0 as any RFBConnection }
+            ?? connection ?? TCPConnection(host: host, port: port)
         self.baseConnection = base
         self.tcp = base
         // Suppress the cursor shape encodings once, here, before anything is
@@ -1172,12 +1178,17 @@ public actor TransportSession {
         // Establish TCP
         try await tcp.connect()
         if let connectedPeer = await tcp.remoteEndpointHost() {
-            appleMediaRemoteHost = Self.selectAppleMediaRemoteHost(
-                dialHost: dialHost,
-                connectedPeer: connectedPeer)
-            appleMediaRemoteAddressFamily = Self.selectAppleMediaRemoteAddressFamily(
-                dialHost: dialHost,
-                connectedPeer: connectedPeer)
+            if usesVerifiedLocalConnection {
+                appleMediaRemoteHost = connectedPeer
+                appleMediaRemoteAddressFamily = nil
+            } else {
+                appleMediaRemoteHost = Self.selectAppleMediaRemoteHost(
+                    dialHost: dialHost,
+                    connectedPeer: connectedPeer)
+                appleMediaRemoteAddressFamily = Self.selectAppleMediaRemoteAddressFamily(
+                    dialHost: dialHost,
+                    connectedPeer: connectedPeer)
+            }
             if appleMediaRemoteHost == connectedPeer {
                 log.info("Apple media UDP peer matched to TCP peer \(connectedPeer)")
             } else {
@@ -1185,6 +1196,8 @@ public actor TransportSession {
                     "Apple media UDP retaining Tailscale hostname \(dialHost) "
                         + "instead of numeric TCP peer \(connectedPeer)")
             }
+        } else if usesVerifiedLocalConnection, requestedAppleMediaStream {
+            throw VNCProtocolError.ioError("Local TCP did not expose a numeric media peer")
         } else if !usesCustomTransport {
             log.warning(
                 "TCP transport did not expose its numeric peer; Apple media UDP "

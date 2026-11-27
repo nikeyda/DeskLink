@@ -21,23 +21,66 @@ final class SSHWireTests: XCTestCase {
             throw XCTSkip("Requires the independent loopback RFB chart.")
         }
         let trust = HostTrust()
-        let automatic = try await DesktopSSH.transport(host: "127.0.0.1", port: port, settings: SSHSettings(),
-                                                       proof: .password("unused-fixture"), trust: trust)
+        var configuration = VNCConfiguration(videoQualityMode: .adaptive)
+        DesktopSSH.configureTransport(&configuration, settings: SSHSettings(), proof: .password("unused-fixture"), trust: trust)
+        XCTAssertNil(configuration.preferredLocalConnection)
+        let automatic = try await configuration.transportProvider?("127.0.0.1", port)
         XCTAssertTrue(automatic is DesktopSSH)
-        let permitted = SSHSettings(secureLocally: false)
-        let direct = try await DesktopSSH.transport(host: "127.0.0.1", port: port, settings: permitted, proof: nil, trust: trust)
-        XCTAssertTrue(direct is TCPConnection)
-        // The transport's normal connect call consumes the socket already verified.
-        try await direct.connect()
-        let banner = try await direct.read(exactly: 12)
+        var local = VNCConfiguration(videoQualityMode: .adaptive)
+        DesktopSSH.configureTransport(&local, settings: SSHSettings(secureLocally: false), proof: nil, trust: trust)
+        XCTAssertEqual(local.videoQualityMode, .adaptive)
+        let direct = try await local.preferredLocalConnection?("127.0.0.1", port)
+        let socket = try XCTUnwrap(direct)
+        try await socket.connect()
+        let banner = try await socket.read(exactly: 12)
         XCTAssertEqual(banner, Data("RFB 003.008\n".utf8))
-        await direct.close()
+        await socket.close()
         XCTAssertNil(trust.prompt)
 
+        var separate = VNCConfiguration()
         let otherHost = SSHSettings(server: "gateway.fixture.invalid", secureLocally: false)
-        let tunneled = try await DesktopSSH.transport(host: "127.0.0.1", port: port, settings: otherHost,
-                                                       proof: .password("unused-fixture"), trust: trust)
+        DesktopSSH.configureTransport(&separate, settings: otherHost, proof: .password("unused-fixture"), trust: trust)
+        let denied = try await separate.preferredLocalConnection?("127.0.0.1", port)
+        XCTAssertNil(denied)
+        let tunneled = try await separate.transportProvider?("127.0.0.1", port)
         XCTAssertTrue(tunneled is DesktopSSH)
+    }
+
+    func testReconnectReevaluatesRouteWithoutLosingTheRequestedMediaMode() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let directPort = env["DESKLINK_MEDIA_DIRECT_PORT"].flatMap(UInt16.init),
+              let tunnelPort = env["DESKLINK_MEDIA_TUNNEL_PORT"].flatMap(UInt16.init) else {
+            throw XCTSkip("Requires the two Apple-protocol loopback displays.")
+        }
+        let host = "127.0.0.1"
+        let trust = HostTrust()
+        var computer = Computer(endpoint: try Endpoint(address: host, defaultPort: directPort))
+        computer.ssh = SSHSettings(secureLocally: false)
+        computer.setDisplay(DesktopDisplayPreferences(quality: .adaptive), for: .current)
+        var configuration = computer.configuration
+        DesktopSSH.configureTransport(&configuration, settings: try XCTUnwrap(computer.ssh), proof: nil, trust: trust)
+        let selectDirect = try XCTUnwrap(configuration.preferredLocalConnection)
+        let routes = FixtureMediaRoutes()
+        configuration.preferredLocalConnection = { host, port in
+            guard await routes.next() else { return nil }
+            return try await selectDirect(host, port)
+        }
+        // An independent loopback socket stands in for the byte-stream-only tunnel.
+        configuration.transportProvider = { _, _ in TCPConnection(host: host, port: tunnelPort) }
+        let session = VNCSession(configuration: configuration)
+        defer { session.disconnect() }
+        XCTAssertTrue(configuration.enableHighPerformanceMode)
+        try await session.connect(credentials: VNCCredentials(host: host, port: directPort, password: ""))
+        try await until { session.hasPresentedStandardPicture }
+        try await until { session.connectionState.isConnected }
+
+        for attempt in 2...3 {
+            XCTAssertTrue(session.reconnect(with: session.configuration))
+            try await until { await routes.count >= attempt && session.connectionState.isConnected }
+            XCTAssertEqual(session.configuration.videoQualityMode, .adaptive)
+            XCTAssertTrue(session.configuration.enableHighPerformanceMode)
+            XCTAssertNil(session.highPerformanceFallbackReason)
+        }
     }
 
     func testPassphraseProtectedKeysAndPublicKeyLogin() async throws {
@@ -93,10 +136,7 @@ final class SSHWireTests: XCTestCase {
         let trust = HostTrust(defaults: defaults)
         let settings = SSHSettings(port: port, username: "fixture", usesKey: false, server: peerHost, secureLocally: false)
         var config = VNCConfiguration(enableHighPerformanceMode: false, videoQualityMode: .standard)
-        config.transportProvider = { host, port in
-            try await DesktopSSH.transport(host: host, port: port, settings: settings,
-                                           proof: .password("chart-test-only"), trust: trust)
-        }
+        DesktopSSH.configureTransport(&config, settings: settings, proof: .password("chart-test-only"), trust: trust)
         let session = VNCSession(configuration: config)
         defer { trust.cancel(); session.disconnect() }
         let connection = Task {
@@ -156,9 +196,19 @@ final class SSHWireTests: XCTestCase {
         try await until { remoteText == "DeskLink chord receipt" }
     }
 
-    private func until(_ predicate: () -> Bool) async throws {
+    private func until(_ predicate: () async -> Bool) async throws {
         let deadline = Date().addingTimeInterval(10)
-        while !predicate() && Date() < deadline { try await Task.sleep(for: .milliseconds(40)) }
-        guard predicate() else { throw URLError(.timedOut) }
+        while !(await predicate()) && Date() < deadline { try await Task.sleep(for: .milliseconds(40)) }
+        guard await predicate() else { throw URLError(.timedOut) }
+    }
+}
+
+private actor FixtureMediaRoutes {
+    private(set) var count = 0
+
+    // The same saved profile dials natively, through a tunnel, then natively again.
+    func next() -> Bool {
+        count += 1
+        return count != 2
     }
 }
