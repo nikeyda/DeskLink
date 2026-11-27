@@ -2,15 +2,51 @@ import Security
 import SwiftUI
 import UniformTypeIdentifiers
 
+@MainActor
+struct SSHKeyImportDraft {
+    struct ProtectedKey: Sendable {
+        let text: String
+        let filename: String?
+
+        nonisolated func opened(with passphrase: String) throws -> String {
+            try SSHKeyFile.opened(text, passphrase: passphrase)
+        }
+    }
+
+    private(set) var protectedKey: ProtectedKey?
+
+    mutating func stage(_ text: String, filename: String?, into key: Binding<String?>) throws {
+        discard()
+        guard text.utf8.count <= 1024 * 1024 else { throw CocoaError(.fileReadTooLarge) }
+        do {
+            key.wrappedValue = try SSHKeyFile.opened(text)
+        } catch let error as NSError where error.domain == NSOSStatusErrorDomain && error.code == Int(errSecPassphraseRequired) {
+            protectedKey = ProtectedKey(text: text, filename: filename)
+        }
+    }
+
+    mutating func accept(_ openedKey: String, into key: Binding<String?>) -> Bool {
+        guard protectedKey != nil else { return false }
+        key.wrappedValue = openedKey
+        discard()
+        return true
+    }
+
+    mutating func discard() {
+        protectedKey = nil
+    }
+}
+
 struct SSHKeyImportFields: View {
     @Binding var key: String?
     @Binding var pending: Bool
     var onSelection: (String?) -> Void
     var onError: (String?) -> Void
     @State private var choosing = false
-    @State private var encrypted: String?
+    @State private var draft = SSHKeyImportDraft()
     @State private var passphrase = ""
-    @State private var opening = false
+    @State private var unlocking: Task<Void, Never>?
+    private var opening: Bool { unlocking != nil }
 
     var body: some View {
         Button { choosing = true } label: {
@@ -33,47 +69,55 @@ struct SSHKeyImportFields: View {
         }
         .accessibilityLabel("粘贴 SSH 密钥")
         .disabled(opening)
-        if encrypted != nil {
+        if draft.protectedKey != nil {
             SecureField("密钥口令", text: $passphrase).textContentType(.password)
+                .disabled(opening)
             Button("解锁密钥", action: unlock).disabled(passphrase.isEmpty || opening)
+                .onDisappear { unlocking?.cancel() }
+            Button("取消导入", role: .cancel) {
+                unlocking?.cancel()
+                draft.discard()
+                clearPrompt()
+                onError(nil)
+            }
             if opening { ProgressView() }
         }
     }
 
     private func read(_ text: String, filename: String?) {
-        key = nil
-        encrypted = nil
-        passphrase = ""
-        pending = false
-        onSelection(filename)
+        guard !opening else { return }
+        clearPrompt()
         onError(nil)
         do {
-            guard text.utf8.count <= 1024 * 1024 else { throw CocoaError(.fileReadTooLarge) }
-            key = try SSHKeyFile.opened(text)
-        } catch let error as NSError where error.domain == NSOSStatusErrorDomain && error.code == Int(errSecPassphraseRequired) {
-            encrypted = text
-            pending = true
+            try draft.stage(text, filename: filename, into: $key)
+            pending = draft.protectedKey != nil
+            if !pending { onSelection(filename) }
         } catch { onError(error.localizedDescription) }
     }
 
     private func unlock() {
-        guard let selected = encrypted, !passphrase.isEmpty, !opening else { return }
+        guard let selected = draft.protectedKey, !passphrase.isEmpty, !opening else { return }
         let secret = passphrase
-        opening = true
-        Task { @MainActor in
-            defer { opening = false }
+        unlocking = Task { @MainActor in
+            defer { unlocking = nil }
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
-                    try SSHKeyFile.opened(selected, passphrase: secret)
+                    try selected.opened(with: secret)
                 }.value
-                guard encrypted == selected else { return }
-                key = result
-                encrypted = nil
-                passphrase = ""
-                pending = false
+                guard !Task.isCancelled, pending, draft.accept(result, into: $key) else { return }
+                clearPrompt()
+                onSelection(selected.filename)
                 onError(nil)
-            } catch { onError(error.localizedDescription) }
+            } catch {
+                guard !Task.isCancelled, pending else { return }
+                onError(error.localizedDescription)
+            }
         }
+    }
+
+    private func clearPrompt() {
+        passphrase = ""
+        pending = false
     }
 }
 
