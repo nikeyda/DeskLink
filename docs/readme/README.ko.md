@@ -28,8 +28,8 @@
 앱은 **iOS 18 이상**, **iPadOS 18 이상**, **macOS 15 이상**(Mac Catalyst)을 지원합니다. 빌드에는 Xcode 26 이상을 사용하세요.
 
 ```sh
-git clone https://github.com/nikeyda/DeskLink.git
-cd DeskLink
+git clone https://github.com/nikeyda/Telescope.git
+cd Telescope
 open DeskLink.xcodeproj
 ```
 

@@ -28,8 +28,8 @@
 対応環境は **iOS 18 以降**、**iPadOS 18 以降**、**macOS 15 以降**（Mac Catalyst）です。ビルドには Xcode 26 以降を使用してください。
 
 ```sh
-git clone https://github.com/nikeyda/DeskLink.git
-cd DeskLink
+git clone https://github.com/nikeyda/Telescope.git
+cd Telescope
 open DeskLink.xcodeproj
 ```
 

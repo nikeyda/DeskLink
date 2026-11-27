@@ -28,8 +28,8 @@
 La aplicación es compatible con **iOS 18 o posterior**, **iPadOS 18 o posterior** y **macOS 15 o posterior** mediante Mac Catalyst. Para compilarla, usa Xcode 26 o posterior.
 
 ```sh
-git clone https://github.com/nikeyda/DeskLink.git
-cd DeskLink
+git clone https://github.com/nikeyda/Telescope.git
+cd Telescope
 open DeskLink.xcodeproj
 ```
 

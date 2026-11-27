@@ -28,8 +28,8 @@
 The app targets **iOS 18+**, **iPadOS 18+**, and **macOS 15+** through Mac Catalyst. To build it, use Xcode 26 or later.
 
 ```sh
-git clone https://github.com/nikeyda/DeskLink.git
-cd DeskLink
+git clone https://github.com/nikeyda/Telescope.git
+cd Telescope
 open DeskLink.xcodeproj
 ```
 
