@@ -715,7 +715,7 @@ struct LibraryWindow: View {
                             Button {
                                 openNearbySearchResult(item, quality: nil)
                             } label: {
-                                searchLabel(item.name, address: item.address, symbol: "desktopcomputer")
+                                searchLabel(item.name, address: item.detail, symbol: item.symbol)
                             }
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("library.search.nearby." + item.id)
@@ -864,7 +864,7 @@ struct LibraryWindow: View {
                 } else if listLayout {
                     List(results) { entry in
                         nearbyItem(entry, cornerRadius: 8) {
-                            searchLabel(entry.name, address: entry.address, symbol: "desktopcomputer")
+                            searchLabel(entry.name, address: entry.detail, symbol: entry.symbol)
                         }
                     }
                     .listStyle(.plain)
@@ -874,7 +874,7 @@ struct LibraryWindow: View {
                         LazyVGrid(columns: gridColumns, spacing: 14) {
                             ForEach(results) { entry in
                                 nearbyItem(entry, cornerRadius: 16) {
-                                    ConnectionTile(name: entry.name, address: entry.address, symbol: "desktopcomputer")
+                                    ConnectionTile(name: entry.name, address: entry.detail, symbol: entry.symbol)
                                 }
                             }
                         }.padding(24)

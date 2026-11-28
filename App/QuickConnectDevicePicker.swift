@@ -90,7 +90,7 @@ struct QuickConnectDevicePicker: View {
                 Button {
                     nearby.select(entry) { choose($0, sshPort: nil, resolvedAddresses: $1) }
                 } label: {
-                    computerLabel(entry.name, address: entry.address)
+                    computerLabel(entry.name, address: entry.detail, symbol: entry.symbol)
                 }
                 .disabled(nearby.isResolvingSelection)
                 .accessibilityIdentifier("connection.device.nearby." + entry.id)
@@ -130,7 +130,7 @@ struct QuickConnectDevicePicker: View {
         select(computer, sshPort, resolvedAddresses)
     }
 
-    private func computerLabel(_ name: String, address: String?, symbol: String = "desktopcomputer") -> some View {
+    private func computerLabel(_ name: String, address: String?, symbol: String) -> some View {
         Label {
             VStack(alignment: .leading, spacing: 3) {
                 Text(verbatim: name).foregroundStyle(.primary)

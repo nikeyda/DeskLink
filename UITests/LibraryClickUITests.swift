@@ -103,6 +103,17 @@ final class LibraryClickUITests: XCTestCase {
                                      { _, _, _, _, _ in }, nil)
         }
         XCTAssertEqual(addressStatus, DNSServiceErrorType(kDNSServiceErr_NoError))
+        var infoName = [CChar](repeating: 0, count: Int(kDNSServiceMaxDomainName))
+        XCTAssertEqual(DNSServiceConstructFullName(&infoName, name, "_device-info._tcp", "local."), 0)
+        var infoRecord: DNSRecordRef?
+        let txt = NetService.data(fromTXTRecord: ["model": Data("Mac16,11".utf8)])
+        let infoStatus = txt.withUnsafeBytes { bytes in
+            DNSServiceRegisterRecord(addressService, &infoRecord, DNSServiceFlags(kDNSServiceFlagsUnique),
+                                     kDNSServiceInterfaceIndexLocalOnly, infoName, UInt16(kDNSServiceType_TXT),
+                                     UInt16(kDNSServiceClass_IN), UInt16(bytes.count), bytes.baseAddress, 0,
+                                     { _, _, _, _, _ in }, nil)
+        }
+        XCTAssertEqual(infoStatus, DNSServiceErrorType(kDNSServiceErr_NoError))
         XCTAssertEqual(DNSServiceRegister(&registration, 0, kDNSServiceInterfaceIndexLocalOnly, name,
                                           "_rfb._tcp", "local.", savedHost, port.bigEndian, 0, nil, nil, nil),
                        DNSServiceErrorType(kDNSServiceErr_NoError))
@@ -132,8 +143,9 @@ final class LibraryClickUITests: XCTestCase {
         if prompt.waitForExistence(timeout: 4) {
             prompt.buttons.matching(NSPredicate(format: "label IN %@", ["Allow", "允许"])).firstMatch.tap()
         }
-        let computer = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@",
-                                                        "connection.device.nearby.", name)).firstMatch
+        let computer = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@ AND label CONTAINS %@",
+            "connection.device.nearby.", name, "Mac mini")).firstMatch
         XCTAssertTrue(computer.waitForExistence(timeout: 12))
         let back = app.navigationBars.buttons["BackButton"].firstMatch
         if back.exists { back.tap() }
@@ -228,10 +240,15 @@ final class LibraryClickUITests: XCTestCase {
         }
         XCTAssertTrue(sideEntry.waitForExistence(timeout: 8))
         sideEntry.tap()
-        let nearbyComputer = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@",
-                                                              "nearby.computer.", name)).firstMatch
+        let nearbyComputer = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@ AND label CONTAINS %@",
+            "nearby.computer.", name, "Mac mini")).firstMatch
         let saveToLibrary = app.buttons["保存到连接库"].firstMatch
         XCTAssertTrue(nearbyComputer.waitForExistence(timeout: 12))
+        let nearbyModels = XCTAttachment(screenshot: app.screenshot())
+        nearbyModels.name = "Nearby Mac hardware families"
+        nearbyModels.lifetime = .keepAlways
+        add(nearbyModels)
         nearbyComputer.press(forDuration: 0.9)
         XCTAssertTrue(saveToLibrary.waitForExistence(timeout: 8))
         saveToLibrary.tap()

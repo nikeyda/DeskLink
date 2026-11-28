@@ -18,7 +18,7 @@
         <key>LSHandlerRank</key><string>Alternate</string>
         <key>CFBundleURLSchemes</key><array><string>screens-ssh</string></array></dict>
     </array>
-    <key>NSBonjourServices</key><array><string>_rfb._tcp</string></array>
+    <key>NSBonjourServices</key><array><string>_rfb._tcp</string><string>_device-info._tcp</string></array>
     <key>CFBundleDocumentTypes</key>
     <array><dict>
         <key>CFBundleTypeName</key><string>VNC Internet Location</string>

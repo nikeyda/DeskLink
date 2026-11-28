@@ -57,23 +57,68 @@ import XCTest
         XCTAssertFalse(entry.matches(LibrarySearchQuery("studio-mac 5901")))
     }
 
+    func testNearbyMacFamilyUsesOnlyRecognizedAdvertisedModels() throws {
+        func family(_ model: String) -> NearbyMacFamily? {
+            NearbyMacFamily(txtRecord: NetService.data(fromTXTRecord: ["model": Data(model.utf8)]))
+        }
+        XCTAssertEqual(family("Mac17,2"), .macBook)
+        XCTAssertEqual(family("MacBookPro18,1"), .macBook)
+        XCTAssertEqual(family("Mac16,11"), .macMini)
+        XCTAssertEqual(family("Macmini9,1"), .macMini)
+        XCTAssertEqual(family("iMac21,1"), .iMac)
+        XCTAssertEqual(family("Mac16,9"), .macStudio)
+        XCTAssertEqual(family("Mac14,8"), .macPro)
+        XCTAssertNil(family("Mac99,1"))
+        XCTAssertNil(family("MacBookPro"))
+        XCTAssertNil(family("A PC named Mac mini"))
+
+        let service = NetService(domain: "local.", type: "_rfb._tcp.", name: "Edit Bay")
+        let endpoint = try Endpoint(address: "edit-bay.local")
+        var entry = NearbyComputer(service: service, endpoint: endpoint)
+        XCTAssertEqual(entry.symbol, "desktopcomputer")
+        XCTAssertEqual(entry.detail, endpoint.address)
+        XCTAssertFalse(entry.matches(LibrarySearchQuery("mac mini")))
+        entry.macFamily = .macMini
+        XCTAssertEqual(entry.detail, "Mac mini · " + endpoint.address)
+        XCTAssertTrue(entry.matches(LibrarySearchQuery("edit mac mini 5900")))
+        let named = NearbyComputer(service: NetService(domain: "local.", type: "_rfb._tcp.", name: "Library Mac mini"),
+                                   endpoint: endpoint, macFamily: .macMini)
+        XCTAssertEqual(named.detail, endpoint.address)
+    }
+
     func testLocalBonjourComputerAppearsResolvesAndDisappears() async throws {
-        let name = "Telescope-" + UUID().uuidString
+        let name = "Telescope Lab. " + String(UUID().uuidString.prefix(8))
         let port: UInt16 = 15276
         var registration: DNSServiceRef?
+        var metadata: DNSServiceRef?
         let browser = NearbyComputers(localFilter: nil)
         browser.start()
         defer {
             if let registration { DNSServiceRefDeallocate(registration) }
+            if let metadata { DNSServiceRefDeallocate(metadata) }
             browser.stop()
         }
         let status = DNSServiceRegister(&registration, 0, kDNSServiceInterfaceIndexLocalOnly,
                                         name, "_rfb._tcp", "local.", nil, port.bigEndian, 0, nil, nil, nil)
         try XCTSkipIf(status == kDNSServiceErr_PolicyDenied, "Local network permission is required for Bonjour.")
         XCTAssertEqual(status, DNSServiceErrorType(kDNSServiceErr_NoError))
+        XCTAssertEqual(DNSServiceCreateConnection(&metadata), DNSServiceErrorType(kDNSServiceErr_NoError))
+        let metadataService = try XCTUnwrap(metadata)
+        var address = [CChar](repeating: 0, count: Int(kDNSServiceMaxDomainName))
+        XCTAssertEqual(DNSServiceConstructFullName(&address, name, "_device-info._tcp", "local."), 0)
+        let txt = NetService.data(fromTXTRecord: ["model": Data("Mac16,10".utf8)])
+        var modelRecord: DNSRecordRef?
+        let metadataStatus = txt.withUnsafeBytes { bytes in
+            DNSServiceRegisterRecord(metadataService, &modelRecord, DNSServiceFlags(kDNSServiceFlagsUnique),
+                                     kDNSServiceInterfaceIndexLocalOnly, address, UInt16(kDNSServiceType_TXT),
+                                     UInt16(kDNSServiceClass_IN), UInt16(bytes.count), bytes.baseAddress, 0,
+                                     { _, _, _, _, _ in }, nil)
+        }
+        XCTAssertEqual(metadataStatus, DNSServiceErrorType(kDNSServiceErr_NoError))
         let service = try XCTUnwrap(registration)
-        try await waitFor { browser.entries.contains { $0.name == name && $0.endpoint?.port == port } }
+        try await waitFor { browser.entries.contains { $0.name == name && $0.endpoint?.port == port && $0.macFamily == .macMini } }
         let nearby = try XCTUnwrap(browser.entries.first { $0.name == name })
+        XCTAssertEqual(nearby.symbol, "macmini")
         let host = try XCTUnwrap(nearby.endpoint?.host)
         let ip = try XCTUnwrap(nearby.numericAddresses.first)
         let socket = ip.contains(":") ? "[\(ip)]:\(port)" : "\(ip):\(port)"
@@ -166,6 +211,9 @@ import XCTest
         }
         try await waitFor { unfiltered.entries.contains { $0.name == name } }
         let service = try XCTUnwrap(unfiltered.entries.first { $0.name == name })
+        if let expected = ProcessInfo.processInfo.environment["DESKLINK_LIVE_MAC_FAMILY"] {
+            try await waitFor { unfiltered.entries.contains { $0.id == service.id && $0.macFamily?.rawValue == expected } }
+        }
         var resolved: Computer?
         unfiltered.select(service) { computer, _ in resolved = computer }
         let deadline = Date().addingTimeInterval(12)

@@ -8,9 +8,15 @@ struct NearbyComputer: Identifiable {
     let service: NetService
     var endpoint: Endpoint? = nil
     var numericAddresses: [String] = []
+    var macFamily: NearbyMacFamily? = nil
     var id: String { Self.id(for: service) }
     var name: String { service.name }
     var address: String? { endpoint?.address }
+    var symbol: String { macFamily?.symbol ?? "desktopcomputer" }
+    var detail: String? {
+        guard let family = macFamily?.rawValue, !name.localizedCaseInsensitiveContains(family) else { return address }
+        return address.map { "\(family) · \($0)" } ?? family
+    }
 
     func matches(_ query: LibrarySearchQuery) -> Bool {
         guard let endpoint else { return query.matches([name]) }
@@ -18,11 +24,102 @@ struct NearbyComputer: Identifiable {
             let literal = host.contains(":") ? "[\(host)]" : host
             return "\(literal):\(endpoint.port)"
         }
-        return query.matches([name] + addresses.map(Optional.some))
+        return query.matches([name, macFamily?.rawValue] + addresses.map(Optional.some))
     }
 
     static func id(for service: NetService) -> String {
         service.domain + "/" + service.type + "/" + service.name
+    }
+}
+
+enum NearbyMacFamily: String {
+    case macBook = "MacBook"
+    case macMini = "Mac mini"
+    case iMac = "iMac"
+    case macStudio = "Mac Studio"
+    case macPro = "Mac Pro"
+
+    var symbol: String {
+        switch self {
+        case .macBook: "laptopcomputer"
+        case .macMini: "macmini"
+        case .iMac: "desktopcomputer"
+        case .macStudio: "macstudio"
+        case .macPro: "macpro.gen3"
+        }
+    }
+
+    init?(txtRecord: Data) {
+        let values = NetService.dictionary(fromTXTRecord: txtRecord)
+        guard let model = values["model"].flatMap({ String(data: $0, encoding: .utf8) })?.lowercased() else { return nil }
+        // Older identifiers encode the family. Recent generic Mac identifiers must match an Apple model listing.
+        switch model {
+        case "mac14,2", "mac14,5", "mac14,6", "mac14,7", "mac14,9", "mac14,10", "mac14,15",
+             "mac15,3", "mac15,6", "mac15,7", "mac15,8", "mac15,9", "mac15,10", "mac15,11", "mac15,12", "mac15,13",
+             "mac16,1", "mac16,5", "mac16,6", "mac16,7", "mac16,8", "mac16,12", "mac16,13",
+             "mac17,2", "mac17,3", "mac17,4", "mac17,6", "mac17,7", "mac17,8", "mac17,9":
+            self = .macBook
+        case "mac14,3", "mac14,12", "mac16,10", "mac16,11", "mac17,16", "mac18,5":
+            self = .macMini
+        case "mac15,4", "mac15,5", "mac16,2", "mac16,3":
+            self = .iMac
+        case "mac13,1", "mac13,2", "mac14,13", "mac14,14", "mac15,14", "mac16,9", "mac17,14", "mac17,15":
+            self = .macStudio
+        case "mac14,8":
+            self = .macPro
+        default:
+            let prefix = model.prefix { $0.isLetter }
+            guard model.dropFirst(prefix.count).wholeMatch(of: /[0-9]+,[0-9]+/) != nil else { return nil }
+            switch prefix {
+            case "macbook", "macbookair", "macbookpro": self = .macBook
+            case "macmini": self = .macMini
+            case "imac", "imacpro": self = .iMac
+            case "macpro": self = .macPro
+            default: return nil
+            }
+        }
+    }
+}
+
+@MainActor private final class NearbyMacModelQuery {
+    private var reference: DNSServiceRef?
+    private let update: (NearbyMacFamily?) -> Void
+
+    private init(update: @escaping (NearbyMacFamily?) -> Void) { self.update = update }
+
+    static func start(for service: NetService, update: @escaping (NearbyMacFamily?) -> Void) -> NearbyMacModelQuery? {
+        var name = [CChar](repeating: 0, count: Int(kDNSServiceMaxDomainName))
+        guard DNSServiceConstructFullName(&name, service.name, "_device-info._tcp", service.domain) == 0 else { return nil }
+        let query = NearbyMacModelQuery(update: update)
+        var reference: DNSServiceRef?
+        let code = DNSServiceQueryRecord(&reference, DNSServiceFlags(kDNSServiceFlagsForceMulticast), 0, name,
+                                         UInt16(kDNSServiceType_TXT), UInt16(kDNSServiceClass_IN),
+                                         { _, flags, _, error, _, _, _, count, data, _, context in
+            guard error == kDNSServiceErr_NoError, flags & DNSServiceFlags(kDNSServiceFlagsAdd) != 0, let data, let context,
+                  let family = NearbyMacFamily(txtRecord: Data(bytes: data, count: Int(count))) else { return }
+            MainActor.assumeIsolated {
+                Unmanaged<NearbyMacModelQuery>.fromOpaque(context).takeUnretainedValue().finish(family)
+            }
+        }, Unmanaged.passUnretained(query).toOpaque())
+        guard code == kDNSServiceErr_NoError, let reference else { return nil }
+        guard DNSServiceSetDispatchQueue(reference, .main) == kDNSServiceErr_NoError else {
+            DNSServiceRefDeallocate(reference)
+            return nil
+        }
+        query.reference = reference
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak query] in query?.finish(nil) }
+        return query
+    }
+
+    private func finish(_ family: NearbyMacFamily?) {
+        guard let reference else { return }
+        self.reference = nil
+        DNSServiceRefDeallocate(reference)
+        update(family)
+    }
+
+    isolated deinit {
+        if let reference { DNSServiceRefDeallocate(reference) }
     }
 }
 
@@ -100,6 +197,7 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
     var isResolvingSelection: Bool { resolving != nil }
     private var browser: NWBrowser?
     private var discovery: [String: Discovery] = [:]
+    private var modelQueries: [String: NearbyMacModelQuery] = [:]
     private var resolving: NetService?
     private var selection: ((Computer, Set<Endpoint>) -> Void)?
     private let isLocalComputer: ((NetService) -> Bool)?
@@ -223,7 +321,9 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
         let numericAddresses = NearbyLocalIdentity.numericAddresses(for: sender)
         cancelSelection()
         guard !isLocal else {
-            discovery[NearbyComputer.id(for: sender)] = .hidden
+            let id = NearbyComputer.id(for: sender)
+            modelQueries[id] = nil
+            discovery[id] = .hidden
             publishDiscovered()
             errorMessage = String(localized: "这台电脑是本机。请选择另一台电脑。")
             return
@@ -252,6 +352,7 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
     private func updateDiscovered(_ found: [String: NearbyComputer]) {
         if let resolving, found[NearbyComputer.id(for: resolving)] == nil { reportMissingSelection() }
         for id in Array(discovery.keys) where found[id] == nil {
+            modelQueries[id] = nil
             if case .resolving(let service) = discovery.removeValue(forKey: id) { stopResolving(service) }
         }
         for (id, entry) in found where discovery[id] == nil {
@@ -273,6 +374,16 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
         stopResolving(sender)
         discovery[id] = result
         publishDiscovered()
+        if case .visible(let entry) = result, entry.endpoint != nil {
+            modelQueries[id] = NearbyMacModelQuery.start(for: sender) { [weak self] family in
+                guard let self else { return }
+                self.modelQueries[id] = nil
+                guard let family, case .visible(var current) = self.discovery[id] else { return }
+                current.macFamily = family
+                self.discovery[id] = .visible(current)
+                self.publishDiscovered()
+            }
+        }
     }
 
     private func publishDiscovered() {
@@ -291,6 +402,7 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
 
     private func clearDiscovered() {
         for case .resolving(let service) in discovery.values { stopResolving(service) }
+        modelQueries.removeAll()
         discovery.removeAll()
         entries = []
         isSearching = false
