@@ -119,6 +119,79 @@ import UIKit
         XCTAssertEqual(wire.count, 8)
     }
 
+    func testHardwareKeyboardCallbacksFollowTheKeyWindowAndTextFocus() async throws {
+        struct Event: Equatable {
+            let window: Int
+            let down: Bool
+            let keysym: UInt32
+        }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive })
+        let original = scene.keyWindow
+        var events: [Event] = []
+        let windows = (0...1).map { _ in UIWindow(windowScene: scene) }
+        defer {
+            windows.forEach { $0.isHidden = true }
+            original?.makeKey()
+        }
+        let inputs = windows.enumerated().map { index, window in
+            let root = UIViewController()
+            window.rootViewController = root
+            let view = RemoteInputUIView(touchHandler: TouchInputHandler { _, _, _ in },
+                keyboardHandler: KeyboardInputHandler(
+                    sendKeyEvent: { events.append(.init(window: index, down: $0, keysym: $1)) },
+                    sendPhysicalKeyEvent: { events.append(.init(window: index, down: $0, keysym: $2)) }),
+                keyboardCapture: VNCKeyboardCapture(), requestPasswordSend: {}, requestDictation: {},
+                toggleFullScreen: nil, disconnect: {})
+            root.view.addSubview(view)
+            return view
+        }
+        let localField = UITextField()
+        windows[1].rootViewController?.view.addSubview(localField)
+        let control = KeyboardInputHandler.keysymControlL
+
+        func drainCallbacks() async {
+            await withCheckedContinuation { continuation in
+                DispatchQueue.main.async { continuation.resume() }
+            }
+        }
+
+        windows[0].makeKeyAndVisible()
+        XCTAssertTrue(inputs[0].becomeFirstResponder())
+        inputs[0].dispatchMonitoredHardwareEvent {
+            $0.routePhysicalModifier(.init(downFlag: true, keysym: control), usage: 0xe0)
+        }
+        await drainCallbacks()
+        XCTAssertEqual(events, [.init(window: 0, down: true, keysym: control)])
+
+        inputs[0].dispatchMonitoredHardwareEvent { $0.insertText("x") }
+        windows[1].makeKeyAndVisible()
+        XCTAssertTrue(inputs[1].becomeFirstResponder())
+        inputs[1].dispatchMonitoredHardwareEvent { $0.insertText("b") }
+        await drainCallbacks()
+        XCTAssertEqual(events, [
+            .init(window: 0, down: true, keysym: control),
+            .init(window: 0, down: false, keysym: control),
+            .init(window: 1, down: true, keysym: 0x62),
+            .init(window: 1, down: false, keysym: 0x62),
+        ])
+
+        XCTAssertTrue(localField.becomeFirstResponder())
+        let beforeLocalFocus = events
+        inputs[1].dispatchMonitoredHardwareEvent { $0.insertText("y") }
+        await drainCallbacks()
+        XCTAssertEqual(events, beforeLocalFocus)
+
+        windows[0].makeKey()
+        if !inputs[0].isFirstResponder { XCTAssertTrue(inputs[0].becomeFirstResponder()) }
+        inputs[0].dispatchMonitoredHardwareEvent { $0.insertText("a") }
+        await drainCallbacks()
+        XCTAssertEqual(events, beforeLocalFocus + [
+            .init(window: 0, down: true, keysym: 0x61),
+            .init(window: 0, down: false, keysym: 0x61),
+        ])
+    }
+
     #if targetEnvironment(macCatalyst)
     func testMacLocalOptionUsesTheActualKeyboardLayoutAndIsolatesDeadKeys() throws {
         var input = CatalystKeyboardLayout.LocalOptionInput()

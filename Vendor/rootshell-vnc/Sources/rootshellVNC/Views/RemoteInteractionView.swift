@@ -327,7 +327,8 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
     private var nextPointerModifierOwner: UInt64 = 0
     private var pointerDragModifierOwner: UInt64?
     private var touchHoldModifierOwner: UInt64?
-    private weak var monitoredCatalystKeyboardInput: GCKeyboardInput?
+    private static weak var hardwareKeyboardMonitorOwner: RemoteInputUIView?
+    private weak var monitoredHardwareKeyboardInput: GCKeyboardInput?
     #if targetEnvironment(macCatalyst)
     // Repeat state for Option/Command+arrow chords read from GameController,
     // which UIKit does not deliver to the responder on Catalyst.
@@ -993,6 +994,11 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
             object: nil)
         NotificationCenter.default.addObserver(
             self,
+            selector: #selector(windowDidBecomeKey),
+            name: UIWindow.didBecomeKeyNotification,
+            object: nil)
+        NotificationCenter.default.addObserver(
+            self,
             selector: #selector(sceneDidDeactivate(_:)),
             name: UIScene.willDeactivateNotification,
             object: nil)
@@ -1131,12 +1137,16 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         releaseAllPressedKeys(reason: "view resigned first responder")
         discardTextDocument()
         let resigned = super.resignFirstResponder()
-        if resigned { keyboardCapture.setRemoteInputIsFirstResponder(false) }
+        if resigned {
+            stopHardwareKeyboardMonitor()
+            keyboardCapture.setRemoteInputIsFirstResponder(false)
+        }
         return resigned
     }
 
     override func willMove(toWindow newWindow: UIWindow?) {
         if newWindow == nil {
+            stopHardwareKeyboardMonitor()
             keyboardCapture.setRemoteInputIsFirstResponder(false)
             releasePointerDrag()
             releaseTouchHoldDrag()
@@ -1862,9 +1872,8 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
 
     @objc private func hardwareKeyboardDidConnect(_ notification: Notification) {
         onHardwareKeyboardAttachedChange?(true)
-        guard isFirstResponder else { return }
         configureHardwareKeyboardMonitor(
-            for: notification.object as? GCKeyboard ?? GCKeyboard.coalesced)
+            for: GCKeyboard.coalesced ?? notification.object as? GCKeyboard)
     }
 
     @objc private func hardwareKeyboardDidDisconnect(_ notification: Notification) {
@@ -1875,9 +1884,28 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         // keyboards are handled correctly too.
         DispatchQueue.main.async { [weak self] in
             self?.publishHardwareKeyboardAvailability()
-            if self?.isFirstResponder == true {
-                self?.configureHardwareKeyboardMonitor(for: GCKeyboard.coalesced)
-            }
+            self?.configureHardwareKeyboardMonitor(for: GCKeyboard.coalesced)
+        }
+    }
+
+    private var receivesMonitoredKeyboardEvents: Bool {
+        Self.hardwareKeyboardMonitorOwner === self && acceptsHardwareInput
+            && isFirstResponder && window?.isKeyWindow == true && keyboardCapture.isCaptured
+    }
+
+    private func stopHardwareKeyboardMonitor() {
+        guard Self.hardwareKeyboardMonitorOwner === self else { return }
+        monitoredHardwareKeyboardInput?.keyChangedHandler = nil
+        monitoredHardwareKeyboardInput = nil
+        Self.hardwareKeyboardMonitorOwner = nil
+    }
+
+    nonisolated func dispatchMonitoredHardwareEvent(
+        _ action: @escaping @MainActor @Sendable (RemoteInputUIView) -> Void
+    ) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.receivesMonitoredKeyboardEvents else { return }
+            action(self)
         }
     }
 
@@ -1886,24 +1914,25 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
     /// Edges hop through the main queue, which keeps a quick press and
     /// release in order; separate Tasks need not run in order.
     private func configureHardwareKeyboardMonitor(for keyboard: GCKeyboard?) {
+        guard isFirstResponder, window?.isKeyWindow == true else { return }
         let input = keyboard?.keyboardInput
-        monitoredCatalystKeyboardInput?.keyChangedHandler = nil
-        monitoredCatalystKeyboardInput = input
+        if Self.hardwareKeyboardMonitorOwner === self, monitoredHardwareKeyboardInput === input { return }
+        // Every view shares the coalesced keyboard's single callback. Only the
+        // key window's current responder can replace it or clear it.
+        Self.hardwareKeyboardMonitorOwner?.stopHardwareKeyboardMonitor()
+        Self.hardwareKeyboardMonitorOwner = self
+        monitoredHardwareKeyboardInput = input
         input?.keyChangedHandler = { [weak self] keyboard, _, keyCode, pressed in
             let snapshot = Self.gameControllerModifierFlags(keyboard)
             let usage = UInt32(keyCode.rawValue)
-            DispatchQueue.main.async { [weak self] in
-                MainActor.assumeIsolated {
-                    self?.handleMonitoredUniversalKey(usage: usage, pressed: pressed, flags: snapshot)
-                }
+            self?.dispatchMonitoredHardwareEvent { view in
+                view.handleMonitoredUniversalKey(usage: usage, pressed: pressed, flags: snapshot)
             }
             #if targetEnvironment(macCatalyst)
             let held = Self.liveModifierFlags
             if !pressed, (0xE0...0xE7).contains(usage) {
-                DispatchQueue.main.async { [weak self] in
-                    MainActor.assumeIsolated {
-                        self?.releaseCatalystBorrowedModifiers(stillDown: snapshot)
-                    }
+                self?.dispatchMonitoredHardwareEvent { view in
+                    view.releaseCatalystBorrowedModifiers(stillDown: snapshot)
                 }
             }
             let windowChordUsage: UInt32?
@@ -1914,11 +1943,8 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
             default: windowChordUsage = nil
             }
             if let windowChordUsage {
-                DispatchQueue.main.async { [weak self] in
-                    MainActor.assumeIsolated {
-                        self?.handleCatalystWindowChord(
-                            usage: windowChordUsage, pressed: pressed, held: held)
-                    }
+                self?.dispatchMonitoredHardwareEvent { view in
+                    view.handleCatalystWindowChord(usage: windowChordUsage, pressed: pressed, held: held)
                 }
                 return
             }
@@ -1943,15 +1969,9 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
                 // Control(+Option)+arrow is the Spaces/Mission Control shortcut
                 // owned by the standard remote commands; leave it alone.
                 guard (option || command), !control else { return }
-                DispatchQueue.main.async { [weak self] in
-                    MainActor.assumeIsolated {
-                        self?.handleCatalystModifiedArrow(
-                            usage: arrowUsage,
-                            pressed: pressed,
-                            option: option,
-                            command: command,
-                            shift: shift)
-                    }
+                self?.dispatchMonitoredHardwareEvent { view in
+                    view.handleCatalystModifiedArrow(
+                        usage: arrowUsage, pressed: pressed, option: option, command: command, shift: shift)
                 }
                 return
             }
@@ -1967,14 +1987,9 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
             let isExactAlias = held.intersection([.control, .alternate, .shift, .command])
                 == [.control, .alternate]
 
-            DispatchQueue.main.async { [weak self] in
-                MainActor.assumeIsolated {
-                    self?.handleCatalystCommandCompatibilityAlias(
-                        usage: alias.usage,
-                        character: alias.character,
-                        pressed: pressed,
-                        isExactAlias: isExactAlias)
-                }
+            self?.dispatchMonitoredHardwareEvent { view in
+                view.handleCatalystCommandCompatibilityAlias(
+                    usage: alias.usage, character: alias.character, pressed: pressed, isExactAlias: isExactAlias)
             }
             #endif
         }
@@ -2099,7 +2114,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
 
     private func pressPendingCatalystWindowChord(usage: UInt32) {
         guard let held = pendingCatalystWindowChords.removeValue(forKey: usage),
-              isFirstResponder, keyboardCapture.isCaptured,
+              receivesMonitoredKeyboardEvents,
               catalystWindowChordClaims[usage] == nil,
               !hardwareKeyboard.contains(usage: usage) else { return }
         let characters = switch usage {
@@ -2249,7 +2264,8 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
     /// modifiers are still physically held: the arrow from GameController,
     /// the modifiers from the session's live flags.
     private func catalystArrowChordStillHeld(usage: UInt32) -> Bool {
-        guard let input = GCKeyboard.coalesced?.keyboardInput else { return false }
+        guard receivesMonitoredKeyboardEvents,
+              let input = GCKeyboard.coalesced?.keyboardInput else { return false }
         let keyCode: GCKeyCode
         switch usage {
         case 0x52: keyCode = .upArrow
@@ -2766,8 +2782,14 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         releaseAllPressedKeys(reason: "scene inactive or in background")
     }
 
+    @objc private func windowDidBecomeKey(_ notification: Notification) {
+        guard notification.object as AnyObject? === window else { return }
+        configureHardwareKeyboardMonitor(for: GCKeyboard.coalesced)
+    }
+
     @objc private func windowDidResignKey(_ notification: Notification) {
         guard notification.object as AnyObject? === window else { return }
+        stopHardwareKeyboardMonitor()
         releaseAllPressedKeys(reason: "window lost key status")
         releasePointerDrag()
         releaseTouchHoldDrag()
