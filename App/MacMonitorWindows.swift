@@ -48,7 +48,20 @@ final class MacMonitorWindows {
         let restoresSavedWindows = saved.rememberMonitor != false && session.monitorTopology == .standard
         guard let requested = group?.children ?? (restoresSavedWindows ? saved.windowedMonitors : nil),
               !requested.isEmpty else { return nil }
-        return session.selectableMonitorIDs.dropFirst().filter { requested.contains($0) }
+        return splitLayout(availableDisplays: session.selectableMonitorIDs, preferredPrimary: group?.primary,
+                           requestedChildren: requested)?.children ?? []
+    }
+
+    static func splitLayout(availableDisplays: [UInt32], preferredPrimary: UInt32?,
+                            requestedChildren: [UInt32]) -> (primary: UInt32, children: [UInt32])? {
+        let childIDs = Set(requestedChildren)
+        let existingPrimary = preferredPrimary.flatMap { availableDisplays.contains($0) ? $0 : nil }
+        // Keep the current main window on its display. If it vanished, prefer
+        // a display without an existing child window before promoting one.
+        guard let primary = existingPrimary ?? availableDisplays.first(where: { !childIDs.contains($0) })
+                ?? availableDisplays.first else { return nil }
+        let children = availableDisplays.filter { $0 != primary && childIDs.contains($0) }
+        return (primary, children)
     }
 
     func set(_ group: Group, for connection: UUID) { groups[connection] = group }

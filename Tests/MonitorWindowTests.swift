@@ -394,6 +394,28 @@ import SwiftUI
         XCTAssertEqual(group.window(3, connection: computer.id), originalRight)
         XCTAssertEqual(group.region(for: 3), CGRect(x: 200, y: 0, width: 100, height: 80))
 
+        await receive([right, left, center])
+        XCTAssertEqual(session.selectableMonitorIDs, [3, 1, 2])
+        XCTAssertEqual(recover(), [3, 2], "Earlier child windows must survive a changed announcement order")
+        XCTAssertEqual(MacMonitorWindows.desiredChildren(session: session, locked: false, group: nil, saved: saved), [3, 2])
+        let reordered = MacMonitorWindows.splitLayout(availableDisplays: session.selectableMonitorIDs,
+                                                      preferredPrimary: group.primary, requestedChildren: group.children)
+        XCTAssertEqual(reordered?.primary, 1)
+        XCTAssertEqual(reordered?.children, [3, 2])
+        XCTAssertEqual(group.window(3, connection: computer.id), originalRight)
+
+        await receive([right, center])
+        XCTAssertEqual(recover(), [2], "A child can become primary when the old primary disappears")
+        let promoted = MacMonitorWindows.splitLayout(availableDisplays: session.selectableMonitorIDs,
+                                                     preferredPrimary: group.primary, requestedChildren: group.children)
+        XCTAssertEqual(promoted?.primary, 3)
+        XCTAssertEqual(promoted?.children, [2])
+
+        let replacement = MacMonitorWindows.splitLayout(availableDisplays: [2, 4, 3],
+                                                        preferredPrimary: group.primary, requestedChildren: group.children)
+        XCTAssertEqual(replacement?.primary, 4, "A new display can replace the old primary without repurposing a child")
+        XCTAssertEqual(replacement?.children, [2, 3])
+
         await receive([left, center])
         XCTAssertEqual(recover(), [2])
         XCTAssertNil(group.region(for: 3))

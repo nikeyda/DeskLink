@@ -745,18 +745,20 @@ struct SessionScreen: View {
     }
 
     private func showAllMonitorWindows() {
-        let children = Array(session.selectableMonitorIDs.dropFirst())
-        Task { await openMonitorWindows(children, remember: true) }
+        let displays = session.selectableMonitorIDs
+        Task { await openMonitorWindows(displays, remember: true) }
     }
 
     private func openMonitorWindows(_ displays: [UInt32], remember: Bool) async {
         let topology = session.monitorTopology
         let available = session.selectableMonitorIDs
-        let children = available.dropFirst().filter { displays.contains($0) }
-        guard !privacy.locked, !closing, !stopped, let primary = available.first, !children.isEmpty else {
-            return
-        }
-        let previous = monitorGroup?.children ?? []
+        let previousGroup = monitorGroup
+        let preferredPrimary = previousGroup.flatMap { $0.topology == topology ? $0.primary : nil }
+        guard !privacy.locked, !closing, !stopped,
+              let (primary, children) = MacMonitorWindows.splitLayout(
+                  availableDisplays: available, preferredPrimary: preferredPrimary, requestedChildren: displays),
+              !children.isEmpty else { return }
+        let previous = previousGroup?.children ?? []
         do {
             guard try await session.selectMonitor(.all), !Task.isCancelled, !privacy.locked,
                   !closing, !stopped, session.connectionState.isConnected,
