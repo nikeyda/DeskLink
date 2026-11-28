@@ -16,8 +16,7 @@ struct ExternalDisplayMirror: UIViewControllerRepresentable {
 
     func updateUIViewController(_ controller: MirrorController, context: Context) {
         controller.availabilityChanged = availabilityChanged
-        controller.loadViewIfNeeded()
-        controller.registration?.isEnabled = enabled
+        controller.updateOutputRequest(enabled)
     }
 
     static func dismantleUIViewController(_ controller: MirrorController, coordinator: ()) {
@@ -36,6 +35,7 @@ struct ExternalDisplayMirror: UIViewControllerRepresentable {
         let content: MirrorContent
         var registration: UISceneAccessoryRegistration?
         var availabilityChanged: ((Bool) -> Void)?
+        private var outputRequested = false
         private var lastAvailable: Bool?
 
         init(content: MirrorContent) { self.content = content; super.init(nibName: nil, bundle: nil) }
@@ -44,15 +44,31 @@ struct ExternalDisplayMirror: UIViewControllerRepresentable {
         override func viewDidLoad() {
             super.viewDidLoad()
             view.isUserInteractionEnabled = false
+            // On iPhone, AirPlay mirrors the device using the system controls.
+            guard UIDevice.current.userInterfaceIdiom == .pad else { return }
             let configuration = UISceneConfiguration()
             configuration.delegateClass = DeskLinkExternalScene.self
             registration = registerSceneAccessory(.externalNonInteractive(sceneConfiguration: configuration, userInfo: content))
             registration?.isEnabled = false
         }
 
+        func updateOutputRequest(_ enabled: Bool) {
+            outputRequested = enabled
+            loadViewIfNeeded()
+            updateOutput()
+        }
+
         override func updateProperties() {
             super.updateProperties()
+            updateOutput()
+        }
+
+        private func updateOutput() {
             let available = registration?.isAvailable == true && view.window?.windowScene?.screen == UIScreen.main
+            let enabled = available && outputRequested
+            if let registration, registration.isEnabled != enabled {
+                registration.isEnabled = enabled
+            }
             guard available != lastAvailable else { return }
             lastAvailable = available
             Task { @MainActor [weak self] in
