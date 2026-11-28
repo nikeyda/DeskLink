@@ -79,13 +79,13 @@ final class DisconnectWindowTests: XCTestCase {
         window.isHidden = false
         defer { window.isHidden = true; window.rootViewController = nil }
         let initial = try await receipt(from: status) { $0.frames > 0 }
+        // The peer can record its first frame before the client marks the session connected.
+        let deadline = ContinuousClock.now + .seconds(5)
+        while library.archive.computers.first?.lastConnected == nil && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        _ = try XCTUnwrap(library.archive.computers.first?.lastConnected)
         if saveScreenshot && phase != .background {
-            // The peer records its send before UIKit presents the decoded frame.
-            let deadline = ContinuousClock.now + .seconds(5)
-            while library.archive.computers.first?.lastConnected == nil && ContinuousClock.now < deadline {
-                try await Task.sleep(for: .milliseconds(30))
-            }
-            XCTAssertNotNil(library.archive.computers.first?.lastConnected)
             try await Task.sleep(for: .milliseconds(150))
         }
         // Removing the connected SwiftUI view is the window-close path. It has
