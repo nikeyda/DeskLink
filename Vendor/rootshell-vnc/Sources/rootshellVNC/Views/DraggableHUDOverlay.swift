@@ -97,53 +97,38 @@ struct HUDDockGeometry {
     }
 }
 
-/// A stable edge-relative HUD position. Storing a normalized vertical
-/// location instead of an absolute center means a docked control follows
-/// keyboard, rotation, split, and full-screen size changes.
-struct HUDDockPosition: Equatable, Sendable {
-    enum Side: Equatable, Sendable {
-        case leading
-        case trailing
-    }
+/// Stores the floating HUD's placement relative to the space available at
+/// its current size, so expanding or showing a keyboard cannot lose its position.
+private struct HUDFloatingPosition {
+    private var horizontalFraction: CGFloat = 1
+    private var verticalFraction: CGFloat = 1
 
-    var side: Side
-    var verticalFraction: CGFloat
-
-    static let bottomTrailing = HUDDockPosition(
-        side: .trailing,
-        verticalFraction: 1)
-
-    init(side: Side, verticalFraction: CGFloat) {
-        self.side = side
-        self.verticalFraction = Self.clampedUnit(verticalFraction)
-    }
-
-    func center(in allowedCenterRect: CGRect) -> CGPoint {
-        CGPoint(
-            x: side == .leading
-                ? allowedCenterRect.minX
-                : allowedCenterRect.maxX,
+    func center(in allowedCenterRect: CGRect, contentWidth: CGFloat) -> CGPoint {
+        // Keep the trailing controls at the same position through expansion
+        // until the wider bar would run past the opposite edge.
+        Self.clamp(CGPoint(
+            x: allowedCenterRect.minX
+                + (allowedCenterRect.width + contentWidth) * horizontalFraction - contentWidth,
             y: allowedCenterRect.minY
-                + allowedCenterRect.height * verticalFraction)
+                + allowedCenterRect.height * verticalFraction),
+            to: allowedCenterRect)
     }
 
-    static func docked(
-        at center: CGPoint,
-        in allowedCenterRect: CGRect
-    ) -> HUDDockPosition {
-        let side: Side = center.x < allowedCenterRect.midX
-            ? .leading
-            : .trailing
-        let verticalFraction: CGFloat
+    mutating func place(at center: CGPoint, in allowedCenterRect: CGRect,
+                        contentWidth: CGFloat, movement: VNCHUDFloatingMovement) {
+        switch movement {
+        case .snapToEdge:
+            horizontalFraction = center.x < allowedCenterRect.midX ? 0 : 1
+        case .free where allowedCenterRect.width > 0:
+            horizontalFraction = (center.x - allowedCenterRect.minX + contentWidth)
+                / (allowedCenterRect.width + contentWidth)
+        case .free, .vertical:
+            break
+        }
         if allowedCenterRect.height > 0 {
             verticalFraction = (center.y - allowedCenterRect.minY)
                 / allowedCenterRect.height
-        } else {
-            verticalFraction = 0.5
         }
-        return HUDDockPosition(
-            side: side,
-            verticalFraction: verticalFraction)
     }
 
     static func clamp(
@@ -154,11 +139,13 @@ struct HUDDockPosition: Equatable, Sendable {
             x: min(max(center.x, allowedCenterRect.minX), allowedCenterRect.maxX),
             y: min(max(center.y, allowedCenterRect.minY), allowedCenterRect.maxY))
     }
+}
 
-    private static func clampedUnit(_ value: CGFloat) -> CGFloat {
-        guard value.isFinite else { return 0.5 }
-        return min(max(value, 0), 1)
-    }
+/// How a floating HUD can be repositioned within the remote viewport.
+public enum VNCHUDFloatingMovement: Sendable {
+    case snapToEdge
+    case vertical
+    case free
 }
 
 #if canImport(UIKit)
@@ -218,6 +205,7 @@ struct DraggableHUDOverlay<Content: View>: UIViewRepresentable {
     /// Set to pin the HUD along the bottom instead of letting it float: the
     /// height of its bottom row, which is what the screen is kept clear of.
     var pinnedRowHeight: CGFloat?
+    var floatingMovement: VNCHUDFloatingMovement = .snapToEdge
     var onUpwardSwipe: ((CGPoint, UIView) -> Void)?
     /// Height at the bottom that a pinned HUD occupies; 0 while it floats.
     var onReserveChange: ((CGFloat) -> Void)?
@@ -230,6 +218,7 @@ struct DraggableHUDOverlay<Content: View>: UIViewRepresentable {
         view.inset = inset
         view.safeAreaEdges = safeAreaEdges
         view.pinnedRowHeight = pinnedRowHeight
+        view.floatingMovement = floatingMovement
         view.onUpwardSwipe = onUpwardSwipe
         view.onReserveChange = onReserveChange
         view.onFrameChange = onFrameChange
@@ -259,6 +248,7 @@ struct DraggableHUDOverlay<Content: View>: UIViewRepresentable {
         uiView.inset = inset
         uiView.safeAreaEdges = safeAreaEdges
         uiView.pinnedRowHeight = pinnedRowHeight
+        uiView.floatingMovement = floatingMovement
         uiView.onUpwardSwipe = onUpwardSwipe
         uiView.onReserveChange = onReserveChange
         uiView.onFrameChange = onFrameChange
@@ -333,6 +323,7 @@ final class DraggableHUDOverlayHostView: UIView {
     var inset: CGFloat = 12
     var safeAreaEdges: Edge.Set = .all
     var pinnedRowHeight: CGFloat?
+    var floatingMovement: VNCHUDFloatingMovement = .snapToEdge
     var onUpwardSwipe: ((CGPoint, UIView) -> Void)? {
         didSet {
             let enabled = onUpwardSwipe != nil
@@ -345,10 +336,7 @@ final class DraggableHUDOverlayHostView: UIView {
     var onFrameChange: ((CGRect) -> Void)?
     private var reportedFrame = CGRect.null
 
-    /// Edge-relative state, rather than an absolute center, prevents a HUD
-    /// clamped above the software keyboard from staying in the middle after
-    /// the keyboard disappears.
-    private var dockPosition = HUDDockPosition.bottomTrailing
+    private var floatingPosition = HUDFloatingPosition()
     private var isDragging = false
 
     // MARK: VC containment
@@ -375,6 +363,14 @@ final class DraggableHUDOverlayHostView: UIView {
     }
 
     // MARK: Dragging
+
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard floatingMovement == .vertical, let pan = gestureRecognizer as? UIPanGestureRecognizer else {
+            return super.gestureRecognizerShouldBegin(gestureRecognizer)
+        }
+        let direction = pan.velocity(in: self)
+        return abs(direction.y) > abs(direction.x)
+    }
 
     func attachPan() {
         guard let bar = hostedView else { return }
@@ -405,9 +401,9 @@ final class DraggableHUDOverlayHostView: UIView {
         // A pinned HUD stays put.
         guard pinnedRowHeight == nil, let bar = hostedView else { return }
         let translation = gesture.translation(in: self)
-        let nextCenter = HUDDockPosition.clamp(
+        let nextCenter = HUDFloatingPosition.clamp(
             CGPoint(
-                x: bar.center.x + translation.x,
+                x: bar.center.x + (floatingMovement == .vertical ? 0 : translation.x),
                 y: bar.center.y + translation.y),
             to: allowedCenterRect(for: bar.bounds.size))
 
@@ -429,18 +425,19 @@ final class DraggableHUDOverlayHostView: UIView {
             isDragging = false
             bar.center = nextCenter
             let allowedRect = allowedCenterRect(for: bar.bounds.size)
-            dockPosition = HUDDockPosition.docked(
-                at: bar.center,
-                in: allowedRect)
-            let targetCenter = dockPosition.center(in: allowedRect)
-            UIView.animate(
-                withDuration: 0.28,
-                delay: 0,
-                usingSpringWithDamping: 0.82,
-                initialSpringVelocity: 0.25,
-                options: [.allowUserInteraction, .beginFromCurrentState]
-            ) {
-                bar.center = targetCenter
+            floatingPosition.place(at: bar.center, in: allowedRect,
+                                   contentWidth: bar.bounds.width, movement: floatingMovement)
+            if floatingMovement == .snapToEdge {
+                let targetCenter = floatingPosition.center(in: allowedRect, contentWidth: bar.bounds.width)
+                UIView.animate(
+                    withDuration: 0.28,
+                    delay: 0,
+                    usingSpringWithDamping: 0.82,
+                    initialSpringVelocity: 0.25,
+                    options: [.allowUserInteraction, .beginFromCurrentState]
+                ) {
+                    bar.center = targetCenter
+                }
             }
         default:
             break
@@ -482,7 +479,7 @@ final class DraggableHUDOverlayHostView: UIView {
         _ center: CGPoint,
         size: CGSize
     ) -> CGPoint {
-        HUDDockPosition.clamp(
+        HUDFloatingPosition.clamp(
             center,
             to: allowedCenterRect(for: size))
     }
@@ -505,8 +502,8 @@ final class DraggableHUDOverlayHostView: UIView {
             bar.center = preserveDragCenter(center, size: size)
         } else {
             bar.bounds = CGRect(origin: .zero, size: size)
-            bar.center = dockPosition.center(
-                in: allowedCenterRect(for: size))
+            bar.center = floatingPosition.center(
+                in: allowedCenterRect(for: size), contentWidth: size.width)
         }
     }
 

@@ -1774,7 +1774,8 @@ final class SessionUITests: XCTestCase {
         app.launch()
     }
 
-    func testFloatingToolbarCanCollapseAndStillSendKeysAfterExpanding() async throws {
+    func testFloatingToolbarMovesFreelyWhenCollapsedAndVerticallyWhenExpanded() async throws {
+        continueAfterFailure = false
         let desktop = LocalTestDisplay()
         let port = try await desktop.start()
         defer { desktop.stop() }
@@ -1786,6 +1787,19 @@ final class SessionUITests: XCTestCase {
         XCTAssertTrue(disclosure.waitForExistence(timeout: 5))
         disclosure.tap()
         XCTAssertTrue(tab.waitForNonExistence(timeout: 5))
+
+        func dragDisclosure(by offset: CGVector) {
+            let handle = disclosure.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
+            handle.press(forDuration: 0.05, thenDragTo: handle.withOffset(offset))
+        }
+
+        let original = disclosure.frame
+        dragDisclosure(by: .init(dx: -100, dy: -220))
+        try await waitUntil(timeout: 5) {
+            abs(disclosure.frame.midX - (original.midX - 100)) < 24
+                && abs(disclosure.frame.midY - (original.midY - 220)) < 24
+        }
+        let collapsed = disclosure.frame
         disclosure.press(forDuration: 1)
         XCTAssertTrue(app.buttons["显示键盘"].firstMatch.waitForExistence(timeout: 4))
         app.buttons["远程快捷命令"].firstMatch.tap()
@@ -1795,9 +1809,54 @@ final class SessionUITests: XCTestCase {
         try await waitUntil { desktop.keyDowns == [0xFF63] }
         disclosure.tap()
         XCTAssertTrue(tab.waitForExistence(timeout: 5))
+        let expanded = disclosure.frame
+        XCTAssertEqual(expanded.midX, collapsed.midX, accuracy: 3)
+        XCTAssertEqual(expanded.midY, collapsed.midY, accuracy: 3)
+        dragDisclosure(by: .init(dx: -110, dy: -120))
+        try await waitUntil(timeout: 5) { disclosure.frame.midY < expanded.midY - 90 }
+        XCTAssertEqual(disclosure.frame.midX, expanded.midX, accuracy: 3)
+        let moved = disclosure.frame
         tab.tap()
         try await waitUntil { desktop.keyDowns == [0xFF63, 0xFF09] }
         attachToolbarScreenshot(app, name: "iPad floating toolbar")
+        disclosure.tap()
+        XCTAssertTrue(tab.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(disclosure.frame.midX, collapsed.midX, accuracy: 3)
+        XCTAssertEqual(disclosure.frame.midY, moved.midY, accuracy: 3)
+        XCTAssertEqual(desktop.clicks, 0)
+        XCTAssertEqual(desktop.acceptedConnections, 1)
+        app.buttons["session.close"].tap()
+    }
+
+    func testExpandedFloatingToolbarScrollsWithoutMovingOrSendingPointerEvents() async throws {
+        continueAfterFailure = false
+        let desktop = LocalTestDisplay()
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--test-library", UUID().uuidString, "-toolbar.iPad.style", "floating",
+            "-toolbar.iPad.size", "extraLarge", "-toolbar.iPad.keyboardTrailing", "NO",
+            "-toolbar.iPad.buttons", "escape,tab,shift,control,option,command,arrows,home,end,pageUp,pageDown,edit,shortcuts,functions,f5"
+        ]
+        app.launch()
+        connectChart(app, port: port)
+        let disclosure = app.buttons["toolbar.expand"]
+        let tab = app.buttons["toolbar.tab"]
+        let f5 = app.buttons["toolbar.f5"]
+        try await waitUntil { desktop.frameCount > 0 && disclosure.exists && tab.isHittable }
+        XCTAssertFalse(f5.isHittable)
+        let position = disclosure.frame
+        let scrollStart = tab.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
+            .withOffset(.init(dx: 300, dy: 0))
+        scrollStart.press(forDuration: 0.05, thenDragTo: scrollStart.withOffset(.init(dx: -370, dy: 0)))
+        try await waitUntil(timeout: 5) { f5.isHittable }
+        XCTAssertEqual(disclosure.frame.midX, position.midX, accuracy: 3)
+        XCTAssertEqual(disclosure.frame.midY, position.midY, accuracy: 3)
+        XCTAssertEqual(desktop.clicks, 0)
+        XCTAssertTrue(desktop.keyDowns.isEmpty)
+        f5.tap()
+        try await waitUntil { desktop.keyDowns == [0xFFC2] }
         app.buttons["session.close"].tap()
     }
 

@@ -320,10 +320,12 @@ public struct RemoteDesktopView: View {
     /// across the whole bar, taking the width it may use. `buttonStyle` sizes
     /// every button from that width. `docksToBottom` pins the bar along the bottom and fits the
     /// screen above it, though zoomed content still shows through underneath.
+    /// `floatingMovement` controls repositioning while the bar is unpinned.
     /// `providesKeyboardButton` drops the menu's own Show Keyboard item.
     public func hudAccessory<Behind: View, Beside: View>(
         isEnabled: Bool = true,
         docksToBottom: Bool = false,
+        floatingMovement: VNCHUDFloatingMovement = .snapToEdge,
         providesKeyboardButton: Bool = false,
         onUpwardSwipe: ((CGPoint, UIView) -> Void)? = nil,
         buttonStyle: @escaping (_ availableWidth: CGFloat) -> VNCHUDButtonStyle,
@@ -334,6 +336,7 @@ public struct RemoteDesktopView: View {
         var copy = self
         copy.hudAccessory = HUDAccessory(
             docksToBottom: docksToBottom,
+            floatingMovement: floatingMovement,
             providesKeyboardButton: providesKeyboardButton,
             onUpwardSwipe: onUpwardSwipe,
             buttonStyle: buttonStyle,
@@ -705,6 +708,7 @@ public struct RemoteDesktopView: View {
                     safeAreaEdges: hudSafeAreaEdges,
                     pinnedRowHeight: hudAccessory?.docksToBottom == true
                         ? hudAccessory?.buttonStyle(available).size.height : nil,
+                    floatingMovement: hudAccessory?.floatingMovement ?? .snapToEdge,
                     onUpwardSwipe: hudAccessory?.onUpwardSwipe,
                     onReserveChange: { hudReserve = $0 },
                     onFrameChange: { [hudFrame] in hudFrame.frame = $0 }

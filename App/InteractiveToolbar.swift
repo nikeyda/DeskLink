@@ -399,6 +399,7 @@ struct InteractiveDesktop<SessionHeader: View>: View {
             .hidesHUD(deck != nil || !bar.visible)
             .onPencilToolbarAction { action, point in bar.handle(action, at: point, style: style) }
             .hudAccessory(isEnabled: style != .carousel && !docksToLeading, docksToBottom: style == .docked,
+                          floatingMovement: bar.expanded ? .vertical : .free,
                           providesKeyboardButton: true,
                           onUpwardSwipe: keyboardEdgeSwipe,
                           buttonStyle: { _ in size.buttonStyle }) { width in
