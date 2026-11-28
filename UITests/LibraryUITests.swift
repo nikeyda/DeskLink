@@ -505,7 +505,7 @@ final class LibraryUITests: XCTestCase {
         app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]
         app.launchEnvironment["DESKLINK_TEST_TAILNET_LISTING"] = #"""
         {"devices":[
-          {"id":"profile-studio","hostname":"Fixture Studio","name":"studio.fixture.invalid","addresses":["100.64.7.19"],"os":"macOS","authorized":true},
+          {"id":"profile-studio","hostname":"Fixture Studio","name":"studio.fixture.invalid.","addresses":["100.64.7.19","fd7a:115c:a1e0::19"],"os":"macOS","authorized":true},
           {"id":"mobile","hostname":"Fixture iPad","name":"ipad.fixture.invalid","addresses":["100.64.7.21"],"os":"iOS"}
         ]}
         """#
@@ -514,17 +514,17 @@ final class LibraryUITests: XCTestCase {
 
         let firstID = UUID().uuidString
         let secondID = UUID().uuidString
-        func record(id: String, name: String, account: String) -> [String: Any] {
+        func record(id: String, name: String, host: String, account: String) -> [String: Any] {
             [
                 "version": 6, "id": id, "type": ["saved": [:] as [String: String]], "name": name,
-                "hostname": "100.64.7.19", "port": 5900, "clientProtocol": "vnc",
+                "hostname": host, "port": 5900, "clientProtocol": "vnc",
                 "users": [["username": account]], "authenticationMethod": 1, "operatingSystem": 1,
                 "startInObserveMode": false, "onDisconnectAction": 0,
                 "useSharedClipboard": true, "useSecureConnection": false
             ]
         }
-        let records = [record(id: firstID, name: "Fixture Support", account: "support-fixture"),
-                       record(id: secondID, name: "Fixture Operator", account: "operator-fixture")]
+        let records = [record(id: firstID, name: "Fixture Support", host: "studio.fixture.invalid", account: "support-fixture"),
+                       record(id: secondID, name: "Fixture Operator", host: "fd7a:115c:a1e0:0:0:0:0:19", account: "operator-fixture")]
         let file = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString + ".screens")
         defer { try? FileManager.default.removeItem(at: file) }
         try JSONSerialization.data(withJSONObject: ["filename": "Profile choices", "screens": records, "folders": []])
@@ -551,7 +551,20 @@ final class LibraryUITests: XCTestCase {
         let username = app.textFields["connection.username"].firstMatch
         XCTAssertTrue(username.waitForExistence(timeout: 8))
         XCTAssertEqual(username.value as? String, "operator-fixture")
-        XCTAssertEqual(app.textFields["connection.host"].firstMatch.value as? String, "100.64.7.19")
+        XCTAssertEqual(app.textFields["connection.host"].firstMatch.value as? String, "fd7a:115c:a1e0:0:0:0:0:19")
+        app.navigationBars.buttons["取消"].firstMatch.tap()
+
+        XCTAssertTrue(device.waitForExistence(timeout: 8))
+        device.press(forDuration: 0.8)
+        let save = app.buttons["保存到连接库"].firstMatch
+        XCTAssertTrue(save.waitForExistence(timeout: 8))
+        save.tap()
+        XCTAssertTrue(support.waitForExistence(timeout: 8))
+        support.tap()
+        XCTAssertTrue(username.waitForExistence(timeout: 8))
+        XCTAssertEqual(username.value as? String, "support-fixture")
+        XCTAssertEqual(app.textFields["connection.host"].firstMatch.value as? String, "studio.fixture.invalid")
+        XCTAssertEqual(app.buttons["connection.submit"].firstMatch.label, "保存")
         app.navigationBars.buttons["取消"].firstMatch.tap()
 
         app.buttons["library.quick"].firstMatch.tap()

@@ -7,8 +7,8 @@ struct TailnetView: View {
     var query: LibrarySearchQuery
     var listLayout: Bool
     var gridColumns: [GridItem]
-    var select: (Computer, UInt16?, PictureQuality?) -> Void
-    var save: (Computer, UInt16?) -> Void
+    var select: (Computer, UInt16?, PictureQuality?, Set<Endpoint>) -> Void
+    var save: (Computer, UInt16?, Set<Endpoint>) -> Void
     @State private var selectedDevice: String?
     @State private var editing = false
     @State private var unlinking = false
@@ -204,7 +204,7 @@ struct TailnetView: View {
         return DiscoveredConnectionItem(id: "tailnet.device." + device.id, selection: $selectedDevice,
                                         cornerRadius: listLayout ? 8 : 16, endpoint: computer.endpoint,
                                         offersHighPerformance: system.offersHighPerformance) { quality in
-            select(computer, ports?.ssh, quality)
+            select(computer, ports?.ssh, quality, device.advertisedEndpoints(port: computer.endpoint.port))
         } label: {
             if listLayout {
                 Label {
@@ -218,7 +218,9 @@ struct TailnetView: View {
                 ConnectionTile(name: computer.displayName, address: details, symbol: system.symbol, folder: folderName)
             }
         } actions: {
-            Button("保存到连接库") { save(computer, ports?.ssh) }
+            Button("保存到连接库") {
+                save(computer, ports?.ssh, device.advertisedEndpoints(port: computer.endpoint.port))
+            }
             if let id {
                 let destinations = directory.folders.filter { $0.id != membership }
                 if !destinations.isEmpty {
@@ -266,9 +268,8 @@ struct TailnetView: View {
     }
 
     private func matches(_ item: TailnetDevice) -> Bool {
-        let endpoint = directory.computer(for: item)?.endpoint
-        let fields = [item.hostname, item.name, item.desktopSystem?.name, endpoint?.address, endpoint.map { String($0.port) }]
-        return query.matches(fields + item.addresses.map(Optional.some))
+        guard let computer = directory.computer(for: item) else { return false }
+        return item.matches(query, computer: computer)
     }
 }
 

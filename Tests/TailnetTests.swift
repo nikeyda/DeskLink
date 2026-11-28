@@ -88,6 +88,68 @@ final class TailnetTests: XCTestCase {
         XCTAssertTrue(directory.searchMatches(query).isEmpty)
     }
 
+    @MainActor func testDiscoveredProfilesUseAdvertisedAddressesAtTheConfiguredDesktopPort() async throws {
+        let domain = "TelescopeTailnetProfiles." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        let root = FileManager.default.temporaryDirectory.appending(path: domain, directoryHint: .isDirectory)
+        defer {
+            defaults.removePersistentDomain(forName: domain)
+            try? FileManager.default.removeItem(at: root)
+        }
+        let service = DirectoryFixture()
+        await service.changeListing(to: #"""
+        {"devices":[
+          {"id":"studio","hostname":"Studio","name":"studio.lab.ts.net.","addresses":["100.64.70.1","fd7a:115c:a1e0::9","not-a-node"],"os":"macOS"}
+        ]}
+        """#)
+        let directory = TailnetDirectory(defaults: defaults, localAddresses: []) { try await service.reply(to: $0) }
+        try await directory.link(TailnetAccount(tailnet: "fixture.example", clientID: "fixture"),
+                                 secret: "fixture-only", remember: false)
+        let device = try XCTUnwrap(directory.visibleDevices.first)
+        try directory.setPorts(TailnetDevicePorts(vnc: "5917", ssh: "2207"),
+                               for: try XCTUnwrap(directory.directoryID(for: device)))
+
+        let match = try XCTUnwrap(directory.searchMatches(LibrarySearchQuery("[fd7a:115c:a1e0::9]:5917")).first)
+        XCTAssertEqual(match.computer.endpoint, try Endpoint(address: "100.64.70.1:5917"))
+        XCTAssertEqual(match.advertisedEndpoints, Set(try [
+            "100.64.70.1:5917", "[fd7a:115c:a1e0::9]:5917", "studio.lab.ts.net:5917", "studio.lab.ts.net.:5917",
+        ].map { try Endpoint(address: $0) }))
+        XCTAssertTrue(directory.searchMatches(LibrarySearchQuery("[fd7a:115c:a1e0::9]:5900")).isEmpty)
+
+        let library = ConnectionLibrary(file: root.appending(path: "library.json"))
+        var magicDNS = Computer(name: "Support", endpoint: try Endpoint(address: "studio.lab.ts.net:5917"))
+        magicDNS.username = "support"
+        magicDNS.ssh = SSHSettings(port: 2231, username: "jump", server: "jump.fixture.invalid")
+        let ipv6 = Computer(name: "Operator", endpoint: try Endpoint(address: "[fd7a:115c:a1e0:0:0:0:0:9]:5917"))
+        let otherPort = Computer(name: "Other server", endpoint: try Endpoint(address: "studio.lab.ts.net:5901"))
+        let shortName = Computer(name: "Another Studio", endpoint: try Endpoint(address: "studio:5917"))
+        for profile in [magicDNS, ipv6, otherPort, shortName] { XCTAssertTrue(library.save(profile)) }
+
+        let request = EditorRequest.connectingToDiscovered(match.computer, in: library, suggestedSSHPort: match.sshPort,
+                                                           quality: .standard, resolvedAddresses: match.advertisedEndpoints)
+        XCTAssertFalse(request.loadsStoredCredentials)
+        let chooser = try XCTUnwrap(request.discoveredSelection)
+        XCTAssertEqual(Set(chooser.profiles(in: library).map(\.id)), [magicDNS.id, ipv6.id])
+        let selected = try XCTUnwrap(chooser.editor(selecting: magicDNS, in: library))
+        XCTAssertEqual(selected.computer?.id, magicDNS.id)
+        XCTAssertEqual(selected.computer?.endpoint, magicDNS.endpoint)
+        XCTAssertEqual(selected.computer?.username, magicDNS.username)
+        XCTAssertEqual(selected.computer?.ssh, magicDNS.ssh)
+        XCTAssertTrue(selected.loadsStoredCredentials)
+        let manual = try XCTUnwrap(chooser.editor(selecting: nil, in: library))
+        XCTAssertEqual(manual.computer?.endpoint, match.computer.endpoint)
+        XCTAssertEqual(manual.suggestedSSHPort, 2207)
+        XCTAssertFalse(manual.loadsStoredCredentials)
+
+        let save = DiscoveredProfileSelection(computer: match.computer, suggestedSSHPort: match.sshPort, intent: .save,
+                                              resolvedAddresses: match.advertisedEndpoints).request(in: library)
+        let saveChooser = try XCTUnwrap(save.discoveredSelection)
+        let edit = try XCTUnwrap(saveChooser.editor(selecting: ipv6, in: library))
+        XCTAssertEqual(edit.purpose, .edit)
+        XCTAssertEqual(edit.computer?.id, ipv6.id)
+        XCTAssertEqual(edit.computer?.endpoint, ipv6.endpoint)
+    }
+
     func testAccountRejectsPathInjectionAndEscapesFormFields() throws {
         for invalid in ["", ".", "..", "example/other", "x?bearer", "//example", "two words"] {
             XCTAssertThrowsError(try TailnetAccount(tailnet: invalid, clientID: "id"))

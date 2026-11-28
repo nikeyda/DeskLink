@@ -111,7 +111,7 @@ struct QuickConnectDevicePicker: View {
             }
             ForEach(results) { entry in
                 Button {
-                    choose(entry.computer, sshPort: entry.sshPort)
+                    choose(entry.computer, sshPort: entry.sshPort, resolvedAddresses: entry.advertisedEndpoints)
                 } label: {
                     computerLabel(entry.computer.displayName, address: entry.system.details(address: entry.computer.endpoint.address),
                                   symbol: entry.system.symbol)

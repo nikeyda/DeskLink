@@ -739,7 +739,8 @@ struct LibraryWindow: View {
                         ForEach(peers) { item in
                             Button {
                                 endUnifiedSearch()
-                                openDiscovered(item.computer, suggestedSSHPort: item.sshPort, quality: nil)
+                                openDiscovered(item.computer, suggestedSSHPort: item.sshPort, quality: nil,
+                                               resolvedAddresses: item.advertisedEndpoints)
                             } label: {
                                 searchLabel(item.computer.displayName, address: item.system.details(address: item.computer.endpoint.address),
                                             folder: item.folder, symbol: item.system.symbol)
@@ -749,11 +750,13 @@ struct LibraryWindow: View {
                             .contextMenu {
                                 DiscoveredConnectionActions(offersHighPerformance: item.offersHighPerformance) { quality in
                                     endUnifiedSearch()
-                                    openDiscovered(item.computer, suggestedSSHPort: item.sshPort, quality: quality)
+                                    openDiscovered(item.computer, suggestedSSHPort: item.sshPort, quality: quality,
+                                                   resolvedAddresses: item.advertisedEndpoints)
                                 }
                                 Button("保存到连接库") {
                                     endUnifiedSearch()
-                                    saveDiscovered(item.computer, suggestedSSHPort: item.sshPort)
+                                    saveDiscovered(item.computer, suggestedSSHPort: item.sshPort,
+                                                   resolvedAddresses: item.advertisedEndpoints)
                                 }
                             }
                         }
@@ -828,8 +831,12 @@ struct LibraryWindow: View {
         if page == .tailscale {
             TailnetView(directory: tailnet, archiveFolders: library.archive.screensDirectoryFolders?.tailscale ?? [],
                         query: categoryQuery, listLayout: listLayout, gridColumns: gridColumns,
-                        select: { openDiscovered($0, suggestedSSHPort: $1, quality: $2) },
-                        save: { saveDiscovered($0, suggestedSSHPort: $1) })
+                        select: { computer, sshPort, quality, addresses in
+                            openDiscovered(computer, suggestedSSHPort: sshPort, quality: quality, resolvedAddresses: addresses)
+                        },
+                        save: { computer, sshPort, addresses in
+                            saveDiscovered(computer, suggestedSSHPort: sshPort, resolvedAddresses: addresses)
+                        })
         } else if page == .nearby {
             let query = categoryQuery
             let results = nearby.entries.filter { $0.matches(query) }

@@ -128,6 +128,29 @@ struct TailnetDevice: Decodable, Identifiable, Sendable {
         return desktopSystem.computer(name: hostname.isEmpty ? name : hostname, endpoint: address)
     }
 
+    func advertisedEndpoints(port: UInt16) -> Set<Endpoint> {
+        var hosts = addresses.filter {
+            switch NWEndpoint.Host($0) {
+            case .ipv4, .ipv6: true
+            default: false
+            }
+        }
+        // The short machine name can also resolve outside this Tailnet.
+        let qualifiedName = name.hasSuffix(".") ? String(name.dropLast()) : name
+        if qualifiedName.contains("."), let host = try? Endpoint.hostOnly(qualifiedName) {
+            hosts.append(host)
+            hosts.append(host + ".")
+        }
+        return Set(hosts.compactMap { try? Endpoint(address: $0, defaultPort: port) })
+    }
+
+    func matches(_ query: LibrarySearchQuery, computer: Computer, folder: String? = nil) -> Bool {
+        guard !query.isEmpty else { return true }
+        let fields = [hostname, name, desktopSystem?.name, folder, computer.endpoint.address, String(computer.endpoint.port)]
+        let sockets = advertisedEndpoints(port: computer.endpoint.port).map(\.address)
+        return query.matches(fields + (addresses + sockets).map(Optional.some))
+    }
+
     func directoryID(in account: TailnetAccount) -> UUID? {
         guard !id.isEmpty else { return nil }
         // The same node keeps its identity across renames and address changes.
@@ -172,6 +195,7 @@ struct TailnetSearchMatch: Identifiable, Equatable {
     let folder: String?
     let sshPort: UInt16?
     let system: TailnetDevice.DesktopSystem
+    let advertisedEndpoints: Set<Endpoint>
     var offersHighPerformance: Bool { system.offersHighPerformance }
 }
 
@@ -240,11 +264,11 @@ final class TailnetDirectory {
         return visibleDevices.compactMap { device in
             guard let computer = computer(for: device), let system = device.desktopSystem else { return nil }
             let folder = folderID(for: device).flatMap { names[$0] }
-            let fields: [String?] = [device.hostname, device.name, computer.endpoint.address, folder, system.name]
-            guard query.matches(fields + device.addresses.map(Optional.some)) else { return nil }
+            guard device.matches(query, computer: computer, folder: folder) else { return nil }
             let sshPort = directoryID(for: device).flatMap { ports(for: $0)?.ssh }
             return TailnetSearchMatch(id: device.id, computer: computer, folder: folder,
-                                      sshPort: sshPort, system: system)
+                                      sshPort: sshPort, system: system,
+                                      advertisedEndpoints: device.advertisedEndpoints(port: computer.endpoint.port))
         }
     }
 
