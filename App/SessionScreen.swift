@@ -612,7 +612,8 @@ struct SessionScreen: View {
     }
 
     private func syncTransferPermission() {
-        session.configuration.allowsFileTransfers = transfers && !observing && !privacy.locked
+        session.fileTransfers.setNewTransfersSuspended(privacy.locked)
+        session.configuration.allowsFileTransfers = transfers && !observing
         session.configuration.automaticCurtainMessage = observing || privacy.locked ? nil : request.computer.automaticCurtainMessage
     }
 

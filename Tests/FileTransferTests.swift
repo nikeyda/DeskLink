@@ -292,6 +292,70 @@ final class FileTransferTests: XCTestCase {
     }
     #endif
 
+    func testSuspendingNewTransfersPreservesAnAcceptedDownloadAndCancelsAnUnfinishedDrag() async throws {
+        let store = VNCDownloadStore(root: try temporaryFolder())
+        let controller = VNCFileTransferController(downloadStore: store)
+        let session = VNCSession(configuration: VNCConfiguration())
+        controller.session = session
+        controller.updateSupport(upload: true, download: true)
+        let downloadID = controller.startDownload(paths: ["/Fixture/accepted.txt"], dragImage: nil)
+        receive([.item(session: 1, .init(kind: .file, name: "accepted.txt", level: 0, dataSize: 4)),
+                 .fileData(session: 1, Data([1, 2]))], in: controller)
+        let local = try temporaryFolder().appending(path: "dropped.txt")
+        try Data([5, 6]).write(to: local)
+        let provider = NSItemProvider()
+        provider.suggestedName = local.lastPathComponent
+        provider.registerFileRepresentation(forTypeIdentifier: UTType.data.identifier, fileOptions: [], visibility: .all) { completion in
+            completion(local, false, nil)
+            return nil
+        }
+        XCTAssertTrue(controller.beginUploadDrag(names: [local.lastPathComponent], x: 20, y: 20))
+        let uploadID = try XCTUnwrap(controller.transfers.last?.id)
+        controller.dropUpload(itemProviders: [provider], x: 40, y: 40)
+        XCTAssertTrue(controller.beginUploadDrag(names: ["not-dropped.txt"], x: 20, y: 20))
+        XCTAssertEqual(controller.transfers.last?.state, .dragging)
+
+        controller.setNewTransfersSuspended(true)
+        XCTAssertFalse(controller.canUpload)
+        XCTAssertFalse(controller.canDownload)
+        XCTAssertEqual(controller.transfers.map(\.id), [downloadID, uploadID])
+        XCTAssertEqual(controller.transfers.first?.state, .transferring)
+        XCTAssertEqual(controller.transfers.last?.state, .preparing)
+        XCTAssertFalse(controller.beginUploadDrag(names: ["blocked.txt"], x: 20, y: 20))
+        controller.observePointer(buttonMask: 1, x: 20, y: 20)
+        controller.handle(Wire.DragOutReply(handle: 1, paths: ["/Fixture/blocked.txt"], dragImagePNG: nil))
+        XCTAssertFalse(controller.showsDragOutTarget)
+        let unrequested = Wire.ServerMessage.item(session: 99, .init(kind: .file, name: "blocked.txt", level: 0, dataSize: 4))
+        receive([unrequested, .fileData(session: 99, Data([5, 6, 7, 8])),
+                 .fileData(session: 1, Data([3, 4])), .end(session: 1, status: 0)], in: controller)
+        try await waitUntil { controller.transfers.first?.state == .completed }
+        await store.refresh()
+        try await waitUntil { store.downloads.count == 1 }
+        let file = try XCTUnwrap(store.downloads.first?.url)
+        XCTAssertEqual(file.lastPathComponent, "accepted.txt")
+        XCTAssertEqual(try Data(contentsOf: file), Data([1, 2, 3, 4]))
+
+        controller.setNewTransfersSuspended(false)
+        XCTAssertTrue(controller.canUpload)
+        XCTAssertTrue(controller.canDownload)
+        controller.cancel(uploadID)
+        XCTAssertEqual(controller.transfers.last?.state, .cancelled)
+        withExtendedLifetime(session) {}
+    }
+
+    func testExplicitlyDisablingTransfersStillCancelsAStartedTransferWhileSuspended() throws {
+        let controller = VNCFileTransferController(downloadStore: VNCDownloadStore(root: try temporaryFolder()))
+        controller.updateSupport(upload: true, download: true)
+        let id = controller.startDownload(paths: ["/Fixture/cancelled.txt"], dragImage: nil)
+        controller.setNewTransfersSuspended(true)
+        controller.setAllowed(false)
+        controller.setNewTransfersSuspended(false)
+        XCTAssertFalse(controller.canUpload)
+        XCTAssertFalse(controller.canDownload)
+        XCTAssertEqual(controller.transfers.first?.id, id)
+        XCTAssertEqual(controller.transfers.first?.state, .cancelled)
+    }
+
     func testCancelledAndDisconnectedTransfersDiscardPartialFilesAndAllowAnotherDownload() async throws {
         let store = VNCDownloadStore(root: try temporaryFolder())
         let controller = VNCFileTransferController(downloadStore: store)

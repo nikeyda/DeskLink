@@ -1140,11 +1140,31 @@ final class SessionUITests: XCTestCase {
     }
 
     func testDraggedDownloadContinuesAfterLeavingTheApp() async throws {
+        try await verifyBackgroundDownload(requiresAuthentication: false)
+    }
+
+    func testStartedDownloadFinishesWhileAppRequiresAuthentication() async throws {
+        try await verifyBackgroundDownload(requiresAuthentication: true)
+    }
+
+    private func verifyBackgroundDownload(requiresAuthentication: Bool) async throws {
+        continueAfterFailure = false
         let desktop = LocalTestDisplay(appleScalingCapability: false, offersDraggedFile: true, completesDraggedFile: true)
         let port = try await desktop.start()
         defer { desktop.stop() }
         let app = XCUIApplication()
-        openChart(app, port: port)
+        let authenticate = app.buttons["身份验证"].firstMatch
+        if requiresAuthentication {
+            app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)",
+                                   "-privacy.deviceAuthentication", "YES"]
+            app.launchEnvironment["DESKLINK_TEST_MANUAL_AUTHENTICATION"] = "1"
+            app.launch()
+            XCTAssertTrue(authenticate.waitForExistence(timeout: 10))
+            authenticate.tap()
+            connectChart(app, port: port)
+        } else {
+            openChart(app, port: port)
+        }
         try await waitUntil { desktop.frameCount > 0 && app.buttons["session.mode"].exists }
         let file = app.coordinate(withNormalizedOffset: CGVector(dx: 0.48, dy: 0.57))
         let target = file.withOffset(CGVector(dx: 78, dy: -44))
@@ -1156,11 +1176,46 @@ final class SessionUITests: XCTestCase {
         XCUIDevice.shared.press(.home)
         XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5))
         try await Task.sleep(for: .seconds(9))
+        let remainingBytesReleasedAt = Date().timeIntervalSince1970
         desktop.maySendRemainingFileBytes = true
         try await waitUntil { desktop.finishedFileStreams == 1 || desktop.failure != nil }
         XCTAssertNil(desktop.failure)
         XCTAssertEqual(desktop.finishedFileStreams, 1)
         XCTAssertEqual(app.state, .runningBackground)
+        guard requiresAuthentication else { return }
+        // Leave a window in which the simulator host can verify the received
+        // file before foregrounding the viewer to inspect its privacy gate.
+        try await Task.sleep(for: .seconds(1))
+        XCTAssertEqual(app.state, .runningBackground)
+        let receipt = XCTAttachment(string: "\(remainingBytesReleasedAt)\n\(Date().timeIntervalSince1970)\n")
+        receipt.name = "Background transfer sample window"
+        receipt.lifetime = .keepAlways
+        add(receipt)
+        app.activate()
+        XCTAssertTrue(authenticate.waitForExistence(timeout: 8))
+        let screenshot = XCUIScreen.main.screenshot()
+        let lockedScreen = XCTAttachment(screenshot: screenshot)
+        lockedScreen.name = "Privacy gate after background transfer"
+        lockedScreen.lifetime = .keepAlways
+        add(lockedScreen)
+        XCTAssertFalse(Self.hasColorChart(screenshot.image))
+        XCTAssertFalse(app.staticTexts["Gesture.txt"].exists)
+        // The privacy gate is also hosted in a higher UIWindow. The underlying
+        // button can be reported by accessibility even while that window covers it.
+        let frame = authenticate.frame
+        let appFrame = app.frame
+        XCTAssertTrue(appFrame.contains(CGPoint(x: frame.midX, y: frame.midY)))
+        app.coordinate(withNormalizedOffset: .init(dx: 0, dy: 0))
+            .withOffset(.init(dx: frame.midX - appFrame.minX, dy: frame.midY - appFrame.minY)).tap()
+        let controls = app.buttons["远程桌面控制"].firstMatch
+        XCTAssertTrue(controls.waitForExistence(timeout: 8))
+        controls.tap()
+        app.buttons["文件传输"].firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["Gesture.txt"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.staticTexts["已取消"].exists, "The app lock cancelled an already-started transfer")
+        XCTAssertTrue(app.buttons["存储到“文件”"].waitForExistence(timeout: 5))
+        XCTAssertEqual(desktop.acceptedConnections, 1)
+        attachToolbarScreenshot(app, name: "Completed transfer after unlocking")
     }
 
     func testConnectionDragDelayOverridesTheApplicationDefault() async throws {

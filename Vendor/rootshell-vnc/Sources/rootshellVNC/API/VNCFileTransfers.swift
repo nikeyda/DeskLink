@@ -72,8 +72,9 @@ public final class VNCFileTransferController {
     private var uploadSupported = false
     private var downloadSupported = false
     private var allowed = true
-    public var canUpload: Bool { allowed && uploadSupported }
-    public var canDownload: Bool { allowed && downloadSupported }
+    private var newTransfersSuspended = false
+    public var canUpload: Bool { allowed && !newTransfersSuspended && uploadSupported }
+    public var canDownload: Bool { allowed && !newTransfersSuspended && downloadSupported }
     /// A left-button drag is moving on the remote screen.
     public var remoteDragInProgress: Bool { remoteDragAnchor != nil }
     private(set) var remoteDragAnchor: CGPoint?
@@ -131,6 +132,16 @@ public final class VNCFileTransferController {
     var hasTransfersInProgress: Bool { transfers.contains(where: \.isInProgress) }
 
     // MARK: - Host actions
+
+    /// Blocks new transfers while the viewer is locked. Already dropped
+    /// uploads and started downloads keep their transport and progress.
+    public func setNewTransfersSuspended(_ suspended: Bool) {
+        guard newTransfersSuspended != suspended else { return }
+        newTransfersSuspended = suspended
+        guard suspended else { return }
+        resetDragTracking()
+        cancelUploadDrag()
+    }
 
     public func cancel(_ id: UUID) {
         guard let index = index(of: id), transfers[index].isActive else { return }
@@ -236,6 +247,10 @@ public final class VNCFileTransferController {
         allowed = value
         guard !value else { return }
         for transfer in transfers where transfer.isActive { cancel(transfer.id) }
+        resetDragTracking()
+    }
+
+    private func resetDragTracking() {
         pendingDragOut = nil
         pressPoint = nil
         remoteDragAnchor = nil

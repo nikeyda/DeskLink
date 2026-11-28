@@ -43,7 +43,13 @@ struct DeskLinkApp: App {
                 testDirectory.installTestListing(listing)
             }
             _tailnet = State(initialValue: testDirectory)
-            _privacy = State(initialValue: AppLock(defaults: defaults))
+            if ProcessInfo.processInfo.environment["DESKLINK_TEST_MANUAL_AUTHENTICATION"] == "1" {
+                _privacy = State(initialValue: AppLock(defaults: defaults, authenticate: { _, policy in
+                    policy == .deviceOwnerAuthentication
+                }))
+            } else {
+                _privacy = State(initialValue: AppLock(defaults: defaults))
+            }
             _sync = State(initialValue: LibrarySync(settings: file.deletingPathExtension().appendingPathExtension("sync.json"), defaults: defaults))
             return
         }
