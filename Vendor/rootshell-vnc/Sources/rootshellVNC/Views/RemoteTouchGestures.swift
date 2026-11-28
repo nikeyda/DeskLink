@@ -81,7 +81,7 @@ struct RemoteTouchEdges: OptionSet, Sendable {
 public enum RemoteSwipeFingers: Int, CaseIterable, Sendable { case off = 0, three = 3, four = 4 }
 
 public enum RemotePencilAction: String, CaseIterable, Sendable {
-    case none, secondaryClick, middleClick, toggleToolbar, toggleExpandedToolbar
+    case none, secondaryClick, middleClick, toggleToolbar, toggleExpandedToolbar, toggleKeyboard
 }
 
 public enum RemoteScrollSpeed: Int, Codable, Sendable, CaseIterable {

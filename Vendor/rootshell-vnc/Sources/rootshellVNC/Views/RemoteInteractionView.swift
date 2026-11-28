@@ -5438,7 +5438,7 @@ extension RemoteInputUIView: UIPencilInteractionDelegate {
                        hover: squeeze.hoverPose?.location)
     }
 
-    private func dispatchPencil(_ action: RemotePencilAction, preference: UIPencilPreferredAction, hover: CGPoint?) {
+    func dispatchPencil(_ action: RemotePencilAction, preference: UIPencilPreferredAction, hover: CGPoint?) {
         guard action != .none, preference != .ignore, preference != .runSystemShortcut,
               !pointerDragActive, window?.isKeyWindow == true else { return }
 
@@ -5466,6 +5466,9 @@ extension RemoteInputUIView: UIPencilInteractionDelegate {
             guard bounds.width > 0, bounds.height > 0 else { return }
             pencilToolbarAction?(action, CGPoint(x: (location.x - bounds.minX) / bounds.width,
                                                  y: (location.y - bounds.minY) / bounds.height))
+        case .toggleKeyboard:
+            if !keyboardCapture.softwareKeyboardRequested { keyboardCapture.capture() }
+            keyboardCapture.softwareKeyboardRequested.toggle()
         case .none:
             break
         }

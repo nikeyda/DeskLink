@@ -1,4 +1,5 @@
 #if !targetEnvironment(macCatalyst)
+import UIKit
 import XCTest
 @testable import rootshellVNC
 @testable import DeskLink
@@ -184,6 +185,63 @@ import XCTest
         XCTAssertEqual(toolbar.anchor, tip)
         XCTAssertTrue(toolbar.visible)
         XCTAssertEqual(DeskToolbarButton.buttons(in: "tab,spacer,removed,spacer,arrows"), [.tab, .spacer, .spacer, .arrows])
+    }
+
+    #if !os(visionOS)
+    func testPencilKeyboardActionsToggleOnlyTheActiveDesktopAndRespectSystemPreferences() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        let other = UIWindow(windowScene: scene)
+        defer {
+            other.isHidden = true
+            window.isHidden = true
+            previous?.makeKey()
+        }
+        let keyboard = VNCKeyboardCapture(isCaptured: false)
+        let input = RemoteInputUIView(
+            touchHandler: TouchInputHandler(sendPointerEvent: { _, _, _ in XCTFail("The keyboard action must not click") }),
+            keyboardHandler: KeyboardInputHandler(sendKeyEvent: { _, _ in XCTFail("The keyboard action must not send remote keys") }),
+            keyboardCapture: keyboard, requestPasswordSend: {}, requestDictation: {}, toggleFullScreen: nil, disconnect: {})
+        let host = UIViewController()
+        window.rootViewController = host
+        other.rootViewController = UIViewController()
+        input.frame = CGRect(x: 0, y: 0, width: 100, height: 100)
+        host.view.addSubview(input)
+        window.makeKeyAndVisible()
+        XCTAssertTrue(window.isKeyWindow)
+        let tip = CGPoint(x: 20, y: 20)
+
+        input.dispatchPencil(.toggleKeyboard, preference: .ignore, hover: tip)
+        input.dispatchPencil(.toggleKeyboard, preference: .runSystemShortcut, hover: tip)
+        input.dispatchPencil(.toggleKeyboard, preference: .switchEraser, hover: CGPoint(x: 101, y: 10))
+        input.dispatchPencil(.toggleKeyboard, preference: .switchEraser, hover: nil)
+        XCTAssertFalse(keyboard.softwareKeyboardRequested)
+        XCTAssertFalse(keyboard.isCaptured)
+
+        input.dispatchPencil(.toggleKeyboard, preference: .switchEraser, hover: tip)
+        XCTAssertTrue(keyboard.softwareKeyboardRequested)
+        XCTAssertTrue(keyboard.isCaptured)
+        other.makeKeyAndVisible()
+        XCTAssertFalse(window.isKeyWindow)
+        input.dispatchPencil(.toggleKeyboard, preference: .switchEraser, hover: tip)
+        XCTAssertTrue(keyboard.softwareKeyboardRequested)
+        window.makeKey()
+        input.dispatchPencil(.toggleKeyboard, preference: .switchEraser, hover: tip)
+        XCTAssertFalse(keyboard.softwareKeyboardRequested)
+    }
+    #endif
+
+    func testPencilKeyboardActionRoundTripsInBothSyncedGesturePreferences() throws {
+        let suite = UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let action = PreferenceValue.text(RemotePencilAction.toggleKeyboard.rawValue)
+        let doubleTap = SyncedPreference.doubleTap.rawValue
+        let squeeze = SyncedPreference.squeeze.rawValue
+        SyncedPreference.apply([doubleTap: action, squeeze: action], to: defaults)
+        XCTAssertEqual(SyncedPreference.snapshot(defaults)[doubleTap], action)
+        XCTAssertEqual(SyncedPreference.snapshot(defaults)[squeeze], action)
     }
 
     func testRemoteInputDimsCarouselUntilActivityEnds() async throws {

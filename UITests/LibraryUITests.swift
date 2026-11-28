@@ -115,6 +115,72 @@ final class LibraryUITests: XCTestCase {
         add(receipt)
     }
 
+    func testPencilKeyboardActionCanBeAssignedToBothGesturesAndSurvivesRelaunch() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]
+        let title = "显示或隐藏键盘"
+
+        func openSettings() {
+            let more = app.buttons["library.more"].firstMatch
+            XCTAssertTrue(more.waitForExistence(timeout: 10))
+            more.tap()
+            app.buttons["设置"].firstMatch.tap()
+            XCTAssertTrue(app.navigationBars["设置"].firstMatch.waitForExistence(timeout: 8))
+        }
+
+        func picker(_ identifier: String) -> XCUIElement {
+            let row = app.buttons[identifier].firstMatch
+            let form = app.collectionViews.firstMatch
+            let top = app.navigationBars["设置"].firstMatch.frame.maxY
+            let lower = form.frame.maxY
+            for _ in 0..<12 {
+                let y = row.exists ? row.frame.midY : CGFloat.infinity
+                if y > top + 14, y < lower - 14, row.isHittable { return row }
+                let high = form.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35))
+                let low = form.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.68))
+                if y <= top + 14 {
+                    high.press(forDuration: 0.05, thenDragTo: low, withVelocity: .slow, thenHoldForDuration: 0.1)
+                } else {
+                    low.press(forDuration: 0.05, thenDragTo: high, withVelocity: .slow, thenHoldForDuration: 0.1)
+                }
+            }
+            XCTFail("The picker for \(identifier) never reached the visible part of Settings.")
+            return row
+        }
+
+        func hasKeyboardAction(_ row: XCUIElement) -> Bool {
+            row.label.contains(title) || (row.value as? String) == title
+        }
+
+        app.launch()
+        openSettings()
+        for identifier in ["pencil.doubleTap", "pencil.squeeze"] {
+            let row = picker(identifier)
+            row.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+            let option = app.buttons[title].firstMatch
+            if !option.waitForExistence(timeout: 6) {
+                let state = XCTAttachment(screenshot: app.screenshot())
+                state.name = "Apple Pencil picker before selection"
+                state.lifetime = .keepAlways
+                add(state)
+                XCTFail("The menu for \(identifier) did not open. \(row.debugDescription)")
+                return
+            }
+            option.tap()
+            XCTAssertTrue(hasKeyboardAction(row), row.debugDescription)
+        }
+        app.terminate()
+        app.launch()
+        openSettings()
+        XCTAssertTrue(hasKeyboardAction(picker("pencil.doubleTap")))
+        XCTAssertTrue(hasKeyboardAction(picker("pencil.squeeze")))
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Apple Pencil keyboard actions"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     func testSidebarVisibilitySurvivesRelaunchAndCanBeRestored() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--test-library", UUID().uuidString]

@@ -82,7 +82,7 @@ enum SyncedPreference: String, CaseIterable {
         case (.size, .text(let text)), (.phoneToolbarSize, .text(let text)), (.padToolbarSize, .text(let text)):
             ["small", "standard", "large", "extraLarge"].contains(text)
         case (.doubleTap, .text(let text)), (.squeeze, .text(let text)):
-            ["none", "secondaryClick", "middleClick", "toggleToolbar", "toggleExpandedToolbar"].contains(text)
+            RemotePencilAction(rawValue: text) != nil
         case (.buttons, .text), (.phoneToolbarButtons, .text), (.padToolbarButtons, .text): true
         default: false
         }

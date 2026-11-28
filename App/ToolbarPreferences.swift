@@ -131,6 +131,7 @@ struct PencilPreferences: View {
             Text("右键点击（次级点击）").tag(RemotePencilAction.secondaryClick)
             Text("中键点击").tag(RemotePencilAction.middleClick)
             Text("切换工具栏的可见性").tag(RemotePencilAction.toggleToolbar)
+            Text("显示或隐藏键盘").tag(RemotePencilAction.toggleKeyboard)
             if toolbar.style == .floating || selection.wrappedValue == .toggleExpandedToolbar {
                 Text("展开或折叠工具栏").tag(RemotePencilAction.toggleExpandedToolbar).disabled(toolbar.style != .floating)
             }
