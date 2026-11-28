@@ -89,11 +89,19 @@ struct MacMonitorWindow: View {
     @AppStorage("pointer.speed") private var pointerSpeed = 1.0
     @AppStorage("keyboard.localOptionKey") private var localOptionKey = VNCLocalOptionKey.off
     private var gesturePreferences = SessionGesturePreferences()
-    @State private var viewport = RemoteViewportState()
+    @State private var viewport: RemoteViewportState
     @State private var keyboard = VNCKeyboardCapture()
     @State private var controls = VNCDesktopControls()
     @State private var showsDictation = false
     @State private var screenshot = ScreenshotExport()
+
+    init(id: MonitorWindowID?, windows: MacMonitorWindows, privacy: AppLock) {
+        self.id = id
+        self.windows = windows
+        self.privacy = privacy
+        let sizing = id.flatMap { windows.groups[$0.connection]?.computer.initialViewportSizing } ?? .fit
+        _viewport = State(initialValue: RemoteViewportState(sizing: sizing))
+    }
 
     private var group: MacMonitorWindows.Group? {
         guard let id, let group = windows.groups[id.connection], group.children.contains(id.display),
@@ -117,7 +125,8 @@ struct MacMonitorWindow: View {
                                          UIApplication.shared.sendAction(NSSelectorFromString("toggleFullScreen:"),
                                                                          to: nil, from: nil, for: nil)
                                      }, disconnect: source.disconnect, chooseMonitor: source.chooseMonitor,
-                                     splitMonitors: source.splitMonitors, isSplit: true, startDictation: { showsDictation = true },
+                                     splitMonitors: source.splitMonitors, isSplit: true, viewport: $viewport,
+                                     startDictation: { showsDictation = true },
                                      captureScreenshot: captureScreenshot)
     }
 
@@ -149,7 +158,7 @@ struct MacMonitorWindow: View {
             } else if let id, let group {
                 if group.session.connectionState.isConnected, let region = group.region(for: id.display) {
                     if group.observing {
-                        VNCMonitorPicture(session: group.session, region: region)
+                        VNCMonitorPicture(session: group.session, region: region, viewport: $viewport)
                     } else {
                         desktop(group, region: region)
                             .modifier(RemoteDictationPresentation(session: group.session, presented: $showsDictation,

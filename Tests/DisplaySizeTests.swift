@@ -5,6 +5,34 @@ import RFBProtocol
 @testable import RFBTransport
 
 @MainActor final class DisplaySizeTests: XCTestCase {
+    func testChangingFramingResetsOnlyThatViewportAndKeepsRetinaGeometry() throws {
+        let geometry = RemoteViewportGeometry(viewSize: CGSize(width: 600, height: 500),
+                                              framebufferSize: CGSize(width: 1800, height: 1200), displayScale: 2)
+        var primary = RemoteViewportState()
+        var secondary = RemoteViewportState(sizing: .fill)
+        primary.updateGeometry(geometry)
+        secondary.updateGeometry(geometry)
+        primary.zoom(by: 2, around: CGPoint(x: 180, y: 240),
+                     viewSize: geometry.viewSize, framebufferSize: geometry.framebufferSize)
+        let untouched = secondary
+
+        func picture(in viewport: RemoteViewportState) throws -> CGRect {
+            try XCTUnwrap(viewport.displayedFrame(viewSize: geometry.viewSize, framebufferSize: geometry.framebufferSize))
+        }
+        let expected: [(RemoteViewportSizing, CGFloat)] = [(.fit, 600), (.fill, 750), (.actualSize, 900)]
+        for (mode, width) in expected {
+            primary.reset(sizing: mode)
+            let frame = try picture(in: primary)
+            XCTAssertEqual(frame.width, width, accuracy: 0.001)
+            XCTAssertEqual(frame.midX, 300, accuracy: 0.001)
+            XCTAssertEqual(frame.midY, 250, accuracy: 0.001)
+            XCTAssertEqual(primary.scale, 1)
+            XCTAssertEqual(primary.offset, .zero)
+            XCTAssertEqual(primary.displayScale, 2)
+            XCTAssertEqual(secondary, untouched)
+        }
+    }
+
     func testResizingKeepsTheMagnifiedPointAtTheCenterOfTheViewport() throws {
         let portrait = RemoteViewportGeometry(viewSize: CGSize(width: 390, height: 700),
                                               framebufferSize: CGSize(width: 1600, height: 900))

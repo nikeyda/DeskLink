@@ -545,6 +545,62 @@ final class SessionUITests: XCTestCase {
         XCTAssertEqual(nextSessionLeft.y, fittedLeft.y, accuracy: 2)
     }
 
+    func testObservationKeepsTheMagnifiedPictureAndBlocksRemotePointerInput() async throws {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
+        let desktop = LocalTestDisplay()
+        var clicks: [CGPoint] = []
+        desktop.onWirePointer = { buttons, point in
+            if buttons & 1 != 0 { clicks.append(point) }
+        }
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        openChart(app, port: port)
+        let input = app.descendants(matching: .any)["session.input"].firstMatch
+        let mode = app.buttons["session.mode"].firstMatch
+        try await waitUntil { desktop.frameCount > 0 && input.isHittable && mode.isHittable && Self.hasColorChart(app.screenshot().image) }
+        let toggle = app.buttons["toolbar.toggle"].firstMatch
+        if toggle.exists, toggle.label == "隐藏工具栏" { toggle.tap() }
+
+        func coverage() -> Double { Self.chartFractions(XCUIScreen.main.screenshot().image).reduce(0, +) }
+        let fitCoverage = coverage()
+        input.pinch(withScale: 2.5, velocity: 1.5)
+        try await waitUntil { coverage() > fitCoverage + 0.08 }
+        let zoomedCoverage = coverage()
+
+        func sample() async throws -> CGPoint {
+            let index = clicks.count
+            input.coordinate(withNormalizedOffset: .init(dx: 0.28, dy: 0.5)).tap()
+            try await waitUntil { clicks.count > index }
+            return clicks[index]
+        }
+        let before = try await sample()
+        let presses = clicks.count
+        mode.tap()
+        try await waitUntil { mode.label == "仅观察" && !input.exists && Self.hasColorChart(app.screenshot().image) }
+        let observedCoverage = coverage()
+        XCTAssertEqual(observedCoverage, zoomedCoverage, accuracy: 0.05, "Observation must retain the current magnification")
+        app.coordinate(withNormalizedOffset: .init(dx: 0.28, dy: 0.54)).tap()
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(clicks.count, presses)
+        let picture = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        picture.name = "Magnified read-only desktop"
+        picture.lifetime = .keepAlways
+        add(picture)
+
+        mode.tap()
+        try await waitUntil { mode.label == "控制" && input.isHittable }
+        let after = try await sample()
+        XCTAssertEqual(after.x, before.x, accuracy: 2)
+        XCTAssertEqual(after.y, before.y, accuracy: 2)
+        XCTAssertEqual(desktop.acceptedConnections, 1)
+        let receipt = XCTAttachment(string: "Fit: \(fitCoverage)\nMagnified: \(zoomedCoverage)\nObservation: \(observedCoverage)\nPointer before and after: \(before), \(after)")
+        receipt.name = "Viewport coverage and remote positions"
+        receipt.lifetime = .keepAlways
+        add(receipt)
+    }
+
     func testHardwareControlReachesTheServerAsCommandWhenEnabledInTheEditor() async throws {
         let desktop = LocalTestDisplay()
         let port = try await desktop.start()

@@ -48,8 +48,9 @@ public struct RemoteViewportState: Equatable, Sendable {
         sizing == .fit && scale == Self.minimumScale && offset == .zero
     }
 
-    mutating func reset() {
-        sizing = .fit
+    /// Apply a framing choice and center the desktop in this window.
+    public mutating func reset(sizing: RemoteViewportSizing = .fit) {
+        self.sizing = sizing
         scale = Self.minimumScale
         offset = .zero
     }

@@ -203,9 +203,7 @@ struct SessionScreen: View {
         }
         _session = State(initialValue: VNCSession(configuration: configuration))
         _observing = State(initialValue: observing)
-        #if !targetEnvironment(macCatalyst)
         _viewport = State(initialValue: RemoteViewportState(sizing: request.computer.initialViewportSizing ?? .fit))
-        #endif
         _pointer = State(initialValue: SessionPointerControl(mode: request.computer.pointerMode(using: preferences)))
         _cursorTrackingSpeed = State(initialValue: CursorTrackingSpeed.validated(request.computer.cursorTrackingSpeed))
     }
@@ -475,6 +473,7 @@ struct SessionScreen: View {
                     }
                     .accessibilityIdentifier("session.mode")
                     #if targetEnvironment(macCatalyst)
+                    MacPictureSizingMenu(viewport: $viewport).labelStyle(.iconOnly)
                     MonitorMenu(session: session, select: chooseMonitor, split: showAllMonitorWindows,
                                 isSplit: monitorGroup != nil).labelStyle(.iconOnly)
                     if !observing, session.canSendLoginPassword {
@@ -598,7 +597,7 @@ struct SessionScreen: View {
         #if targetEnvironment(macCatalyst)
         if let group = presentingMonitorGroup {
             if let region = group.region(for: group.primary) {
-                if observing { VNCMonitorPicture(session: session, region: region) }
+                if observing { VNCMonitorPicture(session: session, region: region, viewport: $viewport) }
                 else { remoteDesktop.showingMonitor(in: region).ignoresSafeArea(.keyboard) }
             } else if session.connectionState.isConnected, session.hasPresentedCurrentPicture {
                 ProgressView("等待远程画面…")
@@ -607,13 +606,13 @@ struct SessionScreen: View {
                 Color.black
             }
         } else if observing {
-            ObservedPicture(session: session, showsPlaceholder: false)
+            ObservedPicture(session: session, showsPlaceholder: false, viewport: $viewport)
         } else {
             remoteDesktop.ignoresSafeArea(.keyboard)
         }
         #else
         if observing {
-            ObservedPicture(session: session, showsPlaceholder: false, sizing: request.computer.initialViewportSizing ?? .fit)
+            ObservedPicture(session: session, showsPlaceholder: false, viewport: $viewport)
         } else {
             InteractiveDesktop(desktop: remoteDesktop, session: session, controls: controls, bar: toolbar,
                                deck: deck, showsSessionHeader: !fullscreen,
@@ -711,7 +710,7 @@ struct SessionScreen: View {
                                      observing: observing, toggleObservation: toggleObservation,
                                      toggleFullScreen: toggleFullScreen, disconnect: { finish(edit: false) },
                                      chooseMonitor: chooseMonitor, splitMonitors: showAllMonitorWindows,
-                                     isSplit: monitorGroup != nil, startDictation: { showsDictation = true },
+                                     isSplit: monitorGroup != nil, viewport: $viewport, startDictation: { showsDictation = true },
                                      captureScreenshot: captureScreenshot)
     }
 
@@ -898,13 +897,13 @@ struct SessionScreen: View {
 struct ObservedPicture: View {
     let session: VNCSession
     var showsPlaceholder = true
-    var sizing: RemoteViewportSizing = .fit
+    var viewport: Binding<RemoteViewportState>?
 
     var body: some View {
         ZStack {
             Color.black
-            if session.isHighPerformanceMode || (sizing != .fit && session.hasPresentedStandardPicture) {
-                VNCMonitorPicture(session: session, sizing: sizing)
+            if session.isHighPerformanceMode || (viewport != nil && session.hasPresentedStandardPicture) {
+                VNCMonitorPicture(session: session, viewport: viewport)
             } else if case let .image(image) = session.presentedFrame {
                 Image(decorative: image, scale: 1).resizable().scaledToFit()
             } else if showsPlaceholder {

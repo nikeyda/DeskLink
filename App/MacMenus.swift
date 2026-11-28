@@ -2,6 +2,31 @@
 import SwiftUI
 import rootshellVNC
 
+extension RemoteViewportSizing {
+    var macTitle: LocalizedStringKey {
+        switch self {
+        case .fit: "适合窗口"
+        case .fill: "填满窗口"
+        case .actualSize: "实际大小"
+        }
+    }
+}
+
+struct MacPictureSizingMenu: View {
+    @Binding var viewport: RemoteViewportState
+
+    var body: some View {
+        Menu {
+            ForEach(RemoteViewportSizing.allCases, id: \.rawValue) { mode in
+                Button(mode.macTitle) { viewport.reset(sizing: mode) }
+            }
+        } label: {
+            Label("画面缩放", systemImage: "arrow.up.left.and.down.right.magnifyingglass")
+        }
+        .accessibilityIdentifier("session.pictureSizing")
+    }
+}
+
 struct MacLibraryMenuActions {
     let quickConnect: () -> Void
     let create: () -> Void
@@ -23,6 +48,7 @@ struct MacSessionMenuActions {
     let chooseMonitor: (VNCMonitorSelection) -> Void
     let splitMonitors: () -> Void
     let isSplit: Bool
+    var viewport: Binding<RemoteViewportState>?
     var startDictation: (() -> Void)?
     var captureScreenshot: (() -> Void)?
 }
@@ -98,6 +124,9 @@ struct MacMenus: Commands {
                 .keyboardShortcut("t", modifiers: [.command, .option])
             }
             if let desktop {
+                if let viewport = desktop.viewport, desktop.session.connectionState.isConnected {
+                    MacPictureSizingMenu(viewport: viewport)
+                }
                 MonitorMenu(session: desktop.session, shortcuts: true, select: desktop.chooseMonitor,
                             split: desktop.splitMonitors, isSplit: desktop.isSplit)
             }

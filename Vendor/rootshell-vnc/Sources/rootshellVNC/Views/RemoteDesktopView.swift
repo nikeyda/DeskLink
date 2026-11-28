@@ -1555,22 +1555,40 @@ public struct VNCMonitorPicture: View {
     private let session: VNCSession
     private let region: CGRect?
     private let sizing: RemoteViewportSizing
+    private let viewport: Binding<RemoteViewportState>?
 
-    public init(session: VNCSession, region: CGRect? = nil, sizing: RemoteViewportSizing = .fit) {
+    public init(session: VNCSession, region: CGRect? = nil, sizing: RemoteViewportSizing = .fit,
+                viewport: Binding<RemoteViewportState>? = nil) {
         self.session = session
         self.region = region
         self.sizing = sizing
+        self.viewport = viewport
     }
 
     public var body: some View {
         GeometryReader { proxy in
-            let transform = RemoteViewportState(sizing: sizing, displayScale: displayScale)
-                .renderScale(viewSize: proxy.size, framebufferSize: region?.size ?? session.presentedFramebufferSize)
+            let geometry = RemoteViewportGeometry(viewSize: proxy.size,
+                                                  framebufferSize: region?.size ?? session.presentedFramebufferSize,
+                                                  displayScale: displayScale)
+            let state = presentationViewport(in: geometry)
+            let transform = state.renderScale(viewSize: geometry.viewSize, framebufferSize: geometry.framebufferSize)
             picture(in: proxy.size)
                 .scaleEffect(x: transform.width, y: transform.height)
+                .offset(state.offset)
+                .onChange(of: geometry, initial: true) { _, geometry in
+                    guard let viewport else { return }
+                    let state = presentationViewport(in: geometry)
+                    if viewport.wrappedValue != state { viewport.wrappedValue = state }
+                }
         }
         .clipped()
         .background(.black)
+    }
+
+    private func presentationViewport(in geometry: RemoteViewportGeometry) -> RemoteViewportState {
+        var state = viewport?.wrappedValue ?? RemoteViewportState(sizing: sizing, displayScale: geometry.displayScale)
+        state.updateGeometry(geometry)
+        return state
     }
 
     @ViewBuilder
