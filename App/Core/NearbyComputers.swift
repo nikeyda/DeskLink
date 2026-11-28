@@ -6,12 +6,19 @@ import Darwin
 
 struct NearbyComputer: Identifiable {
     let service: NetService
-    var address: String? = nil
+    var endpoint: Endpoint? = nil
+    var numericAddresses: [String] = []
     var id: String { Self.id(for: service) }
     var name: String { service.name }
+    var address: String? { endpoint?.address }
 
     func matches(_ query: LibrarySearchQuery) -> Bool {
-        query.matches([name, address])
+        guard let endpoint else { return query.matches([name]) }
+        let addresses = ([endpoint.host] + numericAddresses).map { host in
+            let literal = host.contains(":") ? "[\(host)]" : host
+            return "\(literal):\(endpoint.port)"
+        }
+        return query.matches([name] + addresses.map(Optional.some))
     }
 
     static func id(for service: NetService) -> String {
@@ -21,7 +28,13 @@ struct NearbyComputer: Identifiable {
 
 enum NearbyLocalIdentity {
     static func matches(_ service: NetService) -> Bool {
-        let addresses = (service.addresses ?? []).compactMap { data in
+        let addresses = numericAddresses(for: service)
+        return matches(host: service.hostName, addresses: addresses, localHost: ProcessInfo.processInfo.hostName,
+                       localAddresses: addresses.isEmpty ? [] : interfaceAddresses())
+    }
+
+    static func numericAddresses(for service: NetService) -> [String] {
+        (service.addresses ?? []).compactMap { data in
             data.withUnsafeBytes { bytes -> String? in
                 guard bytes.count >= MemoryLayout<sockaddr>.size,
                       let address = bytes.bindMemory(to: sockaddr.self).baseAddress,
@@ -29,8 +42,6 @@ enum NearbyLocalIdentity {
                 return numericHost(address)
             }
         }
-        return matches(host: service.hostName, addresses: addresses, localHost: ProcessInfo.processInfo.hostName,
-                       localAddresses: addresses.isEmpty ? [] : interfaceAddresses())
     }
 
     static func matches(host: String?, addresses: [String], localHost: String, localAddresses: Set<String>) -> Bool {
@@ -149,11 +160,11 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
     }
 
     func select(_ entry: NearbyComputer, completion: @escaping (Computer) -> Void) {
-        cancelSelection()
         guard entries.contains(where: { $0.id == entry.id }) else {
-            errorMessage = String(localized: "这台电脑已离开附近设备列表。请重新查找。")
+            reportMissingSelection()
             return
         }
+        cancelSelection()
         errorMessage = nil
         let service = NetService(domain: entry.service.domain, type: entry.service.type, name: entry.name)
         resolving = service
@@ -166,6 +177,11 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
         if let resolving { stopResolving(resolving) }
         resolving = nil
         selection = nil
+    }
+
+    private func reportMissingSelection() {
+        cancelSelection()
+        errorMessage = String(localized: "这台电脑已离开附近设备列表。请重新查找。")
     }
 
     func updateSearchState(_ state: NWBrowser.State) {
@@ -184,11 +200,17 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
     func netServiceDidResolveAddress(_ sender: NetService) {
         let endpoint = Self.endpoint(for: sender)
         if sender !== resolving {
-            guard let endpoint, isLocalComputer?(sender) != true else {
+            guard isLocalComputer?(sender) != true else {
                 completeDiscovery(sender, result: .hidden)
                 return
             }
-            completeDiscovery(sender, result: .visible(NearbyComputer(service: sender, address: endpoint.address)))
+            guard let endpoint else {
+                completeDiscovery(sender, result: unresolvedDiscovery(sender))
+                return
+            }
+            let entry = NearbyComputer(service: sender, endpoint: endpoint,
+                                       numericAddresses: NearbyLocalIdentity.numericAddresses(for: sender))
+            completeDiscovery(sender, result: .visible(entry))
             return
         }
         let action = selection
@@ -210,7 +232,7 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
 
     func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {
         guard sender === resolving else {
-            completeDiscovery(sender, result: .hidden)
+            completeDiscovery(sender, result: unresolvedDiscovery(sender))
             return
         }
         errorMessage = Self.description(errorDict)
@@ -218,11 +240,7 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
     }
 
     private func updateDiscovered(_ found: [String: NearbyComputer]) {
-        guard isLocalComputer != nil else {
-            entries = sorted(found.values)
-            isSearching = false
-            return
-        }
+        if let resolving, found[NearbyComputer.id(for: resolving)] == nil { reportMissingSelection() }
         for id in Array(discovery.keys) where found[id] == nil {
             if case .resolving(let service) = discovery.removeValue(forKey: id) { stopResolving(service) }
         }
@@ -232,6 +250,11 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
             entry.service.resolve(withTimeout: 5)
         }
         publishDiscovered()
+    }
+
+    private func unresolvedDiscovery(_ service: NetService) -> Discovery {
+        // Mobile keeps the discoverable row so the user can retry it by selecting it.
+        isLocalComputer == nil ? .visible(NearbyComputer(service: service)) : .hidden
     }
 
     private func completeDiscovery(_ sender: NetService, result: Discovery) {
@@ -244,8 +267,11 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
 
     private func publishDiscovered() {
         entries = sorted(discovery.values.compactMap {
-            if case .visible(let entry) = $0 { return entry }
-            return nil
+            switch $0 {
+            case .visible(let entry): entry
+            case .resolving(let service) where isLocalComputer == nil: NearbyComputer(service: service)
+            default: nil
+            }
         })
         isSearching = discovery.values.contains {
             if case .resolving = $0 { return true }

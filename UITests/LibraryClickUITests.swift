@@ -123,7 +123,16 @@ final class LibraryClickUITests: XCTestCase {
         XCTAssertTrue(host.waitForExistence(timeout: 8))
         XCTAssertEqual(host.value as? String, "draft.fixture.invalid")
         choose.tap()
+        let search = app.textFields["connection.deviceSearch"].firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 8))
+        search.tap()
+        search.typeText(String(port))
         XCTAssertTrue(computer.waitForExistence(timeout: 12))
+        XCTAssertTrue(computer.label.contains(":\(port)"))
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "iPad Nearby search by port"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
         computer.tap()
         let portField = app.textFields["connection.port"].firstMatch
         XCTAssertTrue(portField.waitForExistence(timeout: 8))

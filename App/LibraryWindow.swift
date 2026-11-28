@@ -664,8 +664,12 @@ struct LibraryWindow: View {
         let local = hiddenItems.contains(.nearby) ? [] : nearby.entries.filter { $0.matches(query) }
         let peers = hiddenItems.contains(.tailscale) ? [] : tailnet.searchMatches(query)
         if stored.isEmpty && local.isEmpty && peers.isEmpty {
-            emptySearch
-                .accessibilityIdentifier("library.search.empty")
+            if discoversNearbyComputers && nearby.isSearching {
+                ProgressView("正在查找附近的电脑…")
+            } else {
+                emptySearch
+                    .accessibilityIdentifier("library.search.empty")
+            }
         } else {
             List {
                 searchSection("已保存的电脑", items: stored.saved, source: "saved", symbol: "desktopcomputer")
@@ -873,7 +877,7 @@ struct LibraryWindow: View {
     private func nearbyItem<Content: View>(_ entry: NearbyComputer, cornerRadius: CGFloat,
                                            @ViewBuilder label: () -> Content) -> some View {
         DiscoveredConnectionItem(id: "nearby.computer." + entry.id, selection: $selectedConnection,
-                                 cornerRadius: cornerRadius, endpoint: entry.address.flatMap { try? Endpoint(address: $0) }) { quality in
+                                 cornerRadius: cornerRadius, endpoint: entry.endpoint) { quality in
             nearby.select(entry) { openDiscovered($0, suggestedSSHPort: nil, quality: quality) }
         } label: {
             label()

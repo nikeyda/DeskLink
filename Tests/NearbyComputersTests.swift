@@ -25,11 +25,15 @@ import XCTest
                                                  localHost: "studio-mac.example.org", localAddresses: localAddresses))
     }
 
-    func testNearbySearchMatchesTheDisplayNameAndResolvedAddress() {
+    func testNearbySearchMatchesTheDisplayNameAndResolvedAddress() throws {
         let service = NetService(domain: "local.", type: "_rfb._tcp.", name: "Design Computer")
-        let entry = NearbyComputer(service: service, address: "studio-mac.local:5900")
+        let endpoint = try Endpoint(address: "studio-mac.local")
+        let entry = NearbyComputer(service: service, endpoint: endpoint,
+                                   numericAddresses: ["192.0.2.12", "fe80::1%en0"])
         XCTAssertTrue(entry.matches(LibrarySearchQuery("design studio-mac")))
         XCTAssertTrue(entry.matches(LibrarySearchQuery("5900")))
+        XCTAssertTrue(entry.matches(LibrarySearchQuery("design 192.0.2.12:5900")))
+        XCTAssertTrue(entry.matches(LibrarySearchQuery("[FE80::1%en0]:5900")))
         XCTAssertFalse(entry.matches(LibrarySearchQuery("studio-mac 5901")))
     }
 
@@ -48,8 +52,13 @@ import XCTest
         try XCTSkipIf(status == kDNSServiceErr_PolicyDenied, "Local network permission is required for Bonjour.")
         XCTAssertEqual(status, DNSServiceErrorType(kDNSServiceErr_NoError))
         let service = try XCTUnwrap(registration)
-        try await waitFor { browser.entries.contains { $0.name == name } }
+        try await waitFor { browser.entries.contains { $0.name == name && $0.endpoint?.port == port } }
         let nearby = try XCTUnwrap(browser.entries.first { $0.name == name })
+        let host = try XCTUnwrap(nearby.endpoint?.host)
+        let ip = try XCTUnwrap(nearby.numericAddresses.first)
+        let socket = ip.contains(":") ? "[\(ip)]:\(port)" : "\(ip):\(port)"
+        XCTAssertTrue(nearby.matches(LibrarySearchQuery("\(host):\(port)")))
+        XCTAssertTrue(nearby.matches(LibrarySearchQuery(socket)))
         var resolved: Computer?
         browser.select(nearby) { resolved = $0 }
         try await waitFor { resolved != nil || browser.errorMessage != nil }
@@ -64,6 +73,9 @@ import XCTest
         DNSServiceRefDeallocate(service)
         registration = nil
         try await waitFor { !browser.entries.contains { $0.id == nearby.id } }
+        browser.select(nearby) { _ in XCTFail("An expired advertisement must not open a connection.") }
+        XCTAssertNotNil(browser.errorMessage)
+        XCTAssertFalse(browser.isResolvingSelection)
     }
 
     #if targetEnvironment(macCatalyst)

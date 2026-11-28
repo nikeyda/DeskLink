@@ -12,6 +12,7 @@ struct QuickConnectDevicePicker: View {
     @Environment(\.openURL) private var openURL
     @State private var nearby = NearbyComputers()
     @State private var search = ""
+    @FocusState private var editsSearch: Bool
 
     private var canBrowse: Bool { !privacy.locked && scenePhase != .background }
     private var query: LibrarySearchQuery { LibrarySearchQuery(search) }
@@ -19,13 +20,14 @@ struct QuickConnectDevicePicker: View {
     var body: some View {
         List {
             if !privacy.locked {
+                searchRow
                 if showsNearby { nearbySection }
                 if showsTailnet, tailnet.account != nil { tailnetSection }
             }
         }
         .navigationTitle("选择电脑")
         .navigationBarTitleDisplayMode(.inline)
-        .searchable(text: $search, prompt: "搜索电脑")
+        .scrollDismissesKeyboard(.interactively)
         .accessibilityIdentifier("connection.devicePicker")
         .onChange(of: canBrowse && showsNearby, initial: true) { _, browsing in
             if browsing { nearby.start() } else { nearby.stop() }
@@ -33,6 +35,28 @@ struct QuickConnectDevicePicker: View {
         .onDisappear { nearby.stop() }
         .task(id: canBrowse && showsTailnet) {
             if canBrowse && showsTailnet && tailnet.devices.isEmpty { await tailnet.refresh() }
+        }
+    }
+
+    private var searchRow: some View {
+        HStack {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            TextField("搜索电脑", text: $search)
+                .focused($editsSearch)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
+                .onSubmit { editsSearch = false }
+                .accessibilityIdentifier("connection.deviceSearch")
+            if !search.isEmpty {
+                Button { search = "" } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("清除搜索")
+            }
         }
     }
 
@@ -100,6 +124,7 @@ struct QuickConnectDevicePicker: View {
 
     private func choose(_ computer: Computer, sshPort: UInt16?) {
         guard canBrowse else { return }
+        editsSearch = false
         nearby.stop()
         select(computer, sshPort)
     }
