@@ -260,6 +260,62 @@ final class FileTransferTests: XCTestCase {
         XCTAssertEqual(try result.staged.map { try Data(contentsOf: $0) }, items.map(\.1))
     }
 
+    func testFilesDropPrefersAndUploadsSymbolicLinksWithoutSendingTheirTargets() async throws {
+        let source = try temporaryFolder()
+        let staging = try temporaryFolder()
+        let target = source.appending(path: "目标.txt")
+        try Data("Target bytes stay in the source".utf8).write(to: target)
+        let folder = source.appending(path: "目录", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        let names = ["文件链接", "目录链接"]
+        let targets = [target.lastPathComponent, folder.lastPathComponent]
+        let links = try zip(names, targets).map { name, destination in
+            let link = source.appending(path: name)
+            try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: destination)
+            return link
+        }
+
+        func offer(_ url: URL, as type: UTType, on provider: NSItemProvider) {
+            provider.registerFileRepresentation(forTypeIdentifier: type.identifier, fileOptions: [], visibility: .all) { completion in
+                completion(url, false, nil)
+                return nil
+            }
+        }
+
+        let providers = links.enumerated().map { index, link in
+            let provider = NSItemProvider()
+            provider.suggestedName = link.lastPathComponent
+            if index == 1 { offer(target, as: .plainText, on: provider) }
+            offer(link, as: .symbolicLink, on: provider)
+            return provider
+        }
+        let invalid = NSItemProvider()
+        invalid.suggestedName = "只有原文件"
+        offer(target, as: .symbolicLink, on: invalid)
+
+        let result = await VNCFileTransferController.stage(providers + [invalid], into: staging)
+        XCTAssertEqual(result.failedNames, ["只有原文件"])
+        XCTAssertEqual(result.staged.map(\.lastPathComponent), names)
+        XCTAssertEqual(try result.staged.map { try FileManager.default.destinationOfSymbolicLink(atPath: $0.path) }, targets)
+        let plan = try UploadPlan.make(result.staged)
+        XCTAssertTrue(plan.allSatisfy { $0.bytes == 0 && $0.items.count == 1 })
+
+        let packets = PacketLog()
+        try await UploadPlan.stream(plan, sessions: [1, 2], destination: "/Fixture",
+                                    send: { await packets.append($0) }, progress: { _ in })
+        var sentLinks = [Wire.Item]()
+        for packet in await packets.values {
+            switch Wire.serverMessage(payload: Data(packet.dropFirst(6))) {
+            case .item(_, let item): sentLinks.append(item)
+            case .fileData: XCTFail("Target file contents must not be sent for a link")
+            default: break
+            }
+        }
+        XCTAssertEqual(sentLinks.map(\.kind), [.symbolicLink, .symbolicLink])
+        XCTAssertEqual(sentLinks.map(\.name), names)
+        XCTAssertEqual(sentLinks.map(\.symbolicLinkTarget), targets.map(Optional.some))
+    }
+
     func testRemoteDragDeliversFolderAndFileToDownloadListThenMovesThem() async throws {
         let store = VNCDownloadStore(root: try temporaryFolder())
         let publicRoot = try temporaryFolder().appending(path: "Downloads", directoryHint: .isDirectory)

@@ -886,10 +886,14 @@ public final class VNCFileTransferController {
 
     /// The first file-backed type; text snippets without a name are skipped.
     nonisolated static func fileType(for provider: NSItemProvider) -> String? {
+        let types = provider.registeredTypeIdentifiers
+        // A link may also offer the target's data. Keep the link when it has
+        // its own representation, even if the provider lists it second.
+        if let link = types.first(where: { UTType($0)?.conforms(to: .symbolicLink) == true }) { return link }
         // Finder names its items only at drop time; its node type marks a file.
         let isFile = provider.suggestedName != nil
-            || provider.registeredTypeIdentifiers.contains(finderNodeType)
-        return provider.registeredTypeIdentifiers.first { identifier in
+            || types.contains(finderNodeType)
+        return types.first { identifier in
             guard let type = UTType(identifier) else { return false }
             if type.conforms(to: .directory) { return true }
             guard type.conforms(to: .data) || type.conforms(to: .package) else { return false }
@@ -913,10 +917,11 @@ public final class VNCFileTransferController {
         for (index, provider) in providers.enumerated() {
             guard let type = fileType(for: provider) else { continue }
             let name = suggestedName(for: provider)
+            let expectsLink = UTType(type)?.conforms(to: .symbolicLink) == true
             let url: URL? = await withCheckedContinuation { continuation in
                 _ = provider.loadFileRepresentation(forTypeIdentifier: type) { url, _ in
                     continuation.resume(returning: url.flatMap {
-                        copyLoadedFile($0, name: name, into: folder)
+                        copyLoadedFile($0, name: name, expectsLink: expectsLink, into: folder)
                     })
                 }
             }
@@ -930,13 +935,14 @@ public final class VNCFileTransferController {
     }
 
     /// The loaded URL is only valid inside the provider's handler.
-    private nonisolated static func copyLoadedFile(_ url: URL, name: String?, into folder: URL) -> URL? {
+    private nonisolated static func copyLoadedFile(_ url: URL, name: String?, expectsLink: Bool, into folder: URL) -> URL? {
         var name = name ?? url.lastPathComponent
         if (name as NSString).pathExtension.isEmpty, !url.pathExtension.isEmpty {
             name += "." + url.pathExtension
         }
         let destination = uniqueURL(in: folder, name: sanitizedName(name))
         do {
+            if expectsLink, try url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true { return nil }
             try FileManager.default.copyItem(at: url, to: destination)
             return destination
         } catch {
