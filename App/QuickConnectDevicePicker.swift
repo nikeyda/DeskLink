@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 struct QuickConnectDevicePicker: View {
     let showsNearby: Bool
@@ -9,7 +8,6 @@ struct QuickConnectDevicePicker: View {
     @Environment(TailnetDirectory.self) private var tailnet
     @Environment(AppLock.self) private var privacy
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.openURL) private var openURL
     @State private var nearby = NearbyComputers()
     @State private var search = ""
     @FocusState private var editsSearch: Bool
@@ -31,6 +29,9 @@ struct QuickConnectDevicePicker: View {
         .accessibilityIdentifier("connection.devicePicker")
         .onChange(of: canBrowse && showsNearby, initial: true) { _, browsing in
             if browsing { nearby.start() } else { nearby.stop() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active, canBrowse, showsNearby { nearby.retryAfterLocalNetworkDenial() }
         }
         .onDisappear { nearby.stop() }
         .task(id: canBrowse && showsTailnet) {
@@ -64,16 +65,15 @@ struct QuickConnectDevicePicker: View {
         Section("附近") {
             let results = nearby.entries.filter { $0.matches(query) }
             if let error = nearby.searchError {
-                Label(nearby.needsLocalNetworkAccess
-                      ? String(localized: "请在系统设置中允许访问本地网络。")
-                      : error.localizedDescription, systemImage: "exclamationmark.circle")
-                    .foregroundStyle(.secondary)
-                #if !targetEnvironment(macCatalyst)
-                if nearby.needsLocalNetworkAccess, let url = URL(string: UIApplication.openSettingsURLString) {
-                    Button("打开系统设置") { openURL(url) }
+                if nearby.needsLocalNetworkAccess {
+                    Label(NearbyNetworkPermissionActions.instructions, systemImage: "exclamationmark.circle")
+                        .foregroundStyle(.secondary)
+                    NearbyNetworkPermissionActions(retry: nearby.retry)
+                } else {
+                    Label(error.localizedDescription, systemImage: "exclamationmark.circle")
+                        .foregroundStyle(.secondary)
+                    Button("重新查找") { nearby.retry() }
                 }
-                #endif
-                Button("重新查找") { nearby.retry() }
             } else if nearby.isResolvingSelection {
                 ProgressView("正在获取电脑地址…")
             } else if let error = nearby.errorMessage {

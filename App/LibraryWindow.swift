@@ -163,7 +163,6 @@ struct LibraryWindow: View {
     @State private var selectedConnection: String?
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.openURL) private var openURL
     @State private var nearby = NearbyComputers()
     @Environment(TailnetDirectory.self) private var tailnet
     @Environment(AppLock.self) private var privacy
@@ -394,6 +393,9 @@ struct LibraryWindow: View {
         .onChange(of: discoversNearbyComputers, initial: true) { _, browsing in
             if browsing { nearby.start() }
             else { nearby.stop() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active, discoversNearbyComputers { nearby.retryAfterLocalNetworkDenial() }
         }
         .task(id: searchesAllSources) {
             if searchesAllSources, !hiddenItems.contains(.tailscale), tailnet.devices.isEmpty {
@@ -675,9 +677,11 @@ struct LibraryWindow: View {
     @ViewBuilder private var unifiedResults: some View {
         let query = unifiedQuery
         let stored = query.storedMatches(in: library.archive.computers)
-        let local = hiddenItems.contains(.nearby) ? [] : nearby.entries.filter { $0.matches(query) }
+        let showsNearby = !hiddenItems.contains(.nearby)
+        let local = showsNearby ? nearby.entries.filter { $0.matches(query) } : []
+        let nearbyPermissionDenied = showsNearby && nearby.needsLocalNetworkAccess
         let peers = hiddenItems.contains(.tailscale) ? [] : tailnet.searchMatches(query)
-        if stored.isEmpty && local.isEmpty && peers.isEmpty {
+        if stored.isEmpty && local.isEmpty && peers.isEmpty && !nearbyPermissionDenied {
             if discoversNearbyComputers && nearby.isSearching {
                 ProgressView("正在查找附近的电脑…")
             } else {
@@ -689,7 +693,13 @@ struct LibraryWindow: View {
                 searchSection("已保存的电脑", items: stored.saved, source: "saved", symbol: "desktopcomputer")
                 searchSection("最近连接", items: stored.recent, source: "recent", symbol: "clock")
                 searchSection("临时链接", items: stored.links, source: "link", symbol: "link")
-                if !local.isEmpty {
+                if nearbyPermissionDenied {
+                    Section("附近") {
+                        Label(NearbyNetworkPermissionActions.instructions, systemImage: "exclamationmark.circle")
+                            .foregroundStyle(.secondary)
+                        NearbyNetworkPermissionActions(retry: nearby.retry)
+                    }
+                } else if !local.isEmpty {
                     Section("附近") {
                         ForEach(local) { item in
                             Button {
@@ -807,20 +817,17 @@ struct LibraryWindow: View {
                         Label("无法查找附近的电脑", systemImage: "network.slash")
                     } description: {
                         if nearby.needsLocalNetworkAccess {
-                            Text("请在系统设置中允许远程随航访问本地网络，再重新查找。")
+                            Text(NearbyNetworkPermissionActions.instructions)
                         } else {
                             Text(verbatim: error.localizedDescription)
                         }
                     } actions: {
-                        #if !targetEnvironment(macCatalyst)
-                        if nearby.needsLocalNetworkAccess,
-                           let settingsURL = URL(string: UIApplication.openSettingsURLString) {
-                            Button("打开系统设置") { openURL(settingsURL) }
-                                .accessibilityIdentifier("nearby.open-settings")
+                        if nearby.needsLocalNetworkAccess {
+                            NearbyNetworkPermissionActions(retry: nearby.retry)
+                        } else {
+                            Button("重新查找") { nearby.retry() }
+                                .accessibilityIdentifier("nearby.retry")
                         }
-                        #endif
-                        Button("重新查找") { nearby.retry() }
-                            .accessibilityIdentifier("nearby.retry")
                     }
                 } else if results.isEmpty && nearby.isSearching {
                     ProgressView("正在查找附近的电脑…")

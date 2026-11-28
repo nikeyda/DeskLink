@@ -15,6 +15,26 @@ import XCTest
         XCTAssertNil(nearby.searchError)
     }
 
+    func testReturningToAnActiveBrowserRetriesOnlyLocalNetworkDenials() {
+        let nearby = NearbyComputers()
+        let permissionDenied = NWError.dns(DNSServiceErrorType(kDNSServiceErr_PolicyDenied))
+        nearby.updateSearchState(.failed(permissionDenied))
+        nearby.retryAfterLocalNetworkDenial()
+        XCTAssertEqual(nearby.searchError, permissionDenied)
+
+        nearby.start()
+        defer { nearby.stop() }
+        let networkDown = NWError.posix(.ENETDOWN)
+        nearby.updateSearchState(.failed(networkDown))
+        nearby.retryAfterLocalNetworkDenial()
+        XCTAssertEqual(nearby.searchError, networkDown)
+
+        nearby.updateSearchState(.failed(permissionDenied))
+        nearby.retryAfterLocalNetworkDenial()
+        XCTAssertNil(nearby.searchError)
+        XCTAssertTrue(nearby.isSearching)
+    }
+
     func testLocalIdentityAcceptsShortBonjourHostAndDoesNotGuessFromAnotherDomain() {
         let localAddresses: Set<String> = ["192.0.2.12"]
         XCTAssertTrue(NearbyLocalIdentity.matches(host: "studio-Mac.LOCAL.", addresses: [], localHost: "Studio-Mac",
@@ -70,6 +90,10 @@ import XCTest
         browser.retry()
         XCTAssertTrue(browser.entries.isEmpty)
         try await waitFor { browser.entries.contains { $0.id == nearby.id } }
+        browser.updateSearchState(.waiting(.dns(DNSServiceErrorType(kDNSServiceErr_PolicyDenied))))
+        XCTAssertTrue(browser.entries.isEmpty)
+        browser.retryAfterLocalNetworkDenial()
+        try await waitFor { browser.searchError == nil && browser.entries.contains { $0.id == nearby.id } }
         DNSServiceRefDeallocate(service)
         registration = nil
         try await waitFor { !browser.entries.contains { $0.id == nearby.id } }

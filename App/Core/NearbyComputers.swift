@@ -159,6 +159,11 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
         start()
     }
 
+    func retryAfterLocalNetworkDenial() {
+        guard browser != nil, needsLocalNetworkAccess else { return }
+        retry()
+    }
+
     func select(_ entry: NearbyComputer, completion: @escaping (Computer) -> Void) {
         guard entries.contains(where: { $0.id == entry.id }) else {
             reportMissingSelection()
