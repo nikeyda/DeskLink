@@ -12,6 +12,17 @@ public enum RemoteViewportSizing: Int, CaseIterable, Sendable, Codable {
     case actualSize = 2
 }
 
+struct RemoteViewportGeometry: Equatable, Sendable {
+    let viewSize: CGSize
+    let framebufferSize: CGSize
+    var displayScale: CGFloat = 1
+
+    var isUsable: Bool {
+        [viewSize.width, viewSize.height, framebufferSize.width, framebufferSize.height, displayScale]
+            .allSatisfy { $0.isFinite && $0 > 0 }
+    }
+}
+
 /// Zoom/pan state shared by the lossless and adaptive renderers.
 ///
 /// Gestures scale the selected framing and offset it from the center in view points. Keeping the transform here gives rendering and input conversion
@@ -26,6 +37,7 @@ struct RemoteViewportState: Equatable, Sendable {
     var displayScale: CGFloat
     private(set) var scale: CGFloat = minimumScale
     private(set) var offset: CGSize = .zero
+    private var geometry: RemoteViewportGeometry?
 
     init(sizing: RemoteViewportSizing = .fit, displayScale: CGFloat = 1) {
         self.sizing = sizing
@@ -40,6 +52,21 @@ struct RemoteViewportState: Equatable, Sendable {
         sizing = .fit
         scale = Self.minimumScale
         offset = .zero
+    }
+
+    mutating func updateGeometry(_ next: RemoteViewportGeometry) {
+        guard next.isUsable, geometry != next else { return }
+        let previousFrame = geometry.flatMap {
+            displayedFrame(viewSize: $0.viewSize, framebufferSize: $0.framebufferSize)
+        }
+        displayScale = next.displayScale
+        geometry = next
+        if let previousFrame, let frame = displayedFrame(viewSize: next.viewSize, framebufferSize: next.framebufferSize) {
+            // Keep the same relative remote point under the viewport center.
+            offset.width *= frame.width / previousFrame.width
+            offset.height *= frame.height / previousFrame.height
+        }
+        clampOffset(viewSize: next.viewSize, framebufferSize: next.framebufferSize)
     }
 
     mutating func zoom(

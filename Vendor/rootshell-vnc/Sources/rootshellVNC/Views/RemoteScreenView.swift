@@ -252,18 +252,9 @@ public struct RemoteScreenView: View {
                         safeAreaEdges: hudSafeAreaEdges)
                 }
                 .clipped()
-                .onChange(of: geometry.size) { _, newSize in
-                    viewport.clampOffset(
-                        viewSize: CGSize(width: newSize.width, height: max(1, newSize.height - hudReserve)),
-                        framebufferSize: framebufferSize)
-                }
-                .onChange(of: framebufferSize) { _, newSize in
-                    viewport.clampOffset(viewSize: contentSize, framebufferSize: newSize)
-                }
-                .onChange(of: hudReserve) { _, reserve in
-                    viewport.clampOffset(
-                        viewSize: CGSize(width: geometry.size.width, height: max(1, geometry.size.height - reserve)),
-                        framebufferSize: framebufferSize)
+                .onChange(of: RemoteViewportGeometry(viewSize: contentSize, framebufferSize: framebufferSize),
+                          initial: true) { _, next in
+                    viewport.updateGeometry(next)
                 }
             }
 

@@ -5,6 +5,69 @@ import RFBProtocol
 @testable import RFBTransport
 
 @MainActor final class DisplaySizeTests: XCTestCase {
+    func testResizingKeepsTheMagnifiedPointAtTheCenterOfTheViewport() throws {
+        let portrait = RemoteViewportGeometry(viewSize: CGSize(width: 390, height: 700),
+                                              framebufferSize: CGSize(width: 1600, height: 900))
+        let landscape = RemoteViewportGeometry(viewSize: CGSize(width: 850, height: 350),
+                                               framebufferSize: portrait.framebufferSize)
+        var viewport = RemoteViewportState()
+        viewport.updateGeometry(portrait)
+        viewport.zoom(by: 2.5, around: CGPoint(x: 90, y: 300),
+                      viewSize: portrait.viewSize, framebufferSize: portrait.framebufferSize)
+        XCTAssertNotEqual(viewport.offset, .zero)
+
+        func center(in geometry: RemoteViewportGeometry) throws -> CGPoint {
+            let viewCenter = CGPoint(x: geometry.viewSize.width / 2, y: geometry.viewSize.height / 2)
+            return try XCTUnwrap(viewport.framebufferPoint(for: viewCenter, viewSize: geometry.viewSize,
+                                                          framebufferSize: geometry.framebufferSize))
+        }
+
+        let original = try center(in: portrait)
+        viewport.updateGeometry(landscape)
+        let rotated = try center(in: landscape)
+        XCTAssertEqual(rotated.x, original.x, accuracy: 0.001)
+        XCTAssertEqual(rotated.y, original.y, accuracy: 0.001)
+        XCTAssertEqual(viewport.scale, 2.5)
+        viewport.updateGeometry(portrait)
+        let restored = try center(in: portrait)
+        XCTAssertEqual(restored.x, original.x, accuracy: 0.001)
+        XCTAssertEqual(restored.y, original.y, accuracy: 0.001)
+    }
+
+    func testActualSizeKeepsItsRelativeCenterThroughAFrameGapAndRetinaResize() throws {
+        let view = CGSize(width: 820, height: 640)
+        let original = RemoteViewportGeometry(viewSize: view, framebufferSize: CGSize(width: 1600, height: 1200),
+                                              displayScale: 2)
+        let resized = RemoteViewportGeometry(viewSize: CGSize(width: 930, height: 510),
+                                             framebufferSize: CGSize(width: 1920, height: 1080), displayScale: 3)
+        var viewport = RemoteViewportState(sizing: .actualSize)
+        viewport.updateGeometry(original)
+        viewport.pan(by: CGSize(width: 175, height: -85), viewSize: view, framebufferSize: original.framebufferSize)
+        let before = viewport
+        viewport.updateGeometry(RemoteViewportGeometry(viewSize: resized.viewSize, framebufferSize: .zero,
+                                                       displayScale: resized.displayScale))
+        XCTAssertEqual(viewport, before)
+
+        func relativeCenter(_ geometry: RemoteViewportGeometry) throws -> CGPoint {
+            let center = CGPoint(x: geometry.viewSize.width / 2, y: geometry.viewSize.height / 2)
+            let point = try XCTUnwrap(viewport.framebufferPoint(for: center, viewSize: geometry.viewSize,
+                                                               framebufferSize: geometry.framebufferSize))
+            return CGPoint(x: point.x / geometry.framebufferSize.width, y: point.y / geometry.framebufferSize.height)
+        }
+
+        let first = try relativeCenter(original)
+        viewport.updateGeometry(resized)
+        let second = try relativeCenter(resized)
+        XCTAssertEqual(second.x, first.x, accuracy: 0.001)
+        XCTAssertEqual(second.y, first.y, accuracy: 0.001)
+        XCTAssertEqual(viewport.sizing, .actualSize)
+        XCTAssertEqual(viewport.displayScale, 3)
+        let physicalSize = try XCTUnwrap(viewport.displayedFrame(viewSize: resized.viewSize,
+                                                                framebufferSize: resized.framebufferSize)?.size)
+        XCTAssertEqual(physicalSize.width, 640, accuracy: 0.001)
+        XCTAssertEqual(physicalSize.height, 360, accuracy: 0.001)
+    }
+
     func testInitialFramingUsesOneTransformForPictureAndPointer() throws {
         let view = CGSize(width: 400, height: 300)
         let remote = CGSize(width: 800, height: 400)

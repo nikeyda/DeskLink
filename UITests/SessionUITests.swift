@@ -432,6 +432,52 @@ final class SessionUITests: XCTestCase {
         }
     }
 
+    func testRotatingAMagnifiedDesktopKeepsItsCenterAndClickMapping() async throws {
+        let device = XCUIDevice.shared
+        device.orientation = .portrait
+        defer { device.orientation = .portrait }
+        let desktop = LocalTestDisplay()
+        var clicks: [CGPoint] = []
+        desktop.onWirePointer = { buttons, point in
+            if buttons & 1 != 0 { clicks.append(point) }
+        }
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        openChart(app, port: port)
+        let surface = app.descendants(matching: .any)["session.input"].firstMatch
+        try await waitUntil { desktop.frameCount > 0 && surface.isHittable && surface.frame.height > surface.frame.width }
+
+        func sample(_ horizontal: CGFloat) async throws -> CGPoint {
+            let next = clicks.count
+            surface.coordinate(withNormalizedOffset: CGVector(dx: horizontal, dy: 0.5)).tap()
+            try await waitUntil { clicks.count > next }
+            return clicks[next]
+        }
+
+        let fittedCenter = try await sample(0.5)
+        let fittedLeft = try await sample(0.25)
+        let fittedDistance = fittedCenter.x - fittedLeft.x
+        surface.pinch(withScale: 2.5, velocity: 1.5)
+        let portraitCenter = try await sample(0.5)
+        let portraitLeft = try await sample(0.25)
+        XCTAssertLessThan(portraitCenter.x - portraitLeft.x, fittedDistance - 8)
+
+        device.orientation = .landscapeLeft
+        try await waitUntil { surface.isHittable && surface.frame.width > surface.frame.height }
+        let landscapeCenter = try await sample(0.5)
+        let landscapeLeft = try await sample(0.25)
+        XCTAssertEqual(landscapeCenter.x, portraitCenter.x, accuracy: 2)
+        XCTAssertEqual(landscapeCenter.y, portraitCenter.y, accuracy: 2)
+        XCTAssertGreaterThan(landscapeCenter.x - landscapeLeft.x, 3)
+        XCTAssertLessThan(landscapeCenter.x - landscapeLeft.x, fittedDistance - 5)
+
+        let receipt = XCTAttachment(string: "Portrait center: \(portraitCenter)\nLandscape center: \(landscapeCenter)")
+        receipt.name = "Remote pointer coordinates across rotation"
+        receipt.lifetime = .keepAlways
+        add(receipt)
+    }
+
     func testHardwareControlReachesTheServerAsCommandWhenEnabledInTheEditor() async throws {
         let desktop = LocalTestDisplay()
         let port = try await desktop.start()

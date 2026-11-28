@@ -1267,9 +1267,6 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         self.requestDictation = requestDictation
         self.toggleFullScreen = toggleFullScreen
         self.disconnect = disconnect
-        self.viewport.clampOffset(
-            viewSize: bounds.size,
-            framebufferSize: framebufferSize)
 
         let cursorPolicyChanged = self.remoteCursorPresence != remoteCursorPresence
             || self.usesFallbackCursor != usesFallbackCursor
@@ -1363,17 +1360,8 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        var adjusted = viewport
-        adjusted.clampOffset(
-            viewSize: bounds.size,
-            framebufferSize: framebufferSize)
-        if adjusted != viewport {
-            viewport = adjusted
-            onViewportChange?(adjusted)
-        }
         #if !targetEnvironment(macCatalyst)
-        // A bounds change moves the desktop under a cursor that did not
-        // itself move, and the viewport offset can come out unchanged.
+        // A bounds change can move the picture under an unchanged cursor.
         refreshTrackpadCursorImage()
         #endif
     }

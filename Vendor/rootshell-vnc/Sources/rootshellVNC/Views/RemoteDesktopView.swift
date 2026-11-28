@@ -356,6 +356,8 @@ public struct RemoteDesktopView: View {
                 let contentSize = CGSize(
                     width: geometry.size.width,
                     height: max(1, geometry.size.height - hudReserve))
+                let viewportGeometry = RemoteViewportGeometry(viewSize: contentSize, framebufferSize: framebufferSize,
+                                                              displayScale: displayScale)
 
                 let transform = viewport.renderScale(viewSize: contentSize, framebufferSize: framebufferSize)
                 ZStack {
@@ -428,10 +430,10 @@ public struct RemoteDesktopView: View {
                         Text(String(localized: "The password will be typed into the remote computer. Type Password Only skips Return so you can submit it yourself.", bundle: .module))
                     }
                 }
+                .onChange(of: viewportGeometry, initial: true) { _, next in
+                    viewport.updateGeometry(next)
+                }
                 .onChange(of: geometry.size) { _, newSize in
-                    viewport.clampOffset(
-                        viewSize: CGSize(width: newSize.width, height: max(1, newSize.height - hudReserve)),
-                        framebufferSize: framebufferSize)
                     #if !canImport(UIKit)
                     updateRemoteDisplaySize(for: newSize)
                     #elseif targetEnvironment(macCatalyst)
@@ -439,15 +441,7 @@ public struct RemoteDesktopView: View {
                     updateRemoteDisplaySizeFromMeasuredContainer()
                     #endif
                 }
-                .onChange(of: framebufferSize) { _, newSize in
-                    viewport.clampOffset(
-                        viewSize: contentSize,
-                        framebufferSize: newSize)
-                }
-                .onChange(of: hudReserve) { _, reserve in
-                    viewport.clampOffset(
-                        viewSize: CGSize(width: geometry.size.width, height: max(1, geometry.size.height - reserve)),
-                        framebufferSize: framebufferSize)
+                .onChange(of: hudReserve) {
                     #if canImport(UIKit)
                     updateRemoteDisplaySizeFromMeasuredContainer()
                     #endif
@@ -465,10 +459,7 @@ public struct RemoteDesktopView: View {
                         presentPendingLoginPasswordPrompt()
                     }
                 }
-                .onChange(of: displayScale, initial: true) { oldScale, newScale in
-                    viewport.displayScale = newScale
-                    guard oldScale != newScale else { return }
-                    viewport.clampOffset(viewSize: contentSize, framebufferSize: framebufferSize)
+                .onChange(of: displayScale) {
                     #if canImport(UIKit)
                     updateRemoteDisplaySizeFromMeasuredContainer()
                     #else
