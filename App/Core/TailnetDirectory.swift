@@ -255,6 +255,16 @@ final class TailnetDirectory {
         error = nil
     }
 
+    #if DEBUG
+    func installTestListing(_ json: String) {
+        guard let listing = try? JSONDecoder().decode(Listing.self, from: Data(json.utf8)),
+              let testAccount = try? TailnetAccount(tailnet: "fixture.invalid") else { return }
+        account = testAccount
+        devices = listing.devices.filter { $0.computer != nil }
+        hasLoadedDevices = true
+    }
+    #endif
+
     func refresh() async {
         guard let account, !loading else { return }
         let generation = UUID()

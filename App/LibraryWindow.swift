@@ -402,7 +402,10 @@ struct LibraryWindow: View {
         }
         .onDisappear { nearby.stop() }
         .sheet(item: $editor) { request in
-            ConnectionEditor(request: request, library: library, openLink: { value in
+            ConnectionEditor(request: request, library: library, hiddenSources: hiddenItems, selectDevice: { computer, sshPort in
+                guard editor?.id == request.id else { return }
+                openDiscovered(computer, suggestedSSHPort: sshPort, quality: nil)
+            }, openLink: { value in
                 let route: ConnectionRoute
                 if value.lowercased().hasPrefix("desklink://"), let url = URL(string: value) {
                     route = try ConnectionRoute(url: url)
@@ -413,6 +416,7 @@ struct LibraryWindow: View {
             }) { offer in
                 start(offer)
             }
+            .id(request.id)
         }
         .sheet(isPresented: $settings) { ApplicationPreferences(preferences: preferences) }
         .sheet(isPresented: $downloads) { DownloadsView() }

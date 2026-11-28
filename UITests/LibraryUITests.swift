@@ -321,6 +321,67 @@ final class LibraryUITests: XCTestCase {
     }
 
     #if targetEnvironment(simulator)
+    func testQuickConnectOpensTailnetDeviceWithItsConfiguredPorts() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]
+        app.launchEnvironment["DESKLINK_TEST_TAILNET_LISTING"] = #"""
+        {"devices":[
+            {"id":"quick-studio","hostname":"Fixture Studio","name":"studio.fixture.invalid","addresses":["100.64.7.19"],"os":"macOS","authorized":true},
+            {"id":"unapproved","hostname":"Unapproved","name":"unapproved.fixture.invalid","addresses":["100.64.7.20"],"os":"linux","authorized":false}
+        ]}
+        """#
+        app.launch()
+        selectCollection("library.tailscale", in: app)
+        let card = app.buttons["tailnet.device.quick-studio"].firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 8))
+        card.press(forDuration: 0.8)
+        let portSettings = app.buttons["端口设置"].firstMatch
+        XCTAssertTrue(portSettings.waitForExistence(timeout: 8))
+        portSettings.tap()
+        let vnc = app.textFields["tailnet.ports.vnc"].firstMatch
+        let ssh = app.textFields["tailnet.ports.ssh"].firstMatch
+        XCTAssertTrue(vnc.waitForExistence(timeout: 8))
+        vnc.tap()
+        vnc.typeText("15971")
+        ssh.tap()
+        ssh.typeText("2207")
+        app.buttons["tailnet.ports.save"].firstMatch.tap()
+        XCTAssertTrue(card.waitForExistence(timeout: 8))
+
+        app.buttons["library.quick"].firstMatch.tap()
+        let choose = app.buttons["connection.chooseDevice"].firstMatch
+        XCTAssertTrue(choose.waitForExistence(timeout: 8))
+        choose.tap()
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let prompt = springboard.alerts.containing(
+            NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS %@", "local network", "本地网络")
+        ).firstMatch
+        if prompt.waitForExistence(timeout: 3) {
+            prompt.buttons.matching(NSPredicate(format: "label IN %@", ["Allow", "允许"])).firstMatch.tap()
+        }
+        let device = app.buttons["connection.device.tailscale.quick-studio"].firstMatch
+        XCTAssertTrue(device.waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["connection.device.tailscale.unapproved"].firstMatch.exists)
+        attachLibraryScreenshot(app, name: "Quick Connect device chooser")
+        device.tap()
+        let host = app.textFields["connection.host"].firstMatch
+        XCTAssertTrue(host.waitForExistence(timeout: 8))
+        XCTAssertEqual(host.value as? String, "100.64.7.19")
+        XCTAssertEqual(app.textFields["connection.port"].firstMatch.value as? String, "15971")
+        let form = app.collectionViews["connection.form"].firstMatch
+        let useSSH = app.switches["connection.useSSH"].firstMatch
+        for _ in 0..<4 where !useSSH.isHittable { form.swipeUp() }
+        XCTAssertTrue(useSSH.isHittable)
+        if useSSH.value as? String == "0" {
+            useSSH.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.5)).tap()
+        }
+        XCTAssertEqual(useSSH.value as? String, "1")
+        let sshPort = app.textFields["connection.sshPort"].firstMatch
+        for _ in 0..<4 where !sshPort.exists { form.swipeUp() }
+        XCTAssertEqual(sshPort.value as? String, "2207")
+    }
+
     func testOpeningScreensDirectoryArchiveReportsPreservedFolders() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]

@@ -79,6 +79,59 @@ final class LibraryClickUITests: XCTestCase {
         if list.exists { list.click() } else { app.buttons["列表"].firstMatch.click() }
     }
     #else
+    func testQuickConnectBrowsesNearbyAndPreservesManualDraftWhenGoingBack() throws {
+        continueAfterFailure = false
+        let name = "Telescope quick " + UUID().uuidString.prefix(8)
+        let port: UInt16 = 15282
+        var registration: DNSServiceRef?
+        defer { if let registration { DNSServiceRefDeallocate(registration) } }
+        XCTAssertEqual(DNSServiceRegister(&registration, 0, kDNSServiceInterfaceIndexLocalOnly, name,
+                                          "_rfb._tcp", "local.", nil, port.bigEndian, 0, nil, nil, nil),
+                       DNSServiceErrorType(kDNSServiceErr_NoError))
+
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]
+        app.launch()
+        let quick = app.buttons["library.quick"].firstMatch
+        XCTAssertTrue(quick.waitForExistence(timeout: 8))
+        quick.tap()
+        let host = app.textFields["connection.host"].firstMatch
+        XCTAssertTrue(host.waitForExistence(timeout: 8))
+        host.tap()
+        host.typeText("draft.fixture.invalid")
+        let choose = app.buttons["connection.chooseDevice"].firstMatch
+        let hideKeyboard = app.keyboards.buttons["隐藏键盘"].firstMatch
+        if hideKeyboard.isHittable {
+            hideKeyboard.tap()
+            XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 6))
+        }
+        choose.tap()
+
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let prompt = springboard.alerts.containing(
+            NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS %@", "local network", "本地网络")
+        ).firstMatch
+        if prompt.waitForExistence(timeout: 4) {
+            prompt.buttons.matching(NSPredicate(format: "label IN %@", ["Allow", "允许"])).firstMatch.tap()
+        }
+        let computer = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@",
+                                                        "connection.device.nearby.", name)).firstMatch
+        XCTAssertTrue(computer.waitForExistence(timeout: 12))
+        let back = app.navigationBars.buttons["BackButton"].firstMatch
+        if back.exists { back.tap() }
+        else { app.navigationBars.buttons["快速连接"].firstMatch.tap() }
+        XCTAssertTrue(host.waitForExistence(timeout: 8))
+        XCTAssertEqual(host.value as? String, "draft.fixture.invalid")
+        choose.tap()
+        XCTAssertTrue(computer.waitForExistence(timeout: 12))
+        computer.tap()
+        let portField = app.textFields["connection.port"].firstMatch
+        XCTAssertTrue(portField.waitForExistence(timeout: 8))
+        XCTAssertEqual(portField.value as? String, String(port))
+        XCTAssertNotEqual(host.value as? String, "draft.fixture.invalid")
+        XCTAssertFalse(choose.exists)
+    }
+
     func testNearbyContextMenuChoosesAConnectionModeWithoutChangingTheDefault() throws {
         continueAfterFailure = false
         let app = XCUIApplication()

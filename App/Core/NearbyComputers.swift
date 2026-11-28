@@ -86,6 +86,7 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
     var errorMessage: String?
     private(set) var searchError: NWError?
     var needsLocalNetworkAccess: Bool { searchError == .dns(DNSServiceErrorType(kDNSServiceErr_PolicyDenied)) }
+    var isResolvingSelection: Bool { resolving != nil }
     private var browser: NWBrowser?
     private var discovery: [String: Discovery] = [:]
     private var resolving: NetService?
@@ -149,7 +150,11 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
 
     func select(_ entry: NearbyComputer, completion: @escaping (Computer) -> Void) {
         cancelSelection()
-        guard entries.contains(where: { $0.id == entry.id }) else { return }
+        guard entries.contains(where: { $0.id == entry.id }) else {
+            errorMessage = String(localized: "这台电脑已离开附近设备列表。请重新查找。")
+            return
+        }
+        errorMessage = nil
         let service = NetService(domain: entry.service.domain, type: entry.service.type, name: entry.name)
         resolving = service
         selection = completion

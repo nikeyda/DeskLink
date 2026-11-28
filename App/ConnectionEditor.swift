@@ -48,6 +48,10 @@ struct EditorRequest: Identifiable {
     var remembersObservation = true
     var rejectedSSHCredential = false
 
+    var allowsDeviceSelection: Bool {
+        purpose == .quick && initialAddress.isEmpty && initialSSHPort == nil && link == nil
+    }
+
     @MainActor
     static func connectingToDiscovered(_ computer: Computer, in library: ConnectionLibrary,
                                        suggestedSSHPort: UInt16?, quality: PictureQuality?) -> Self {
@@ -211,10 +215,13 @@ extension Computer {
 struct ConnectionEditor: View {
     let request: EditorRequest
     let library: ConnectionLibrary
+    let hiddenSources: HiddenSidebarItems
+    let selectDevice: (Computer, UInt16?) -> Void
     let openLink: (String) throws -> Void
     let didSave: () -> Void
     let connect: (SessionRequest) -> Void
     @Environment(\.dismiss) private var dismiss
+    @Environment(TailnetDirectory.self) private var tailnet
     @State private var name: String
     @State private var host: String
     @State private var port: String
@@ -280,14 +287,18 @@ struct ConnectionEditor: View {
     @State private var linkCredentialAccount: Computer?
     @State private var linkText = ""
     @State private var showsLinkInput = false
+    @State private var showsDevicePicker = false
     @State private var error: String?
     @State private var showSettings = false
     @FocusState private var editingHost: Bool
 
-    init(request: EditorRequest, library: ConnectionLibrary, openLink: @escaping (String) throws -> Void,
+    init(request: EditorRequest, library: ConnectionLibrary, hiddenSources: HiddenSidebarItems,
+         selectDevice: @escaping (Computer, UInt16?) -> Void, openLink: @escaping (String) throws -> Void,
          didSave: @escaping () -> Void, connect: @escaping (SessionRequest) -> Void) {
         self.request = request
         self.library = library
+        self.hiddenSources = hiddenSources
+        self.selectDevice = selectDevice
         self.openLink = openLink
         self.didSave = didSave
         self.connect = connect
@@ -420,6 +431,10 @@ struct ConnectionEditor: View {
             .accessibilityIdentifier("connection.form")
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(isPresented: $showsDevicePicker) {
+                QuickConnectDevicePicker(showsNearby: offersNearbyDevices, showsTailnet: offersTailnetDevices,
+                                         select: selectDevice)
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消", role: .cancel) { dismiss() }
@@ -504,6 +519,9 @@ struct ConnectionEditor: View {
         catch { self.error = "无法识别这个连接链接。请检查地址和参数。" }
     }
 
+    private var offersNearbyDevices: Bool { !hiddenSources.contains(.nearby) }
+    private var offersTailnetDevices: Bool { !hiddenSources.contains(.tailscale) && tailnet.account != nil }
+
     private var addressSection: some View {
         Section {
             if isSaving { TextField("名称", text: $name).accessibilityIdentifier("connection.name") }
@@ -522,6 +540,15 @@ struct ConnectionEditor: View {
                 .keyboardType(.numberPad)
                 .accessibilityIdentifier("connection.port")
             if request.purpose == .quick {
+                if request.allowsDeviceSelection && (offersNearbyDevices || offersTailnetDevices) {
+                    Button {
+                        editingHost = false
+                        showsDevicePicker = true
+                    } label: {
+                        Label("选择电脑", systemImage: "desktopcomputer")
+                    }
+                    .accessibilityIdentifier("connection.chooseDevice")
+                }
                 Button("打开连接链接") { linkText = ""; showsLinkInput = true }
                     .accessibilityIdentifier("connection.openLink")
             }

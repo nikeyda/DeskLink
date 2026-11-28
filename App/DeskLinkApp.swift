@@ -38,7 +38,11 @@ struct DeskLinkApp: App {
             #if targetEnvironment(macCatalyst)
             _availability = State(initialValue: MacAvailability(defaults: defaults))
             #endif
-            _tailnet = State(initialValue: TailnetDirectory(defaults: defaults))
+            let testDirectory = TailnetDirectory(defaults: defaults)
+            if let listing = ProcessInfo.processInfo.environment["DESKLINK_TEST_TAILNET_LISTING"] {
+                testDirectory.installTestListing(listing)
+            }
+            _tailnet = State(initialValue: testDirectory)
             _privacy = State(initialValue: AppLock(defaults: defaults))
             _sync = State(initialValue: LibrarySync(settings: file.deletingPathExtension().appendingPathExtension("sync.json"), defaults: defaults))
             return
