@@ -51,6 +51,7 @@ struct MacSessionMenuActions {
     var viewport: Binding<RemoteViewportState>?
     var startDictation: (() -> Void)?
     var captureScreenshot: (() -> Void)?
+    var isFullScreen = false
 }
 
 private struct MacLibraryMenuKey: FocusedValueKey { typealias Value = MacLibraryMenuActions }
@@ -96,7 +97,7 @@ struct MacMenus: Commands {
         CommandMenu("连接") {
             Button(desktop?.observing == true ? "控制远程电脑" : "仅观察") { desktop?.toggleObservation() }
                 .disabled(desktop?.session.connectionState.isConnected != true)
-            Button("切换全屏幕") { desktop?.toggleFullScreen() }
+            Button(desktop?.isFullScreen == true ? "退出全屏幕" : "进入全屏幕") { desktop?.toggleFullScreen() }
                 .disabled(desktop?.session.connectionState.isConnected != true)
             Button("保存屏幕快照…") { desktop?.captureScreenshot?() }
                 .disabled(desktop?.session.connectionState.isConnected != true)

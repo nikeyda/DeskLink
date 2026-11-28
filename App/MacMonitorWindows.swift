@@ -92,6 +92,7 @@ struct MacMonitorWindow: View {
     @State private var viewport: RemoteViewportState
     @State private var keyboard = VNCKeyboardCapture()
     @State private var controls = VNCDesktopControls()
+    @State private var windowSource = MacWindowSceneSource()
     @State private var showsDictation = false
     @State private var screenshot = ScreenshotExport()
 
@@ -121,13 +122,11 @@ struct MacMonitorWindow: View {
         return MacSessionMenuActions(session: source.session, controls: controls, clipboard: source.clipboard,
                                      clipboardSharing: source.clipboardSharing,
                                      observing: source.observing, toggleObservation: source.toggleObservation,
-                                     toggleFullScreen: {
-                                         UIApplication.shared.sendAction(NSSelectorFromString("toggleFullScreen:"),
-                                                                         to: nil, from: nil, for: nil)
-                                     }, disconnect: source.disconnect, chooseMonitor: source.chooseMonitor,
+                                     toggleFullScreen: { windowSource.toggleFullScreen() },
+                                     disconnect: source.disconnect, chooseMonitor: source.chooseMonitor,
                                      splitMonitors: source.splitMonitors, isSplit: true, viewport: $viewport,
                                      startDictation: { showsDictation = true },
-                                     captureScreenshot: captureScreenshot)
+                                     captureScreenshot: captureScreenshot, isFullScreen: windowSource.isFullScreen)
     }
 
     private func captureScreenshot() {
@@ -140,6 +139,8 @@ struct MacMonitorWindow: View {
         let gestures = gesturePreferences.configuration(for: group.computer,
                                                         usesAppleModifiers: group.session.serverUsesAppleModifierConvention)
         let view = RemoteDesktopView(session: group.session, keyboardCapture: keyboard,
+                                     isFullScreen: windowSource.isFullScreen,
+                                     toggleFullScreen: { windowSource.toggleFullScreen() },
                                      pointerSpeed: CursorTrackingSpeed.validated(group.computer.cursorTrackingSpeed) ?? pointerSpeed,
                                      touchGestures: gestures, hostOwnsRecoveryChrome: true)
             .controllingPointerMode($pointer.mode)
@@ -176,6 +177,7 @@ struct MacMonitorWindow: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle(title)
+        .background { MacWindowSceneCapture(source: windowSource, title: title) }
         .modifier(ScreenshotExporter(export: screenshot))
         .onChange(of: localOptionKey, initial: true) { _, value in
             keyboard.localOptionKey = value

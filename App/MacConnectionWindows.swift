@@ -1,6 +1,7 @@
 #if targetEnvironment(macCatalyst)
 import SwiftUI
 import UIKit
+import Observation
 
 enum MacConnectionTabs: String {
     static let preference = "mac.connectionTabs"
@@ -58,9 +59,23 @@ final class MacConnectionWindows {
     }
 }
 
-@MainActor
+@MainActor @Observable
 final class MacWindowSceneSource {
-    weak var scene: UIWindowScene?
+    @ObservationIgnored weak var window: UIWindow?
+    var scene: UIWindowScene? { window?.windowScene }
+    private(set) var isFullScreen = false
+
+    func refreshFullScreen() {
+        let fullScreen = scene?.isFullScreen == true
+        if isFullScreen != fullScreen { isFullScreen = fullScreen }
+    }
+
+    @discardableResult
+    func toggleFullScreen(send: @MainActor (UIWindow) -> Bool = MacApplication.toggleKeyWindowFullScreen(from:)) -> Bool {
+        guard let window, SessionWindowFocus.Tracker.isFocused(window),
+              let scene, scene.isFullScreen || scene.sizeRestrictions?.allowsFullScreen != false else { return false }
+        return send(window)
+    }
 }
 
 struct MacWindowSceneCapture: UIViewRepresentable {
@@ -84,14 +99,28 @@ struct MacWindowSceneCapture: UIViewRepresentable {
             self.title = title
             super.init(frame: .zero)
             isUserInteractionEnabled = false
+            for name in ["NSWindowDidEnterFullScreenNotification", "NSWindowDidExitFullScreenNotification"] {
+                NotificationCenter.default.addObserver(self, selector: #selector(refreshFullScreen),
+                                                       name: Notification.Name(name), object: nil)
+            }
         }
 
         required init?(coder: NSCoder) { nil }
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
-            source.scene = window?.windowScene
+            source.window = window
             source.scene?.title = title
+            refreshFullScreen()
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            if source.isFullScreen != (source.scene?.isFullScreen == true) { refreshFullScreen() }
+        }
+
+        @objc private func refreshFullScreen() {
+            DispatchQueue.main.async { [weak source] in source?.refreshFullScreen() }
         }
     }
 }

@@ -306,6 +306,9 @@ struct LibraryWindow: View {
                     #endif
                 }
                 .id(activeSession.id)
+                #if targetEnvironment(macCatalyst)
+                .environment(windowSource)
+                #endif
                 .background(Color(uiColor: .systemBackground).ignoresSafeArea())
                 .preferredColorScheme(.dark)
             } else {
@@ -382,7 +385,7 @@ struct LibraryWindow: View {
         #if targetEnvironment(macCatalyst)
         .background {
             let title = privacy.locked ? AppName.display : activeSession?.computer.displayName ?? AppName.display
-            MacWindowSceneCapture(source: windowSource, title: title).frame(width: 0, height: 0)
+            MacWindowSceneCapture(source: windowSource, title: title)
         }
         .onContinueUserActivity(MacConnectionWindows.activityType) { activity in
             guard let content = availability.connectionWindows.take(activity) else { return }

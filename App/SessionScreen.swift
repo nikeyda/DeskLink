@@ -47,7 +47,12 @@ struct SessionScreen: View {
     @State private var session: VNCSession
     @State private var clipboard: VNCClipboardSynchronizer?
     @State private var observing: Bool
+    #if targetEnvironment(macCatalyst)
+    @Environment(MacWindowSceneSource.self) private var macWindow: MacWindowSceneSource?
+    private var fullscreen: Bool { macWindow?.isFullScreen == true }
+    #else
     @State private var fullscreen = false
+    #endif
     @State private var recorded = false
     @State private var recordedVideoPause = false
     @State private var stopped = false
@@ -736,7 +741,7 @@ struct SessionScreen: View {
                                      toggleFullScreen: toggleFullScreen, disconnect: { finish(edit: false) },
                                      chooseMonitor: chooseMonitor, splitMonitors: showAllMonitorWindows,
                                      isSplit: monitorGroup != nil, viewport: $viewport, startDictation: { showsDictation = true },
-                                     captureScreenshot: captureScreenshot)
+            captureScreenshot: captureScreenshot, isFullScreen: fullscreen)
     }
 
     private func showAllMonitorWindows() {
@@ -849,9 +854,7 @@ struct SessionScreen: View {
 
     private func toggleFullScreen() {
         #if targetEnvironment(macCatalyst)
-        if UIApplication.shared.sendAction(NSSelectorFromString("toggleFullScreen:"), to: nil, from: nil, for: nil) {
-            fullscreen.toggle()
-        }
+        macWindow?.toggleFullScreen()
         #else
         if fullscreen { toolbar.visible = toolbarBeforeFullScreen }
         else {

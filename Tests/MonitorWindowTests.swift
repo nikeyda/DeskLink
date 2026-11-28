@@ -243,20 +243,22 @@ import SwiftUI
         let library = ConnectionLibrary(file: file)
         var computer = Computer(endpoint: try Endpoint(address: "monitor-view.fixture.invalid"))
         computer.layout = .combined
-        let session = VNCSession(configuration: computer.configuration)
-        session.framebufferWidth = 240
-        session.framebufferHeight = 80
+        let session = VNCSession(configuration: .init(enableHighPerformanceMode: true, displaySizingMode: .matchClient,
+                                                       displayMode: .twoVirtualDisplays))
+        session.framebufferWidth = 64
+        session.framebufferHeight = 16
+        session.isHighPerformanceMode = true
+        session.setVideoDisplayCount(2)
         session.connectionState = .connected
-        await session.updateRemoteDisplayRegions([
-            RFBScreenLayout(id: 1, x: 0, y: 0, width: 120, height: 80, flags: 0),
-            RFBScreenLayout(id: 2, x: 120, y: 0, width: 120, height: 80, flags: 0),
-        ])
+        session.secondaryVideoBandRenderer.setScreenSize(width: 32, height: 16)
+        session.secondaryVideoBandRenderer.setBands([1: try buffer(0xffff0000)])
+        XCTAssertTrue(session.isReadyForDesktopInput)
 
         let pointer = SessionPointerControl(mode: .trackpad)
         let windows = MacMonitorWindows()
-        let id = MonitorWindowID(connection: UUID(), display: 2)
+        let id = MonitorWindowID(connection: UUID(), display: 2, virtual: true)
         windows.set(.init(session: session, computer: computer, library: library, pointer: pointer,
-                          primary: 1, children: [2], observing: false), for: id.connection)
+                          primary: 1, children: [2], observing: false, topology: .virtualVideo), for: id.connection)
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let host = UIHostingController(rootView: MacMonitorWindow(id: id, windows: windows,
             privacy: AppLock(defaults: preferences)).defaultAppStorage(preferences))

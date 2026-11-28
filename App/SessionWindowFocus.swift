@@ -42,13 +42,17 @@ struct SessionWindowFocus: UIViewRepresentable {
         }
 
         private func report() {
-            let active = window != nil && window?.isKeyWindow == true && Self.front === window
+            let active = Self.isFocused(window)
             guard active != previous else { return }
             previous = active
             Task { @MainActor [weak self] in
                 guard let self, previous == active else { return }
                 changed?(active)
             }
+        }
+
+        static func isFocused(_ window: UIWindow?) -> Bool {
+            window?.isKeyWindow == true && Self.front === window
         }
     }
 }

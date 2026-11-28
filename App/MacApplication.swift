@@ -1,5 +1,6 @@
 #if targetEnvironment(macCatalyst)
 import Foundation
+import UIKit
 
 @MainActor
 enum MacApplication {
@@ -32,6 +33,15 @@ enum MacApplication {
 
     static var isDockHidden: Bool {
         shared?.value(forKey: "activationPolicy") as? Int == ActivationPolicy.accessory.rawValue
+    }
+
+    static func toggleKeyWindowFullScreen(from source: UIWindow) -> Bool {
+        let action = NSSelectorFromString("toggleFullScreen:")
+        if let window = shared?.value(forKey: "keyWindow") as? NSObject, window.responds(to: action) {
+            window.perform(action, with: source)
+            return true
+        }
+        return UIApplication.shared.sendAction(action, to: nil, from: source, for: nil)
     }
 
     static var tabPreference: TabPreference? {
