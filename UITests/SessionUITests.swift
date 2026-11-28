@@ -1711,6 +1711,46 @@ final class SessionUITests: XCTestCase {
         app.buttons["session.close"].tap()
     }
 
+    func testFnToolbarSendsNavigationWithTheExistingModifierAndKeyboardPaths() async throws {
+        let desktop = LocalTestDisplay()
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString, "-toolbar.iPad.style", "docked",
+                               "-toolbar.iPad.buttons", "fn,left,right,up,down,shift"]
+        app.launch()
+        connectChart(app, port: port)
+        let fn = app.buttons["toolbar.fn"]
+        try await waitUntil { desktop.frameCount > 0 && fn.isHittable }
+
+        fn.tap()
+        app.buttons["toolbar.left"].tap()
+        app.buttons["toolbar.left"].tap()
+        try await waitUntil { desktop.keyDowns == [0xff50, 0xff51] }
+
+        app.buttons["toolbar.shift"].tap()
+        fn.tap()
+        app.buttons["toolbar.up"].tap()
+        fn.tap()
+        app.buttons["toolbar.down"].tap()
+        fn.tap()
+        app.buttons["toolbar.right"].tap()
+        try await waitUntil { desktop.keyDowns == [0xff50, 0xff51, 0xffe1, 0xff55, 0xff56, 0xff57] }
+
+        app.buttons["toolbar.keyboard"].tap()
+        let softwareKeyboard = app.keyboards.firstMatch
+        let deleteLabels = ["delete", "Delete", "Backspace", "删除", "退格"]
+        let backspace = softwareKeyboard.keys.matching(NSPredicate(
+            format: "identifier IN %@ OR label IN %@", deleteLabels, deleteLabels)).firstMatch
+        try await waitUntil { softwareKeyboard.frame.height > 0 && backspace.isHittable && fn.isHittable }
+        fn.tap()
+        backspace.tap()
+        try await waitUntil { desktop.keyDowns.count >= 7 }
+        XCTAssertEqual(desktop.keyDowns, [0xff50, 0xff51, 0xffe1, 0xff55, 0xff56, 0xff57, 0xffff])
+        app.buttons["toolbar.keyboard"].tap()
+        attachToolbarScreenshot(app, name: "iPad Fn toolbar on a live desktop")
+    }
+
     func testPhoneLandscapeDocksToolbarBesideTheLiveDesktop() async throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .phone, "Requires the iPhone toolbar")
         continueAfterFailure = false

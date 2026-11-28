@@ -263,14 +263,15 @@ public struct KeyboardInputHandler {
         supplementalModifiers: VNCKeyboardModifiers
     ) -> Bool {
         guard keysym != 0 else { return false }
+        let key = Self.functionEquivalent(for: keysym, modifiers: supplementalModifiers)?.keysym ?? keysym
         let modifiers = Self.keysyms(
             for: supplementalModifiers,
             appleModifierConvention: usesAppleModifierConvention())
         for modifier in modifiers {
             sendKeyEvent(true, modifier)
         }
-        sendKeyEvent(true, keysym)
-        sendKeyEvent(false, keysym)
+        sendKeyEvent(true, key)
+        sendKeyEvent(false, key)
         for modifier in modifiers.reversed() {
             sendKeyEvent(false, modifier)
         }
@@ -491,6 +492,21 @@ public struct KeyboardInputHandler {
             return charactersIgnoringModifiers
         }
         return characters
+    }
+
+    /// Fn navigation is expressed as its resulting key, including on servers
+    /// that use physical Mac positions instead of X11 symbols.
+    nonisolated static func functionEquivalent(for keysym: UInt32, modifiers: VNCKeyboardModifiers)
+        -> (keysym: UInt32, usage: UInt32)? {
+        guard modifiers.contains(.fn) else { return nil }
+        switch keysym {
+        case keysymBackspace: return (keysymDelete, 0x4C)
+        case keysymLeft: return (keysymHome, 0x4A)
+        case keysymRight: return (keysymEnd, 0x4D)
+        case keysymUp: return (keysymPageUp, 0x4B)
+        case keysymDown: return (keysymPageDown, 0x4E)
+        default: return nil
+        }
     }
 
     /// X11 keysyms for host-supplied modifiers in stable press order.

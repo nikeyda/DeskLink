@@ -76,6 +76,66 @@ import XCTest
         XCTAssertEqual(keys.filter(\.supportsRepeat), [.left, .enter])
     }
 
+    func testFnConvertsNavigationWithoutSendingAnExtraModifier() {
+        XCTAssertEqual(DeskToolbarButton.buttons(in: "fn,left,up").first?.modifier, .fn)
+        let pairs: [(UInt32, UInt32, UInt32)] = [
+            (0xff08, 0xffff, 0x4c), (0xff51, 0xff50, 0x4a), (0xff53, 0xff57, 0x4d),
+            (0xff52, 0xff55, 0x4b), (0xff54, 0xff56, 0x4e)
+        ]
+        var wire: [Int] = []
+        let keyboard = KeyboardInputHandler { pressed, key in wire.append(pressed ? Int(key) : -Int(key)) }
+        for (key, expected, usage) in pairs {
+            wire.removeAll()
+            XCTAssertTrue(keyboard.handleKeysymTap(key, supplementalModifiers: [.fn, .shift]))
+            XCTAssertEqual(wire, [0xffe1, Int(expected), -Int(expected), -0xffe1])
+            XCTAssertEqual(KeyboardInputHandler.functionEquivalent(for: key, modifiers: .fn)?.usage, usage)
+            XCTAssertNil(KeyboardInputHandler.functionEquivalent(for: key, modifiers: .shift))
+        }
+        wire.removeAll()
+        XCTAssertTrue(keyboard.handleKeyTap("a", supplementalModifiers: .fn))
+        XCTAssertEqual(wire, [0x61, -0x61])
+    }
+
+    func testFnUsesTheSameOneShotAndLockBehaviorAsOtherToolbarModifiers() {
+        let toolbar = DeskToolbarState()
+        let start = ContinuousClock.now
+        toolbar.press(.fn, now: start)
+        XCTAssertTrue(toolbar.keyboard.supplementalModifiers.contains(.fn))
+        toolbar.consume()
+        XCTAssertFalse(toolbar.keyboard.supplementalModifiers.contains(.fn))
+        toolbar.press(.fn, now: start.advanced(by: .seconds(1)))
+        toolbar.press(.fn, now: start.advanced(by: .milliseconds(1100)))
+        XCTAssertTrue(toolbar.locked.contains(.fn))
+        toolbar.press(.shift, now: start.advanced(by: .seconds(2)))
+        toolbar.consume()
+        XCTAssertEqual(toolbar.keyboard.supplementalModifiers, .fn)
+        toolbar.reset()
+        XCTAssertTrue(toolbar.keyboard.supplementalModifiers.isEmpty)
+    }
+
+    func testFnPhysicalKeyDownAndUpUseTheSameRemotePosition() throws {
+        struct Event: Equatable {
+            let down: Bool
+            let usage: UInt32
+            let keysym: UInt32
+        }
+        var wire: [Event] = []
+        let handler = KeyboardInputHandler(sendKeyEvent: { _, _ in XCTFail("Expected a physical key") },
+            sendPhysicalKeyEvent: { wire.append(Event(down: $0, usage: $1, keysym: $2)) })
+        let keyboard = HardwareKeyboardController(keyboardHandler: handler)
+        let keys: [(UInt32, UInt32)] = [(0x2a, 0xff08), (0x50, 0xff51), (0x4f, 0xff53), (0x52, 0xff52), (0x51, 0xff54)]
+        for (source, key) in keys {
+            let target = try XCTUnwrap(KeyboardInputHandler.functionEquivalent(for: key, modifiers: .fn))
+            wire.removeAll()
+            XCTAssertTrue(keyboard.press(usage: source, keysym: target.keysym, sendingAs: target.usage))
+            XCTAssertTrue(keyboard.release(usage: source))
+            XCTAssertEqual(wire, [
+                Event(down: true, usage: target.usage, keysym: target.keysym),
+                Event(down: false, usage: target.usage, keysym: target.keysym),
+            ])
+        }
+    }
+
     func testHoldDelayAndMomentumRoundTripOlderAndNewerSettings() throws {
         let suite = UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

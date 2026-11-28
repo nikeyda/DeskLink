@@ -559,8 +559,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
             // This identity exists only within this synchronous tap. It never
             // waits for a hardware release and cannot leave key repeat running.
             let tapUsage: UInt32 = 0x10000
-            beginSupplementalModifiersIfNeeded(for: tapUsage)
-            _ = hardwareKeyboard.press(usage: tapUsage, keysym: keysym)
+            pressWithSupplementalModifiers(usage: tapUsage, keysym: keysym)
             _ = hardwareKeyboard.release(usage: tapUsage)
             endSupplementalModifiers(for: tapUsage)
         }
@@ -601,8 +600,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
     private func pressUniversalKeysym(usage: UInt32, keysym: UInt32) {
         keepInputSourceChord(usage: usage)
         guard keysym != 0, universalKeys.beginPhysical(usage: usage, keysym: keysym) else { return }
-        beginSupplementalModifiersIfNeeded(for: usage)
-        _ = hardwareKeyboard.press(usage: usage, keysym: keysym)
+        pressWithSupplementalModifiers(usage: usage, keysym: keysym)
     }
 
     private func synchronizeUniversalModifiers(_ flags: UIKeyModifierFlags, inferMissing: Bool = true) {
@@ -1563,8 +1561,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
             if keyboardCapture.usesReturnForRemoteAppSwitcher, keyboardHandler.commandPlatform == .mac,
                let tab = IPadSessionShortcut.appSwitcherTabUsage(
                    for: usage, flags: key.modifierFlags, swapsCommandAndControl: hardwareKeyboard.swapsCommandAndControl) {
-                beginSupplementalModifiersIfNeeded(for: usage)
-                _ = hardwareKeyboard.press(usage: usage, keysym: KeyboardInputHandler.keysymTab, sendingAs: tab)
+                pressWithSupplementalModifiers(usage: usage, keysym: KeyboardInputHandler.keysymTab, sendingAs: tab)
                 continue
             }
             #endif
@@ -1589,8 +1586,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
                 unhandled.insert(press)
                 continue
             }
-            beginSupplementalModifiersIfNeeded(for: usage)
-            _ = hardwareKeyboard.press(usage: usage, keysym: keysym)
+            pressWithSupplementalModifiers(usage: usage, keysym: keysym)
         }
         if !unhandled.isEmpty {
             super.pressesBegan(unhandled, with: event)
@@ -1656,11 +1652,10 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         default: return
         }
 
-        beginSupplementalModifiersIfNeeded(for: usage)
         let keysym = KeyboardInputHandler.keysymForHIDUsage(
             usage,
             characters: input)
-        _ = hardwareKeyboard.press(usage: usage, keysym: keysym)
+        pressWithSupplementalModifiers(usage: usage, keysym: keysym)
     }
 
     @objc private func handleCommandCompatibilityAlias(_ command: UIKeyCommand) {
@@ -2109,8 +2104,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         let borrowed = modifierUsages.filter {
             hardwareKeyboard.contains(usage: $0) && !tracked.contains($0)
         }
-        beginSupplementalModifiersIfNeeded(for: usage)
-        _ = hardwareKeyboard.press(usage: usage, keysym: keysym)
+        pressWithSupplementalModifiers(usage: usage, keysym: keysym)
         // UIKit can drop a held modifier when the system takes the chord.
         // While the key is still down it stays pressed, so the remote app
         // switcher stays open; the monitor releases it.
@@ -2590,6 +2584,12 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         #endif
     }
 
+    private func pressWithSupplementalModifiers(usage: UInt32, keysym: UInt32, sendingAs remoteUsage: UInt32? = nil) {
+        let alternate = KeyboardInputHandler.functionEquivalent(for: keysym, modifiers: keyboardCapture.supplementalModifiers)
+        beginSupplementalModifiersIfNeeded(for: usage)
+        _ = hardwareKeyboard.press(usage: usage, keysym: alternate?.keysym ?? keysym, sendingAs: alternate?.usage ?? remoteUsage)
+    }
+
     private func beginSupplementalModifiersIfNeeded(for usage: UInt32) {
         // Modifier-only presses already have explicit physical transitions.
         guard !(0xE0...0xE7).contains(usage),
@@ -2628,6 +2628,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         let keysyms = KeyboardInputHandler.keysyms(
             for: configured,
             appleModifierConvention: keyboardHandler.usesAppleModifierMapping)
+        guard !keysyms.isEmpty else { return nil }
         nextPointerModifierOwner &+= 1
         let owner = nextPointerModifierOwner
         supplementalModifierState.begin(.pointer(owner), keysyms: keysyms)

@@ -41,7 +41,7 @@ enum DeskToolbarSize: String, CaseIterable {
 }
 
 enum DeskToolbarButton: String, CaseIterable {
-    case escape, tab, shift, control, option, command, arrows, home, end, pageUp, pageDown, functions, edit, shortcuts, password, spacer, dictation, screenshot
+    case escape, tab, shift, control, option, command, fn, arrows, home, end, pageUp, pageDown, functions, edit, shortcuts, password, spacer, dictation, screenshot
     case switchApp, spotlight, missionControl
     case enter, up, down, left, right
     case f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12
@@ -71,6 +71,7 @@ enum DeskToolbarButton: String, CaseIterable {
         case .control: "Control"
         case .option: "Option"
         case .command: "Command"
+        case .fn: "Fn"
         case .arrows: "方向键"
         case .home: "Home"
         case .end: "End"
@@ -119,6 +120,7 @@ enum DeskToolbarButton: String, CaseIterable {
         case .control: "control"
         case .option: "option"
         case .command: "command"
+        case .fn: "globe"
         case .arrows: "arrow.up.and.down.and.arrow.left.and.right"
         case .home: "arrow.up.left"
         case .end: "arrow.down.right"
@@ -149,6 +151,7 @@ enum DeskToolbarButton: String, CaseIterable {
         case .control: .control
         case .option: .option
         case .command: .command
+        case .fn: .fn
         default: nil
         }
     }
@@ -801,7 +804,8 @@ struct InteractiveDesktop<SessionHeader: View>: View {
     }
 
     private var laptopTypingShortcuts: some View {
-        let keySections: [[DeskToolbarButton]] = [[.escape, .tab], [.shift, .control, .option, .command],
+        let modifiers: [DeskToolbarButton] = [.shift, .control, .option, .command] + (buttons.contains(.fn) ? [.fn] : [])
+        let keySections: [[DeskToolbarButton]] = [[.escape, .tab], modifiers,
                                                   [.left, .up, .down, .right, .enter]]
         return HStack(spacing: 3) {
             laptopKeyboardButton(compact: true)

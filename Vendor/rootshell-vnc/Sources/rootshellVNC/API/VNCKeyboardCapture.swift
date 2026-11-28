@@ -20,6 +20,7 @@ public struct VNCKeyboardModifiers: OptionSet, Sendable {
     public static let option = Self(rawValue: 1 << 1)
     public static let shift = Self(rawValue: 1 << 2)
     public static let command = Self(rawValue: 1 << 3)
+    public static let fn = Self(rawValue: 1 << 4)
 }
 
 /// A shortcut owned by a container application even while ordinary keyboard
