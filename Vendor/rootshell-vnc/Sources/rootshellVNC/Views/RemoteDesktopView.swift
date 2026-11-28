@@ -105,6 +105,12 @@ public struct RemoteDesktopView: View {
     #if canImport(UIKit)
     private var hudAccessory: HUDAccessory?
     private var customHUD: ((AnyView, CGSize) -> AnyView)?
+    private var leadingDock: LeadingHUD?
+
+    private struct LeadingHUD {
+        let style: VNCHUDButtonStyle
+        let content: (AnyView, CGFloat) -> AnyView
+    }
     #endif
     private var keyboardAvoidanceMode: VNCKeyboardAvoidanceMode
     /// Edges whose safe area the HUD keeps clear of. A host that covers a
@@ -344,9 +350,34 @@ public struct RemoteDesktopView: View {
         copy.customHUD = { AnyView(content($0, $1)) }
         return copy
     }
+
+    /// Reserves a column beside the desktop for host controls and the session menu.
+    public func leadingHUD<Content: View>(isEnabled: Bool, buttonStyle: VNCHUDButtonStyle,
+        @ViewBuilder content: @escaping (AnyView, CGFloat) -> Content
+    ) -> Self {
+        guard isEnabled else { return self }
+        var copy = self
+        copy.leadingDock = LeadingHUD(style: buttonStyle, content: { AnyView(content($0, $1)) })
+        return copy
+    }
     #endif
 
+    @ViewBuilder
     public var body: some View {
+        #if canImport(UIKit)
+        HStack(spacing: 0) {
+            if !hidesHUD, let leadingDock {
+                leadingBar(leadingDock)
+            }
+            viewportBody
+        }
+        .ignoresSafeArea(.keyboard)
+        #else
+        viewportBody
+        #endif
+    }
+
+    private var viewportBody: some View {
         VStack(spacing: 0) {
             GeometryReader { geometry in
                 let framebufferSize = windowMonitorRegion?.size ?? session.presentedFramebufferSize
@@ -542,6 +573,11 @@ public struct RemoteDesktopView: View {
             hudReserve = 0
             hudFrame.frame = .zero
         }
+        .onChange(of: leadingDock != nil) { _, docked in
+            guard docked else { return }
+            hudReserve = 0
+            hudFrame.frame = .zero
+        }
         .background {
             DockedKeyboardInsetReader(
                 metrics: $keyboardViewportMetrics,
@@ -663,7 +699,7 @@ public struct RemoteDesktopView: View {
             if !hidesHUD, let customHUD {
                 customHUD(AnyView(hudMenu), proxy.size)
                     .onAppear { hudReserve = 0; hudFrame.frame = .zero }
-            } else if !hidesHUD {
+            } else if !hidesHUD, leadingDock == nil {
                 DraggableHUDOverlay(
                     inset: margin,
                     safeAreaEdges: hudSafeAreaEdges,
@@ -701,6 +737,18 @@ public struct RemoteDesktopView: View {
     }
 
     #if canImport(UIKit)
+    private func leadingBar(_ dock: LeadingHUD) -> some View {
+        GeometryReader { proxy in
+            let menu = AnyView(hudMenu.environment(\.vncHUDButtonStyle, dock.style))
+            dock.content(menu, max(0, proxy.size.height - 12))
+                .modifier(HUDBarChromeModifier(cornerRadius: dock.style.size.width / 2))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(width: dock.style.size.width + 12)
+        .padding(.bottom, keyboardAvoidanceMode == .automatic
+                 ? keyboardViewportMetrics.effectiveInset(reservingObstruction: shouldReserveKeyboardInset) : 0)
+    }
+
     private struct DragOutTargetGeometry: Equatable {
         let viewSize: CGSize
         let framebufferSize: CGSize
@@ -806,7 +854,7 @@ public struct RemoteDesktopView: View {
             keyboardHandler: keyboardHandler,
             keyboardActive: $keyboardActive,
             hardwareKeyboardAttached: hardwareKeyboardAttached,
-            hostProvidesKeyboardButton: hudAccessory?.providesKeyboardButton ?? false,
+            hostProvidesKeyboardButton: leadingDock != nil || hudAccessory?.providesKeyboardButton == true,
             viewport: $viewport,
             viewportPanningMode: $viewportPanningMode,
             pointerMode: pointerModeSelection,

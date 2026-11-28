@@ -1463,6 +1463,97 @@ final class SessionUITests: XCTestCase {
         app.buttons["session.close"].tap()
     }
 
+    func testPhoneLandscapeDocksToolbarBesideTheLiveDesktop() async throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .phone, "Requires the iPhone toolbar")
+        continueAfterFailure = false
+        let device = XCUIDevice.shared
+        device.orientation = .portrait
+        defer { device.orientation = .portrait }
+
+        let desktop = LocalTestDisplay()
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        openChart(app, port: port)
+        let input = app.descendants(matching: .any)["session.input"].firstMatch
+        let rail = app.descendants(matching: .any)["toolbar.leadingDock"].firstMatch
+        let tab = app.buttons["toolbar.tab"].firstMatch
+        let keyboard = app.buttons["toolbar.keyboard"].firstMatch
+        try await waitUntil { desktop.frameCount > 0 && tab.isHittable && input.isHittable }
+        XCTAssertFalse(rail.exists)
+        XCTAssertEqual(tab.frame.midY, keyboard.frame.midY, accuracy: 4)
+        let initialConnections = desktop.acceptedConnections
+        var points: [CGPoint] = []
+        desktop.onWirePointer = { mask, point in
+            if mask & 1 != 0 { points.append(point) }
+        }
+
+        func tapDesktopCenter() async throws {
+            let before = points.count
+            input.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).tap()
+            try await waitUntil { points.count > before }
+            let point = try XCTUnwrap(points.last)
+            XCTAssertEqual(point.x, 80, accuracy: 4)
+            XCTAssertEqual(point.y, 48, accuracy: 4)
+        }
+
+        func sideLayoutIsReady() -> Bool {
+            rail.exists && tab.exists && input.exists
+                && abs(tab.frame.midX - keyboard.frame.midX) < 4
+                && rail.frame.maxX <= input.frame.minX + 2
+        }
+
+        func rotate(to orientation: UIDeviceOrientation) async throws {
+            device.orientation = orientation
+            // UIKit can still report in-flight accessibility frames immediately
+            // after XCTest acknowledges a new device orientation.
+            try await Task.sleep(for: .milliseconds(600))
+        }
+
+        try await tapDesktopCenter()
+        try await rotate(to: .landscapeLeft)
+        try await waitUntil { sideLayoutIsReady() }
+        XCTAssertGreaterThan(tab.frame.midY, keyboard.frame.midY)
+        tab.tap()
+        try await waitUntil { desktop.keyDowns == [0xFF09] }
+        try await tapDesktopCenter()
+        let toolbarShot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        toolbarShot.name = "iPhone landscape toolbar and remote desktop"
+        toolbarShot.lifetime = .keepAlways
+        add(toolbarShot)
+
+        let functions = app.buttons["toolbar.functions"].firstMatch
+        let commands = rail.scrollViews.firstMatch
+        let previousTaps = points.count
+        for _ in 0..<4 where !functions.isHittable { commands.swipeUp() }
+        XCTAssertTrue(functions.isHittable)
+        functions.tap()
+        app.buttons["F5"].firstMatch.tap()
+        try await waitUntil { desktop.keyDowns == [0xFF09, 0xFFC2] }
+        XCTAssertEqual(points.count, previousTaps)
+
+        let dockedWidth = input.frame.width
+        let toggle = app.buttons["toolbar.toggle"]
+        toggle.tap()
+        try await waitUntil { !rail.exists && input.frame.width > dockedWidth + 35 }
+        toggle.tap()
+        try await waitUntil { rail.exists && input.frame.width < dockedWidth + 4 }
+
+        try await rotate(to: .landscapeRight)
+        try await waitUntil { sideLayoutIsReady() }
+        try await tapDesktopCenter()
+        try await rotate(to: .portrait)
+        try await waitUntil { !rail.exists && tab.isHittable && input.isHittable }
+        XCTAssertEqual(tab.frame.midY, keyboard.frame.midY, accuracy: 4)
+        try await tapDesktopCenter()
+        XCTAssertEqual(desktop.acceptedConnections, initialConnections)
+        let receipt = XCTAttachment(string: points.map { "\(Int($0.x)),\(Int($0.y))" }.joined(separator: "\n"))
+        receipt.name = "Remote center taps across toolbar layouts"
+        receipt.lifetime = .keepAlways
+        add(receipt)
+        app.buttons["session.close"].tap()
+    }
+
     func testPinnedRemoteActionsSendPlatformShortcuts() async throws {
         let desktop = LocalTestDisplay()
         var wire: [Int] = []

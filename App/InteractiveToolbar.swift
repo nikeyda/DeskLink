@@ -300,6 +300,7 @@ struct InteractiveDesktop<SessionHeader: View>: View {
     let bar: DeskToolbarState
     let deck: DeskSessionDeck?
     let showsSessionHeader: Bool
+    let isWidePhone: Bool
     let holdDuration: TimeInterval
     let chooseMonitor: (VNCMonitorSelection) -> Void
     let startDictation: () -> Void
@@ -310,6 +311,7 @@ struct InteractiveDesktop<SessionHeader: View>: View {
     private var style: DeskToolbarStyle { toolbarProfile.style }
     private var size: DeskToolbarSize { toolbarProfile.size }
     private var keyboardTrailing: Bool { toolbarProfile.keyboardTrailing }
+    private var docksToLeading: Bool { isWidePhone && style == .docked && deck == nil }
     @AppStorage("toolbar.splitControls") private var splitControls = DeskSplitControls.sideBySide
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var contrast
@@ -396,7 +398,7 @@ struct InteractiveDesktop<SessionHeader: View>: View {
             .suspendingKeyboardCapture(showsDraft)
             .hidesHUD(deck != nil || !bar.visible)
             .onPencilToolbarAction { action, point in bar.handle(action, at: point, style: style) }
-            .hudAccessory(isEnabled: style != .carousel, docksToBottom: style == .docked,
+            .hudAccessory(isEnabled: style != .carousel && !docksToLeading, docksToBottom: style == .docked,
                           providesKeyboardButton: true,
                           onUpwardSwipe: keyboardEdgeSwipe,
                           buttonStyle: { _ in size.buttonStyle }) { width in
@@ -418,6 +420,9 @@ struct InteractiveDesktop<SessionHeader: View>: View {
                         }
                     }
                 }
+            }
+            .leadingHUD(isEnabled: docksToLeading, buttonStyle: size.buttonStyle) { menu, height in
+                leadingStrip(menu: menu, height: height)
             }
             .floatingHUD(isEnabled: style == .carousel) { menu, available in carousel(menu: menu, in: available) }
             .overlay(alignment: .bottomTrailing) {
@@ -916,6 +921,24 @@ struct InteractiveDesktop<SessionHeader: View>: View {
         }
         .frame(width: min(width, max(trailingWidth + size.points, size.points * CGFloat(buttons.count + 1) + trailingWidth)),
                height: size.points)
+    }
+
+    private func leadingStrip(menu: AnyView, height: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            if !keyboardTrailing { keyboardButton }
+            ScrollView(.vertical) {
+                VStack(spacing: 0) {
+                    ForEach(Array(buttons.enumerated()), id: \.offset) { _, button in commandButton(button) }
+                }
+            }
+            .scrollIndicators(.hidden)
+            .frame(height: min(size.points * CGFloat(buttons.count), max(0, height - 2 * size.points)))
+            if keyboardTrailing { keyboardButton }
+            menu
+        }
+        .frame(width: size.points)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("toolbar.leadingDock")
     }
 
     private var keyboardButton: some View {

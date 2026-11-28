@@ -188,7 +188,7 @@ struct SessionScreen: View {
                     if privacy.locked {
                         Color.clear
                     } else {
-                        sessionPicture(deck: deck).overlay {
+                        sessionPicture(deck: deck, availableSize: geometry.size).overlay {
                             ConnectionStatusOverlay(session: session) {
                                 closeSession(allowAction: false) { close(nil) }
                             }
@@ -556,7 +556,7 @@ struct SessionScreen: View {
     }
     #endif
 
-    @ViewBuilder private func sessionPicture(deck: DeskSessionDeck?) -> some View {
+    @ViewBuilder private func sessionPicture(deck: DeskSessionDeck?, availableSize: CGSize) -> some View {
         #if targetEnvironment(macCatalyst)
         if let group = monitorGroup {
             if let region = session.windowMonitorRegion(for: group.primary) {
@@ -579,6 +579,7 @@ struct SessionScreen: View {
         } else {
             InteractiveDesktop(desktop: remoteDesktop, session: session, controls: controls, bar: toolbar,
                                deck: deck, showsSessionHeader: !fullscreen,
+                               isWidePhone: DisplayClient.current == .iPhone && availableSize.width > availableSize.height,
                                holdDuration: gestures.holdDuration, chooseMonitor: chooseMonitor,
                                startDictation: { showsDictation = true }, captureScreenshot: captureScreenshot,
                                toggleFullScreen: toggleFullScreen) {
