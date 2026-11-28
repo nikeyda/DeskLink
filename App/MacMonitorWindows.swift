@@ -71,6 +71,7 @@ struct MacMonitorWindow: View {
     @Environment(\.dismissWindow) private var dismissWindow
     @AppStorage("pointer.speed") private var pointerSpeed = 1.0
     @AppStorage("keyboard.localOptionKey") private var localOptionKey = VNCLocalOptionKey.off
+    @State private var viewport = RemoteViewportState()
     @State private var keyboard = VNCKeyboardCapture()
     @State private var controls = VNCDesktopControls()
     @State private var showsDictation = false
@@ -114,6 +115,7 @@ struct MacMonitorWindow: View {
                                      initialPointerMode: group.computer.pointerModeOverride ?? .direct,
                                      pointerSpeed: CursorTrackingSpeed.validated(group.computer.cursorTrackingSpeed) ?? pointerSpeed,
                                      touchGestures: gestures, hostOwnsRecoveryChrome: true)
+            .controllingViewport($viewport)
             .showingMonitor(in: region).desktopControls(controls)
             .onMonitorShortcut { group.sessionMenu?()?.chooseMonitor($0) }
             .hidesHUD(true)

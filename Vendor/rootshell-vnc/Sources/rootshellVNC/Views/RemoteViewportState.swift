@@ -27,7 +27,7 @@ struct RemoteViewportGeometry: Equatable, Sendable {
 ///
 /// Gestures scale the selected framing and offset it from the center in view points. Keeping the transform here gives rendering and input conversion
 /// one source of truth.
-struct RemoteViewportState: Equatable, Sendable {
+public struct RemoteViewportState: Equatable, Sendable {
     static let minimumScale: CGFloat = 1
     static let maximumScale: CGFloat = 10
     static let edgeScrollActivationInset: CGFloat = 24
@@ -39,7 +39,7 @@ struct RemoteViewportState: Equatable, Sendable {
     private(set) var offset: CGSize = .zero
     private var geometry: RemoteViewportGeometry?
 
-    init(sizing: RemoteViewportSizing = .fit, displayScale: CGFloat = 1) {
+    public init(sizing: RemoteViewportSizing = .fit, displayScale: CGFloat = 1) {
         self.sizing = sizing
         self.displayScale = displayScale
     }

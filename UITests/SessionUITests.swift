@@ -478,6 +478,73 @@ final class SessionUITests: XCTestCase {
         add(receipt)
     }
 
+    func testMagnifiedDesktopKeepsItsViewportAfterBackgroundAuthentication() async throws {
+        continueAfterFailure = false
+        let device = XCUIDevice.shared
+        device.orientation = .portrait
+        let desktop = LocalTestDisplay()
+        var clicks: [CGPoint] = []
+        desktop.onWirePointer = { buttons, point in
+            if buttons & 1 != 0 { clicks.append(point) }
+        }
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        openProtectedChart(app, port: port)
+        let input = app.descendants(matching: .any)["session.input"].firstMatch
+        try await waitUntil { desktop.frameCount > 0 && input.isHittable && Self.hasColorChart(app.screenshot().image) }
+
+        func sample(_ horizontal: CGFloat) async throws -> CGPoint {
+            let index = clicks.count
+            input.coordinate(withNormalizedOffset: .init(dx: horizontal, dy: 0.5)).tap()
+            try await waitUntil { clicks.count > index }
+            return clicks[index]
+        }
+
+        let fittedLeft = try await sample(0.25)
+        input.pinch(withScale: 2.5, velocity: 1.5)
+        let magnifiedLeft = try await sample(0.25)
+        let magnifiedCenter = try await sample(0.5)
+        XCTAssertGreaterThan(magnifiedLeft.x - fittedLeft.x, 8)
+        let before = XCUIScreen.main.screenshot()
+
+        device.press(.home)
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5))
+        app.activate()
+        XCTAssertTrue(app.buttons["身份验证"].firstMatch.waitForExistence(timeout: 8))
+        XCTAssertFalse(Self.hasColorChart(XCUIScreen.main.screenshot().image))
+        tapCoveredAuthentication(in: app)
+        try await waitUntil { input.isHittable && Self.hasColorChart(app.screenshot().image) }
+        let resumedLeft = try await sample(0.25)
+        let resumedCenter = try await sample(0.5)
+        let after = XCUIScreen.main.screenshot()
+        let receipt = XCTAttachment(string: "Fit: \(fittedLeft)\nMagnified: \(magnifiedLeft), \(magnifiedCenter)\nResumed: \(resumedLeft), \(resumedCenter)")
+        receipt.name = "Remote positions before and after authentication"
+        receipt.lifetime = .keepAlways
+        add(receipt)
+        let resumedPicture = XCTAttachment(screenshot: after)
+        resumedPicture.name = "Magnified desktop after authentication"
+        resumedPicture.lifetime = .keepAlways
+        add(resumedPicture)
+        XCTAssertEqual(resumedLeft.x, magnifiedLeft.x, accuracy: 2, "Unlocking reset the magnified desktop")
+        XCTAssertEqual(resumedLeft.y, magnifiedLeft.y, accuracy: 2)
+        XCTAssertEqual(resumedCenter.x, magnifiedCenter.x, accuracy: 2)
+        XCTAssertEqual(resumedCenter.y, magnifiedCenter.y, accuracy: 2)
+        XCTAssertEqual(Self.chartFractions(after.image).reduce(0, +), Self.chartFractions(before.image).reduce(0, +), accuracy: 0.035)
+        XCTAssertEqual(desktop.acceptedConnections, 1)
+
+        let closed = desktop.closedConnections
+        desktop.expectsClientDisconnect = true
+        app.buttons["session.close"].tap()
+        try await waitUntil { desktop.closedConnections > closed && app.buttons["library.quick"].exists }
+        desktop.expectsClientDisconnect = false
+        connectChart(app, port: port)
+        try await waitUntil { desktop.acceptedConnections == 2 && input.isHittable && Self.hasColorChart(app.screenshot().image) }
+        let nextSessionLeft = try await sample(0.25)
+        XCTAssertEqual(nextSessionLeft.x, fittedLeft.x, accuracy: 2)
+        XCTAssertEqual(nextSessionLeft.y, fittedLeft.y, accuracy: 2)
+    }
+
     func testHardwareControlReachesTheServerAsCommandWhenEnabledInTheEditor() async throws {
         let desktop = LocalTestDisplay()
         let port = try await desktop.start()
@@ -1158,15 +1225,8 @@ final class SessionUITests: XCTestCase {
         let port = try await desktop.start()
         defer { desktop.stop() }
         let app = XCUIApplication()
-        let authenticate = app.buttons["身份验证"].firstMatch
         if requiresAuthentication {
-            app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)",
-                                   "-privacy.deviceAuthentication", "YES"]
-            app.launchEnvironment["DESKLINK_TEST_MANUAL_AUTHENTICATION"] = "1"
-            app.launch()
-            XCTAssertTrue(authenticate.waitForExistence(timeout: 10))
-            authenticate.tap()
-            connectChart(app, port: port)
+            openProtectedChart(app, port: port)
         } else {
             openChart(app, port: port)
         }
@@ -1197,6 +1257,7 @@ final class SessionUITests: XCTestCase {
         receipt.lifetime = .keepAlways
         add(receipt)
         app.activate()
+        let authenticate = app.buttons["身份验证"].firstMatch
         XCTAssertTrue(authenticate.waitForExistence(timeout: 8))
         let screenshot = XCUIScreen.main.screenshot()
         let lockedScreen = XCTAttachment(screenshot: screenshot)
@@ -1205,13 +1266,7 @@ final class SessionUITests: XCTestCase {
         add(lockedScreen)
         XCTAssertFalse(Self.hasColorChart(screenshot.image))
         XCTAssertFalse(app.staticTexts["Gesture.txt"].exists)
-        // The privacy gate is also hosted in a higher UIWindow. The underlying
-        // button can be reported by accessibility even while that window covers it.
-        let frame = authenticate.frame
-        let appFrame = app.frame
-        XCTAssertTrue(appFrame.contains(CGPoint(x: frame.midX, y: frame.midY)))
-        app.coordinate(withNormalizedOffset: .init(dx: 0, dy: 0))
-            .withOffset(.init(dx: frame.midX - appFrame.minX, dy: frame.midY - appFrame.minY)).tap()
+        tapCoveredAuthentication(in: app)
         let controls = app.buttons["远程桌面控制"].firstMatch
         XCTAssertTrue(controls.waitForExistence(timeout: 8))
         controls.tap()
@@ -1221,6 +1276,27 @@ final class SessionUITests: XCTestCase {
         XCTAssertTrue(app.buttons["存储到“文件”"].waitForExistence(timeout: 5))
         XCTAssertEqual(desktop.acceptedConnections, 1)
         attachToolbarScreenshot(app, name: "Completed transfer after unlocking")
+    }
+
+    private func openProtectedChart(_ app: XCUIApplication, port: UInt16) {
+        app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)",
+                               "-privacy.deviceAuthentication", "YES"]
+        app.launchEnvironment["DESKLINK_TEST_MANUAL_AUTHENTICATION"] = "1"
+        app.launch()
+        let authenticate = app.buttons["身份验证"].firstMatch
+        XCTAssertTrue(authenticate.waitForExistence(timeout: 10))
+        authenticate.tap()
+        connectChart(app, port: port)
+    }
+
+    private func tapCoveredAuthentication(in app: XCUIApplication) {
+        // The privacy gate is also hosted in a higher UIWindow. Accessibility
+        // can report the underlying button even while that window covers it.
+        let frame = app.buttons["身份验证"].firstMatch.frame
+        let appFrame = app.frame
+        XCTAssertTrue(appFrame.contains(CGPoint(x: frame.midX, y: frame.midY)))
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(.init(dx: frame.midX - appFrame.minX, dy: frame.midY - appFrame.minY)).tap()
     }
 
     func testConnectionDragDelayOverridesTheApplicationDefault() async throws {

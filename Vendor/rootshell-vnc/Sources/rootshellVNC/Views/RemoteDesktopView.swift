@@ -61,10 +61,20 @@ public struct RemoteDesktopView: View {
     @Bindable var session: VNCSession
     @Environment(\.displayScale) private var displayScale
 
-    @State private var viewport: RemoteViewportState
+    @State private var localViewport: RemoteViewportState
+    @State private var localViewportPanningMode: RemoteViewportPanningMode
+    private var hostViewport: Binding<RemoteViewportState>?
+    private var hostViewportPanningMode: Binding<RemoteViewportPanningMode>?
+    private var viewportSelection: Binding<RemoteViewportState> { hostViewport ?? $localViewport }
+    private var viewportPanningSelection: Binding<RemoteViewportPanningMode> {
+        hostViewportPanningMode ?? $localViewportPanningMode
+    }
+    private var viewport: RemoteViewportState {
+        get { viewportSelection.wrappedValue }
+        nonmutating set { viewportSelection.wrappedValue = newValue }
+    }
     /// Height at the bottom that a docked HUD bar keeps clear of the fitted screen.
     @State private var hudReserve: CGFloat = 0
-    @State private var viewportPanningMode: RemoteViewportPanningMode
     @State private var localPointerMode: RemotePointerMode
     private var hostPointerSelection: Binding<RemotePointerMode>?
     private var pointerModeSelection: Binding<RemotePointerMode> { hostPointerSelection ?? $localPointerMode }
@@ -164,8 +174,8 @@ public struct RemoteDesktopView: View {
         self.session = session
         self.hostOwnsRecoveryChrome = hostOwnsRecoveryChrome
         self.hudMenuExtras = hudMenuExtras
-        self._viewport = State(initialValue: RemoteViewportState(sizing: initialViewportSizing))
-        self._viewportPanningMode = State(initialValue: initialViewportPanningMode)
+        self._localViewport = State(initialValue: RemoteViewportState(sizing: initialViewportSizing))
+        self._localViewportPanningMode = State(initialValue: initialViewportPanningMode)
         self._localPointerMode = State(initialValue: initialPointerMode)
         self.pointerSpeed = pointerSpeed
         self.cursorHeight = cursorHeight
@@ -228,6 +238,15 @@ public struct RemoteDesktopView: View {
                     session.setCurtainMode(false)
                 }
             })
+    }
+
+    /// Keeps the viewport with its host when replacing the desktop renderer.
+    public func controllingViewport(_ viewport: Binding<RemoteViewportState>,
+                                    panningMode: Binding<RemoteViewportPanningMode>? = nil) -> Self {
+        var copy = self
+        copy.hostViewport = viewport
+        copy.hostViewportPanningMode = panningMode
+        return copy
     }
 
     /// Keeps pointer choices with the host when its desktop view is recreated.
@@ -636,8 +655,8 @@ public struct RemoteDesktopView: View {
     ) -> some View {
         #if canImport(UIKit)
         RemoteInteractionView(
-            viewport: $viewport,
-            viewportPanningMode: viewportPanningMode,
+            viewport: viewportSelection,
+            viewportPanningMode: viewportPanningSelection.wrappedValue,
             pointerMode: hostPointerMode ?? pointerModeSelection.wrappedValue,
             pointerSpeed: pointerSpeed,
             cursorHeight: cursorHeight,
@@ -859,8 +878,8 @@ public struct RemoteDesktopView: View {
             keyboardActive: $keyboardActive,
             hardwareKeyboardAttached: hardwareKeyboardAttached,
             hostProvidesKeyboardButton: leadingDock != nil || hudAccessory?.providesKeyboardButton == true,
-            viewport: $viewport,
-            viewportPanningMode: $viewportPanningMode,
+            viewport: viewportSelection,
+            viewportPanningMode: viewportPanningSelection,
             pointerMode: pointerModeSelection,
             isFullScreen: isFullScreen,
             toggleFullScreen: toggleFullScreen,
@@ -892,8 +911,8 @@ public struct RemoteDesktopView: View {
             passwordButton
             hudMenuExtras.actions
             Menu {
-                HUDFitScreenButton(viewport: $viewport)
-                HUDPanningPicker(selection: $viewportPanningMode)
+                HUDFitScreenButton(viewport: viewportSelection)
+                HUDPanningPicker(selection: viewportPanningSelection)
                 HUDPointerPicker(selection: pointerModeSelection)
                 curtainToggle
                 hudMenuExtras.display

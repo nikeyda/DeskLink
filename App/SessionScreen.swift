@@ -68,6 +68,8 @@ struct SessionScreen: View {
     @State private var hostTrust: HostTrust
     @AppStorage("connection.files") private var transfers = true
     @AppStorage("connection.reconnect") private var reconnect = true
+    @State private var viewport = RemoteViewportState()
+    @State private var viewportPanningMode = RemoteViewportPanningMode.edge
     @State private var pointerMode: RemotePointerMode
     @State private var cursorTrackingSpeed: Double?
     @AppStorage("pointer.speed") private var pointerSpeed = 1.0
@@ -126,17 +128,15 @@ struct SessionScreen: View {
     private var remoteDesktop: RemoteDesktopView {
         #if targetEnvironment(macCatalyst)
         let remoteActivity: (@MainActor () -> Void)? = nil
-        let initialSizing = RemoteViewportSizing.fit
         #else
-        let initialSizing = request.computer.initialViewportSizing ?? .fit
         let remoteActivity: (@MainActor () -> Void)? = toolbarStyle == .carousel ? toolbar.noteRemoteActivity : nil
         #endif
         let desktop = RemoteDesktopView(session: session, keyboardCapture: sessionKeyboard, isFullScreen: fullscreen,
                                  toggleFullScreen: toggleFullScreen, clipboardSynchronizer: clipboard,
-                                 initialViewportSizing: initialSizing,
                                  pointerSpeed: cursorTrackingSpeed ?? pointerSpeed, touchGestures: gestures, onRemoteInput: remoteActivity,
                                  onSharedClipboardUserChange: setClipboardSharing,
                                  hostOwnsRecoveryChrome: true, hudMenuExtras: pointerMenuExtras)
+            .controllingViewport($viewport, panningMode: $viewportPanningMode)
             .controllingPointerMode($pointerMode)
             .desktopControls(controls)
             .onMonitorShortcut(chooseMonitor)
@@ -172,6 +172,9 @@ struct SessionScreen: View {
         }
         _session = State(initialValue: VNCSession(configuration: configuration))
         _observing = State(initialValue: observing)
+        #if !targetEnvironment(macCatalyst)
+        _viewport = State(initialValue: RemoteViewportState(sizing: request.computer.initialViewportSizing ?? .fit))
+        #endif
         _pointerMode = State(initialValue: request.computer.pointerMode(using: preferences))
         _cursorTrackingSpeed = State(initialValue: CursorTrackingSpeed.validated(request.computer.cursorTrackingSpeed))
     }
