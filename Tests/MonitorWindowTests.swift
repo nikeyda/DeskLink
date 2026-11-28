@@ -4,6 +4,7 @@ import AVFoundation
 import CoreImage
 import ImageIO
 import RFBProtocol
+import SwiftUI
 @testable import rootshellVNC
 @testable import DeskLink
 
@@ -230,6 +231,118 @@ import RFBProtocol
     }
 
     #if targetEnvironment(macCatalyst)
+    func testSecondaryWindowAppliesChangesToItsDesktopInputView() async throws {
+        let suite = "TelescopeMonitorView." + UUID().uuidString
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite) }
+        preferences.set(RemoteSwipeFingers.four.rawValue, forKey: SyncedPreference.up.rawValue)
+        preferences.set(RemoteSwipeFingers.off.rawValue, forKey: SyncedPreference.down.rawValue)
+        preferences.set(RemoteSwipeFingers.off.rawValue, forKey: SyncedPreference.horizontal.rawValue)
+
+        let file = FileManager.default.temporaryDirectory.appending(path: suite).appending(path: "library.json")
+        let library = ConnectionLibrary(file: file)
+        var computer = Computer(endpoint: try Endpoint(address: "monitor-view.fixture.invalid"))
+        computer.layout = .combined
+        let session = VNCSession(configuration: computer.configuration)
+        session.framebufferWidth = 240
+        session.framebufferHeight = 80
+        session.connectionState = .connected
+        await session.updateRemoteDisplayRegions([
+            RFBScreenLayout(id: 1, x: 0, y: 0, width: 120, height: 80, flags: 0),
+            RFBScreenLayout(id: 2, x: 120, y: 0, width: 120, height: 80, flags: 0),
+        ])
+
+        let pointer = SessionPointerControl(mode: .trackpad)
+        let windows = MacMonitorWindows()
+        let id = MonitorWindowID(connection: UUID(), display: 2)
+        windows.set(.init(session: session, computer: computer, library: library, pointer: pointer,
+                          primary: 1, children: [2], observing: false), for: id.connection)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let host = UIHostingController(rootView: MacMonitorWindow(id: id, windows: windows,
+            privacy: AppLock(defaults: preferences)).defaultAppStorage(preferences))
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = host
+        window.isHidden = false
+        defer { window.isHidden = true; window.rootViewController = nil }
+
+        func inputSurface(_ view: UIView) -> UIView? {
+            if view.accessibilityIdentifier == "session.input" { return view }
+            return view.subviews.lazy.compactMap(inputSurface).first
+        }
+        func waitForControls(trackpad: Bool, swipe: Bool) async throws {
+            let deadline = ContinuousClock.now + .seconds(4)
+            var observed = "missing input view"
+            repeat {
+                host.view.layoutIfNeeded()
+                if let gestures = inputSurface(host.view)?.gestureRecognizers {
+                    let direct = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+                    let taps = gestures.compactMap { $0 as? UITapGestureRecognizer }
+                    let fingerTap = taps.first {
+                        $0.numberOfTouchesRequired == 1 && $0.numberOfTapsRequired == 1 && $0.allowedTouchTypes == direct
+                    }
+                    let remoteSwipe = gestures.compactMap { $0 as? UIPanGestureRecognizer }
+                        .first { $0.minimumNumberOfTouches >= 3 }
+                    observed = "trackpad=\(String(describing: fingerTap?.isEnabled)), swipe=\(String(describing: remoteSwipe?.isEnabled))"
+                    if fingerTap?.isEnabled == trackpad, remoteSwipe?.isEnabled == swipe {
+                        if swipe {
+                            XCTAssertEqual(remoteSwipe?.minimumNumberOfTouches, 4)
+                            XCTAssertEqual(remoteSwipe?.maximumNumberOfTouches, 4)
+                        }
+                        return
+                    }
+                }
+                try await Task.sleep(for: .milliseconds(40))
+            } while ContinuousClock.now < deadline
+            XCTFail("Expected trackpad=\(trackpad), four-finger swipe=\(swipe); got \(observed)")
+        }
+
+        try await waitForControls(trackpad: true, swipe: true)
+        pointer.mode = .direct
+        try await waitForControls(trackpad: false, swipe: true)
+        preferences.set(RemoteSwipeFingers.off.rawValue, forKey: SyncedPreference.up.rawValue)
+        try await waitForControls(trackpad: false, swipe: false)
+    }
+
+    func testSeparateWindowsUseTheirSessionsPointerModeAndSavedSwipePreferences() throws {
+        let suite = "TelescopeMonitorInput." + UUID().uuidString
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let file = FileManager.default.temporaryDirectory.appending(path: suite).appending(path: "library.json")
+        let library = ConnectionLibrary(file: file)
+        let computer = Computer(endpoint: try Endpoint(address: "monitor-input.fixture.invalid"))
+        preferences.set(RemotePointerMode.trackpad.rawValue, forKey: SyncedPreference.pointerMode.rawValue)
+        preferences.set(RemoteSwipeFingers.four.rawValue, forKey: SyncedPreference.up.rawValue)
+        preferences.set(RemoteSwipeFingers.off.rawValue, forKey: SyncedPreference.down.rawValue)
+        preferences.set(RemoteSwipeFingers.three.rawValue, forKey: SyncedPreference.horizontal.rawValue)
+
+        let input = SessionPointerControl(mode: computer.pointerMode(using: preferences))
+        let otherInput = SessionPointerControl(mode: .direct)
+        let group = MacMonitorWindows.Group(session: VNCSession(configuration: computer.configuration),
+                                            computer: computer, library: library, pointer: input,
+                                            primary: 1, children: [2, 3], observing: false)
+        let otherGroup = MacMonitorWindows.Group(session: VNCSession(configuration: computer.configuration),
+                                                  computer: computer, library: library, pointer: otherInput,
+                                                  primary: 1, children: [2], observing: false)
+        XCTAssertEqual(group.pointer.mode, .trackpad)
+        input.mode = .direct
+        XCTAssertEqual(group.pointer.mode, .direct)
+        group.pointer.mode = .trackpad
+        XCTAssertEqual(input.mode, .trackpad)
+        XCTAssertEqual(otherGroup.pointer.mode, .direct)
+
+        let gesturePreferences = SessionGesturePreferences(store: preferences)
+        let gestures = gesturePreferences.configuration(for: computer, usesAppleModifiers: true)
+        XCTAssertEqual(gestures.upFingers, .four)
+        XCTAssertEqual(gestures.downFingers, .off)
+        XCTAssertEqual(gestures.horizontalFingers, .three)
+
+        preferences.set(RemoteSwipeFingers.off.rawValue, forKey: SyncedPreference.horizontal.rawValue)
+        let updated = gesturePreferences.configuration(for: computer, usesAppleModifiers: true)
+        XCTAssertEqual(updated.upFingers, .four)
+        XCTAssertEqual(updated.downFingers, .off)
+        XCTAssertEqual(updated.horizontalFingers, .off)
+    }
+
     func testMonitorWindowsWaitForReplacementLayoutAndAuthenticationBeforeRestoring() async throws {
         let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -252,6 +365,7 @@ import RFBProtocol
         session.connectionState = .connected
         await receive([left, center, right])
         let group = MacMonitorWindows.Group(session: session, computer: computer, library: library,
+                                            pointer: SessionPointerControl(mode: .direct),
                                             primary: 1, children: [2, 3], observing: false, focusedChild: 3)
         let originalRight = group.window(3, connection: computer.id)
         func recover(locked: Bool = false) -> [UInt32]? {
@@ -303,6 +417,7 @@ import RFBProtocol
         let first = MonitorWindowID(connection: connection, display: 2)
         let second = MonitorWindowID(connection: connection, display: 3)
         windows.set(.init(session: VNCSession(configuration: computer.configuration), computer: computer, library: library,
+                          pointer: SessionPointerControl(mode: .direct),
                           primary: 1, children: [2, 3], observing: false), for: connection)
         windows.focus(second, active: true)
         windows.focus(first, active: false)

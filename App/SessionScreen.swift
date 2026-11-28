@@ -1,6 +1,35 @@
+import Observation
 import SwiftUI
 import UIKit
 import rootshellVNC
+
+@MainActor @Observable
+final class SessionPointerControl {
+    var mode: RemotePointerMode
+
+    init(mode: RemotePointerMode) { self.mode = mode }
+}
+
+struct SessionGesturePreferences: DynamicProperty {
+    @AppStorage private var up: RemoteSwipeFingers
+    @AppStorage private var down: RemoteSwipeFingers
+    @AppStorage private var horizontal: RemoteSwipeFingers
+
+    init(store: UserDefaults? = nil) {
+        _up = AppStorage(wrappedValue: .three, SyncedPreference.up.rawValue, store: store)
+        _down = AppStorage(wrappedValue: .three, SyncedPreference.down.rawValue, store: store)
+        _horizontal = AppStorage(wrappedValue: .three, SyncedPreference.horizontal.rawValue, store: store)
+    }
+
+    func configuration(for computer: Computer, usesAppleModifiers: Bool) -> RemoteTouchGestureConfiguration {
+        var gestures = RemoteTouchGestureConfiguration.standard
+        gestures.scrollSpeed = computer.scrollSpeed(forMac: usesAppleModifiers)
+        gestures.upFingers = up
+        gestures.downFingers = down
+        gestures.horizontalFingers = horizontal
+        return gestures
+    }
+}
 
 struct SessionScreen: View {
     let request: SessionRequest
@@ -76,19 +105,14 @@ struct SessionScreen: View {
     @AppStorage("connection.reconnect") private var reconnect = true
     @State private var viewport = RemoteViewportState()
     @State private var viewportPanningMode = RemoteViewportPanningMode.edge
-    @State private var pointerMode: RemotePointerMode
+    @State private var pointer: SessionPointerControl
     @State private var cursorTrackingSpeed: Double?
     @AppStorage("pointer.speed") private var pointerSpeed = 1.0
-    @AppStorage("gesture.upFingers") private var upFingers = RemoteSwipeFingers.three
-    @AppStorage("gesture.downFingers") private var downFingers = RemoteSwipeFingers.three
-    @AppStorage("gesture.horizontalFingers") private var horizontalFingers = RemoteSwipeFingers.three
+    private var gesturePreferences = SessionGesturePreferences()
 
     private var gestures: RemoteTouchGestureConfiguration {
-        var result = RemoteTouchGestureConfiguration.standard
-        result.scrollSpeed = request.computer.scrollSpeed(forMac: session.serverUsesAppleModifierConvention)
-        result.upFingers = upFingers
-        result.downFingers = downFingers
-        result.horizontalFingers = horizontalFingers
+        var result = gesturePreferences.configuration(for: request.computer,
+                                                      usesAppleModifiers: session.serverUsesAppleModifierConvention)
         #if !targetEnvironment(macCatalyst)
         result.holdDuration = request.computer.touchHoldDuration ?? holdDuration
         result.allowsMomentumScrolling = request.computer.momentumScrolling != false || !session.serverUsesAppleModifierConvention
@@ -132,6 +156,7 @@ struct SessionScreen: View {
     }
 
     private var remoteDesktop: RemoteDesktopView {
+        @Bindable var pointer = pointer
         #if targetEnvironment(macCatalyst)
         let remoteActivity: (@MainActor () -> Void)? = nil
         #else
@@ -143,7 +168,7 @@ struct SessionScreen: View {
                                  onSharedClipboardUserChange: setClipboardSharing,
                                  hostOwnsRecoveryChrome: true, hudMenuExtras: pointerMenuExtras)
             .controllingViewport($viewport, panningMode: $viewportPanningMode)
-            .controllingPointerMode($pointerMode)
+            .controllingPointerMode($pointer.mode)
             .desktopControls(controls)
             .onMonitorShortcut(chooseMonitor)
             .onScreenshotShortcut(captureScreenshot)
@@ -181,7 +206,7 @@ struct SessionScreen: View {
         #if !targetEnvironment(macCatalyst)
         _viewport = State(initialValue: RemoteViewportState(sizing: request.computer.initialViewportSizing ?? .fit))
         #endif
-        _pointerMode = State(initialValue: request.computer.pointerMode(using: preferences))
+        _pointer = State(initialValue: SessionPointerControl(mode: request.computer.pointerMode(using: preferences)))
         _cursorTrackingSpeed = State(initialValue: CursorTrackingSpeed.validated(request.computer.cursorTrackingSpeed))
     }
 
@@ -710,6 +735,7 @@ struct SessionScreen: View {
             guard remember || previous == (monitorGroup?.children ?? []) else { return }
             let focusedChild = monitorGroup?.focusedChild.flatMap { children.contains($0) ? $0 : nil }
             let group = MacMonitorWindows.Group(session: session, computer: request.computer, library: library,
+                                                pointer: pointer,
                                                 primary: primary, children: children, observing: observing,
                                                 focusedChild: focusedChild, sessionMenu: { macMenu }, topology: topology)
             monitorWindows.set(group, for: request.id)

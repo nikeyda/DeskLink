@@ -15,6 +15,7 @@ final class MacMonitorWindows {
         let session: VNCSession
         let computer: Computer
         let library: ConnectionLibrary
+        let pointer: SessionPointerControl
         var primary: UInt32
         var children: [UInt32]
         var observing: Bool
@@ -87,6 +88,7 @@ struct MacMonitorWindow: View {
     @Environment(\.dismissWindow) private var dismissWindow
     @AppStorage("pointer.speed") private var pointerSpeed = 1.0
     @AppStorage("keyboard.localOptionKey") private var localOptionKey = VNCLocalOptionKey.off
+    private var gesturePreferences = SessionGesturePreferences()
     @State private var viewport = RemoteViewportState()
     @State private var keyboard = VNCKeyboardCapture()
     @State private var controls = VNCDesktopControls()
@@ -125,12 +127,13 @@ struct MacMonitorWindow: View {
     }
 
     private func desktop(_ group: MacMonitorWindows.Group, region: CGRect) -> RemoteDesktopView {
-        var gestures = RemoteTouchGestureConfiguration.standard
-        gestures.scrollSpeed = group.computer.scrollSpeed(forMac: group.session.serverUsesAppleModifierConvention)
+        @Bindable var pointer = group.pointer
+        let gestures = gesturePreferences.configuration(for: group.computer,
+                                                        usesAppleModifiers: group.session.serverUsesAppleModifierConvention)
         let view = RemoteDesktopView(session: group.session, keyboardCapture: keyboard,
-                                     initialPointerMode: group.computer.pointerModeOverride ?? .direct,
                                      pointerSpeed: CursorTrackingSpeed.validated(group.computer.cursorTrackingSpeed) ?? pointerSpeed,
                                      touchGestures: gestures, hostOwnsRecoveryChrome: true)
+            .controllingPointerMode($pointer.mode)
             .controllingViewport($viewport)
             .showingMonitor(in: region).desktopControls(controls)
             .onMonitorShortcut { group.sessionMenu?()?.chooseMonitor($0) }
