@@ -171,6 +171,85 @@ final class LibraryTests: XCTestCase {
         XCTAssertEqual(selection.editor(selecting: recent, in: library)?.computer?.username, "recent-fixture")
     }
 
+    @MainActor
+    func testBonjourRecentAliasesShowTheLatestRecordWithoutChangingStoredDestinations() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appending(path: "library.json")
+        let library = ConnectionLibrary(file: file)
+        var discovered = Computer(name: "Bonjour Studio Mac", endpoint: try Endpoint(address: "studio.local."))
+        discovered.saved = false
+        discovered.username = "desk"
+        var manual = discovered
+        manual.id = UUID()
+        manual.name = "Manual Mac"
+        manual.endpoint = try Endpoint(address: "studio.local")
+        manual.openedFromLink = true // Quick Connect also appears in Links.
+        let first = Date(timeIntervalSince1970: 100)
+        let latest = Date(timeIntervalSince1970: 200)
+        library.recordSuccess(discovered, now: first)
+        library.recordSuccess(manual, now: latest)
+
+        let reopened = ConnectionLibrary(file: file)
+        XCTAssertEqual(reopened.archive.computers.count, 2)
+        XCTAssertEqual(reopened.archive.recentComputers().map(\.id), [manual.id])
+        XCTAssertEqual(reopened.archive.recentComputers().first?.endpoint.host, "studio.local")
+        XCTAssertEqual(reopened.archive.recentComputers(matching: .init("Bonjour Mac")).map(\.id), [discovered.id])
+        let results = LibrarySearchQuery("Mac 5900").storedMatches(in: reopened.archive.computers)
+        XCTAssertEqual(results.links.map(\.id), [manual.id])
+        XCTAssertTrue(results.recent.isEmpty)
+        XCTAssertEqual(reopened.existingComputer(matching: discovered)?.endpoint.host, "studio.local.")
+    }
+
+    @MainActor
+    func testBonjourRecentKeepsIndependentConnectionsAndTheirHistory() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = ConnectionLibrary(file: root.appending(path: "library.json"))
+        var first = Computer(endpoint: try Endpoint(address: "studio.local."))
+        first.saved = false
+        first.username = "desk"
+        var alias = first
+        alias.id = UUID()
+        alias.endpoint = try Endpoint(address: "studio.local")
+        func different(_ edit: (inout Computer) -> Void) -> Computer {
+            var item = first
+            item.id = UUID()
+            edit(&item)
+            return item
+        }
+        let account = different { $0.username = "another" }
+        let port = try Endpoint(address: "studio.local:5910")
+        let alternatePort = different { $0.endpoint = port }
+        let method = different {
+            $0.authentication = .macUser
+            $0.endpoint = alias.endpoint
+        }
+        let tunnel = different { $0.ssh = .init(username: "tunnel") }
+        let link = different {
+            $0.openedFromLink = true
+            $0.linkFolder = "Shared"
+        }
+        let saved = different { $0.saved = true }
+        let external = try Endpoint(address: "studio.example.")
+        let relative = try Endpoint(address: "studio.example")
+        let otherDomain = different { $0.endpoint = external }
+        let otherSpelling = different { $0.endpoint = relative }
+        let independent = [account, alternatePort, method, tunnel, link, saved, otherDomain, otherSpelling]
+        var previous = LibraryArchive(computers: [first, alias] + independent)
+        previous.setFolders(["Shared"], in: .links)
+        for index in previous.computers.indices {
+            previous.computers[index].lastConnected = Date(timeIntervalSince1970: Double(index + 1))
+        }
+        _ = try library.importArchive(previous.encoded())
+        XCTAssertEqual(Set(library.archive.recentComputers().map(\.id)), Set([alias.id] + independent.map(\.id)))
+
+        library.remove(alias)
+        let retained = Set([first.id] + independent.map(\.id))
+        XCTAssertEqual(Set(library.archive.computers.map(\.id)), retained)
+        XCTAssertEqual(Set(library.archive.recentComputers().map(\.id)), retained)
+    }
+
     func testLibraryWindowRequestReadsExistingSavedWindowAndRoundTripsNewDestinations() throws {
         let saved = UUID()
         let encoder = JSONEncoder()

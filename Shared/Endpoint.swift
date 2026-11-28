@@ -61,6 +61,11 @@ struct Endpoint: Codable, Hashable, Sendable {
         return port == 5900 ? printableHost : "\(printableHost):\(port)"
     }
 
+    var bonjourHost: String? {
+        let name = host.hasSuffix(".") ? String(host.dropLast()) : host
+        return name.hasSuffix(".local") ? name : nil
+    }
+
     static func hostOnly(_ value: String) throws -> String {
         let text = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let host = try Endpoint(address: text).host

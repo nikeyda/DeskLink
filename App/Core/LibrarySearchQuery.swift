@@ -32,8 +32,9 @@ struct LibrarySearchQuery: Equatable {
         for item in ComputerOrder.name.arrange(matching) {
             if item.saved { results.saved.append(item) }
             else if item.isLink { results.links.append(item) }
-            else if item.lastConnected != nil { results.recent.append(item) }
         }
+        results.recent = ComputerOrder.name.arrange(LibraryArchive(computers: matching).recentComputers()
+            .filter { !$0.saved && !$0.isLink })
         return results
     }
 }

@@ -287,6 +287,19 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
         return ssh == nil && other.ssh == nil
     }
 
+    fileprivate struct BonjourRecent: Hashable {
+        let host: String
+        let port: UInt16
+        let username: String
+        let authentication: DesktopAuthentication
+    }
+
+    fileprivate var bonjourRecent: BonjourRecent? {
+        guard lastConnected != nil, !saved, modifiedAt == nil, linkFolder == nil, ssh == nil,
+              let host = endpoint.bonjourHost else { return nil }
+        return BonjourRecent(host: host, port: endpoint.port, username: username, authentication: authentication)
+    }
+
     fileprivate var withoutSessionHistory: Self {
         var copy = withoutConnectionActivity
         for client in DisplayClient.allCases {
@@ -385,6 +398,24 @@ struct LibraryArchive: Codable, Equatable, Sendable {
     var screensDirectoryFolders: ScreensDirectoryFolders?
 
     var folderCount: Int { folders.count + (linkFolders?.count ?? 0) + (screensDirectoryFolders?.count ?? 0) }
+
+    func recentComputers(matching query: LibrarySearchQuery = LibrarySearchQuery("")) -> [Computer] {
+        var entries: [Computer] = []
+        var positions: [Computer.BonjourRecent: Int] = [:]
+        for computer in computers where computer.lastConnected != nil && query.matches(computer) {
+            if let identity = computer.bonjourRecent {
+                if let position = positions[identity] {
+                    if (computer.lastConnected ?? .distantPast) > (entries[position].lastConnected ?? .distantPast) {
+                        entries[position] = computer
+                    }
+                    continue
+                }
+                positions[identity] = entries.count
+            }
+            entries.append(computer)
+        }
+        return entries
+    }
 
     func folders(in scope: LibraryFolderScope) -> [String] { scope == .links ? linkFolders ?? [] : folders }
 

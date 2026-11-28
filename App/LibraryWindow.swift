@@ -272,10 +272,11 @@ struct LibraryWindow: View {
     }
 
     private var entries: [Computer] {
+        let query = categoryQuery
         let list: [Computer]
         switch page {
         case .recent:
-            list = library.archive.computers.filter { $0.lastConnected != nil }
+            return order.wrappedValue.arrange(library.archive.recentComputers(matching: query))
         case .links:
             list = library.archive.computers.filter(\.isLink)
         case .linkFolder(let name):
@@ -287,7 +288,6 @@ struct LibraryWindow: View {
         default:
             list = library.archive.computers.filter(\.saved)
         }
-        let query = categoryQuery
         let matching = query.isEmpty ? list : list.filter(query.matches)
         return order.wrappedValue.arrange(matching)
     }

@@ -78,7 +78,7 @@ final class MacStatusMenu: NSObject {
                              entries: archive.computers.filter { $0.saved && $0.favorite }, to: menu)
         }
         if !hidden.contains(.recent) {
-            let recent = ComputerOrder.lastConnected.arrange(archive.computers.filter { $0.lastConnected != nil })
+            let recent = ComputerOrder.lastConnected.arrange(archive.recentComputers())
             appendCollection(String(localized: "最近连接"), page: .recent, entries: Array(recent.prefix(10)), to: menu)
         }
         if !hidden.contains(.links) {

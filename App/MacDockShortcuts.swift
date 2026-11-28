@@ -7,7 +7,7 @@ enum MacDockShortcuts {
 
     static func items(in archive: LibraryArchive, locked: Bool, showsRecents: Bool) -> [UIApplicationShortcutItem] {
         guard !locked, showsRecents else { return [] }
-        return ComputerOrder.lastConnected.arrange(archive.computers.filter { $0.lastConnected != nil })
+        return ComputerOrder.lastConnected.arrange(archive.recentComputers())
             .prefix(10).map { computer in
                 UIApplicationShortcutItem(type: recentPrefix + computer.id.uuidString, localizedTitle: computer.displayName)
             }
