@@ -1070,7 +1070,7 @@ struct ConnectionEditor: View {
         if isSaving {
             entry.saved = true
             if request.computer == nil { entry.folder = request.folder }
-            guard library.save(entry) else { error = library.errorMessage; return }
+            guard library.saveEditedConnection(entry) else { error = library.errorMessage; return }
             do {
                 // An SSH-only credential may have turned on Remember Password when the editor opened.
                 let savesDesktopPassword = authentication.usesPassword && remember

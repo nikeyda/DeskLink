@@ -91,6 +91,15 @@ enum CollectionPage: Codable, Hashable {
     static func folder(_ name: String, in scope: LibraryFolderScope) -> Self {
         scope == .links ? .linkFolder(name) : .folder(name)
     }
+
+    func fallback(in archive: LibraryArchive, hiddenItems: HiddenSidebarItems) -> Self? {
+        if !hiddenItems.isDisjoint(with: sidebarItem) { return .all }
+        switch self {
+        case .folder(let name) where !archive.folders(in: .custom).contains(name): return .all
+        case .linkFolder(let name) where !archive.folders(in: .links).contains(name): return .links
+        default: return nil
+        }
+    }
 }
 
 enum LibraryWindowRequest: Codable, Hashable {
@@ -221,6 +230,9 @@ struct LibraryWindow: View {
     }
 
     private var hiddenItems: HiddenSidebarItems { HiddenSidebarItems(rawValue: hiddenSidebarItems) }
+    private var collectionFallback: CollectionPage? {
+        page?.fallback(in: library.archive, hiddenItems: hiddenItems)
+    }
 
     #if targetEnvironment(macCatalyst)
     private var connectionTabs: MacConnectionTabs {
@@ -341,10 +353,8 @@ struct LibraryWindow: View {
                             .toolbar { libraryToolbar }
                     }
                 }
-                .onChange(of: hiddenSidebarItems, initial: true) {
-                    if let page, !hiddenItems.isDisjoint(with: page.sidebarItem) {
-                        self.page = .all
-                    }
+                .onChange(of: collectionFallback, initial: true) { _, fallback in
+                    if let fallback { page = fallback }
                 }
                 .onChange(of: page, initial: true) {
                     selectedConnection = nil
@@ -1355,7 +1365,9 @@ struct LibraryWindow: View {
         case .connection(let id): present(.saved(id))
         case .quickConnect: present(.quick)
         case .collection(let destination):
-            if hiddenItems.isDisjoint(with: destination.sidebarItem) { page = destination }
+            if hiddenItems.isDisjoint(with: destination.sidebarItem) {
+                page = destination.fallback(in: library.archive, hiddenItems: hiddenItems) ?? destination
+            }
         }
     }
 

@@ -609,6 +609,21 @@ final class ConnectionLibrary {
     }
 
     @discardableResult
+    func saveEditedConnection(_ draft: Computer, now: Date = .now) -> Bool {
+        var computer = draft
+        let source = archive.computers.first { $0.id == draft.id } ?? draft
+        for scope in LibraryFolderScope.allCases {
+            // The connection editor has no folder control. Keep any move or
+            // removal made by another window or device while it was open.
+            let folder = source.folder(in: scope).flatMap {
+                archive.folders(in: scope).contains($0) ? $0 : nil
+            }
+            computer.setFolder(folder, in: scope)
+        }
+        return save(computer, now: now)
+    }
+
+    @discardableResult
     private func store(_ computer: Computer, backup: Bool) -> Bool {
         change(backup: backup) { value in
             for scope in LibraryFolderScope.allCases {

@@ -404,6 +404,57 @@ final class LibraryTests: XCTestCase {
         }
     }
 
+    func testUnavailableFolderFallsBackToItsOwnCollection() {
+        var archive = LibraryArchive()
+        archive.setFolders(["Studio"], in: .custom)
+        archive.setFolders(["Studio"], in: .links)
+        let custom = CollectionPage.folder("Studio")
+        let links = CollectionPage.linkFolder("Studio")
+        XCTAssertNil(custom.fallback(in: archive, hiddenItems: []))
+        XCTAssertNil(links.fallback(in: archive, hiddenItems: []))
+
+        archive.setFolders(["Renamed"], in: .custom)
+        XCTAssertEqual(custom.fallback(in: archive, hiddenItems: []), .all)
+        XCTAssertNil(links.fallback(in: archive, hiddenItems: []))
+        archive.setFolders([], in: .links)
+        XCTAssertEqual(links.fallback(in: archive, hiddenItems: []), .links)
+        XCTAssertEqual(links.fallback(in: archive, hiddenItems: .links), .all)
+        XCTAssertNil(CollectionPage.all.fallback(in: archive, hiddenItems: []))
+    }
+
+    @MainActor func testSavingAnOpenEditorKeepsSyncedFolderMovesAndRemovals() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let localFile = directory.appending(path: "local/library.json")
+        let local = ConnectionLibrary(file: localFile)
+        let remote = ConnectionLibrary(file: directory.appending(path: "remote/library.json"))
+        var draft = Computer(name: "Before", endpoint: try Endpoint(address: "editor.fixture.invalid"))
+        draft.folder = "Studio"
+        draft.openedFromLink = true
+        draft.linkFolder = "Team links"
+        XCTAssertTrue(local.save(draft))
+        XCTAssertTrue(remote.applySync(local.archive))
+        XCTAssertTrue(remote.renameFolder("Studio", to: "Office"))
+        XCTAssertTrue(remote.removeFolder("Team links", in: .links))
+        XCTAssertTrue(local.applySync(remote.archive))
+
+        draft.name = "After"
+        XCTAssertTrue(local.saveEditedConnection(draft))
+        let reopened = ConnectionLibrary(file: localFile)
+        let saved = try XCTUnwrap(reopened.archive.computers.first)
+        XCTAssertEqual(saved.name, "After")
+        XCTAssertEqual(saved.folder, "Office")
+        XCTAssertNil(saved.linkFolder)
+        XCTAssertEqual(reopened.archive.folders(in: .custom), ["Office"])
+        XCTAssertTrue(reopened.archive.folders(in: .links).isEmpty)
+
+        var newDraft = Computer(name: "New", endpoint: try Endpoint(address: "new.fixture.invalid"))
+        newDraft.folder = "Studio"
+        XCTAssertTrue(reopened.saveEditedConnection(newDraft))
+        XCTAssertNil(reopened.archive.computers.first { $0.id == newDraft.id }?.folder)
+        XCTAssertEqual(reopened.archive.folders(in: .custom), ["Office"])
+    }
+
     func testAppleMediaEncryptionBeforeAndAfterTheFirstPicture() {
         XCTAssertEqual(ConnectionReport.encryptionLabel(.none, route: .direct, awaitingHighPerformancePicture: true), "正在协商")
         XCTAssertEqual(ConnectionReport.encryptionLabel(.none, route: .verifiedLocal, awaitingHighPerformancePicture: false), "未加密")
