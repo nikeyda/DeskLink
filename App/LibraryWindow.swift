@@ -1210,10 +1210,12 @@ struct LibraryWindow: View {
 
     @ViewBuilder private func actions(for item: Computer) -> some View {
         Button("连接") { open(item) }
-        Menu("连接模式") {
-            ConnectionModeButtons { quality in open(item.connecting(with: quality, on: .current)) }
-            if library.videoRetryDate(for: item) != nil {
-                Button("立即恢复流畅视频与音频") { library.resumeStreaming(for: item) }
+        if item.offersAppleDisplayOptions {
+            Menu("连接模式") {
+                ConnectionModeButtons { quality in open(item.connecting(with: quality, on: .current)) }
+                if library.videoRetryDate(for: item) != nil {
+                    Button("立即恢复流畅视频与音频") { library.resumeStreaming(for: item) }
+                }
             }
         }
         if supportsMultipleWindows {
@@ -1338,7 +1340,8 @@ struct LibraryWindow: View {
     private func saveDiscovered(_ entry: Computer, suggestedSSHPort: UInt16? = nil) {
         guard !privacy.locked else { return }
         let profile = library.profile(forDiscovered: entry.endpoint)
-        editor = EditorRequest(purpose: profile?.saved == true ? .edit : .new, computer: profile ?? entry,
+        editor = EditorRequest(purpose: profile?.saved == true ? .edit : .new,
+                               computer: profile?.withDiscoveredPlatform(from: entry) ?? entry,
                                suggestedSSHPort: suggestedSSHPort, loadsStoredCredentials: profile != nil)
     }
 

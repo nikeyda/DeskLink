@@ -86,9 +86,15 @@ struct TailnetDevice: Decodable, Identifiable, Sendable {
             var computer = Computer(name: name, endpoint: endpoint)
             computer.saved = false
             switch self {
-            case .mac: computer.screensOperatingSystem = 1
-            case .raspberryPi: computer.screensOperatingSystem = 5
-            default: break
+            case .mac:
+                computer.desktopPlatform = .mac
+                computer.screensOperatingSystem = 1
+            case .raspberryPi:
+                computer.desktopPlatform = .raspberryPi
+                computer.screensOperatingSystem = 5
+            case .windows: computer.desktopPlatform = .windows
+            case .linux: computer.desktopPlatform = .linux
+            case .unspecified, .other: break
             }
             if !offersHighPerformance { computer.hardwareKeyboardMode = .unicode }
             return computer

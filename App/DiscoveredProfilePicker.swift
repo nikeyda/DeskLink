@@ -15,7 +15,7 @@ struct DiscoveredProfileSelection {
 
     @MainActor
     func editor(using profile: Computer?) -> EditorRequest {
-        let source = profile ?? computer
+        let source = profile?.withDiscoveredPlatform(from: computer) ?? computer
         let connection = quality.map { source.connecting(with: $0, on: .current) } ?? source
         return EditorRequest(purpose: .connect, computer: connection, suggestedSSHPort: suggestedSSHPort,
                              loadsStoredCredentials: profile != nil)

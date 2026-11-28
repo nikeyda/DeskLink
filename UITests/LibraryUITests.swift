@@ -418,10 +418,21 @@ final class LibraryUITests: XCTestCase {
         let display = app.buttons["显示器"].firstMatch
         reveal(display)
         display.tap()
+        let quality = app.buttons["connection.quality"].firstMatch
+        reveal(quality)
+        quality.coordinate(withNormalizedOffset: CGVector(dx: 0.96, dy: 0.5)).tap()
+        let standard = app.buttons["标准"].firstMatch
+        XCTAssertTrue(standard.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["高性能"].firstMatch.exists)
+        XCTAssertTrue(app.buttons["完整质量"].firstMatch.exists)
+        attachLibraryScreenshot(app, name: "Windows picture quality choices")
+        standard.tap()
+        XCTAssertFalse(app.buttons["connection.adaptiveQuality"].firstMatch.exists)
         let keyboard = app.buttons["connection.hardwareKeyboard"].firstMatch
         reveal(keyboard)
         XCTAssertTrue(keyboard.label.contains("发送本地字符") || (keyboard.value as? String) == "发送本地字符",
                       keyboard.debugDescription)
+        XCTAssertFalse(app.switches["connection.momentum"].firstMatch.exists)
         attachLibraryScreenshot(app, name: "Windows hardware keyboard default")
     }
 

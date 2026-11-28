@@ -26,6 +26,10 @@ enum DesktopKeyboardMode: Int, Codable, Sendable {
     case legacy = 2
 }
 
+enum DesktopPlatform: String, Codable, Sendable {
+    case mac, windows, linux, raspberryPi
+}
+
 struct DesktopDimensions: Codable, Equatable, Sendable {
     let width: Int
     let height: Int
@@ -105,6 +109,7 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
     var id = UUID()
     var name: String
     var endpoint: Endpoint
+    var desktopPlatform: DesktopPlatform?
     var username = ""
     var saved = true
     var favorite = false
@@ -295,11 +300,27 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
     }
 
     func display(for client: DisplayClient) -> DesktopDisplayPreferences {
-        deviceDisplays?[client.rawValue] ?? inheritedDisplay(for: client)
+        var display = deviceDisplays?[client.rawValue] ?? inheritedDisplay(for: client)
+        if !offersAppleDisplayOptions, display.quality == .adaptive {
+            display.quality = .standard
+            display.matchWindow = false
+            display.fixedDesktop = nil
+            if display.layout == .virtualPair { display.layout = .single }
+        }
+        return display
+    }
+
+    var offersAppleDisplayOptions: Bool { desktopPlatform == nil || desktopPlatform == .mac }
+
+    func withDiscoveredPlatform(from computer: Self) -> Self {
+        var result = self
+        result.desktopPlatform = computer.desktopPlatform ?? desktopPlatform
+        return result
     }
 
     func connecting(with quality: PictureQuality, on client: DisplayClient) -> Self {
         var copy = self
+        let quality = !offersAppleDisplayOptions && quality == .adaptive ? .standard : quality
         var preferences = display(for: client)
         preferences.quality = quality
         if quality == .adaptive {

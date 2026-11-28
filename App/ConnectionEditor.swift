@@ -53,6 +53,11 @@ struct EditorRequest: Identifiable {
         purpose == .quick && initialAddress.isEmpty && initialSSHPort == nil && link == nil
     }
 
+    func platform(for endpoint: Endpoint?) -> DesktopPlatform? {
+        guard let computer, endpoint?.host == computer.endpoint.host else { return nil }
+        return computer.desktopPlatform
+    }
+
     @MainActor
     static func connectingToDiscovered(_ computer: Computer, in library: ConnectionLibrary,
                                        suggestedSSHPort: UInt16?, quality: PictureQuality?) -> Self {
@@ -201,7 +206,7 @@ extension Computer {
         case .raspberryPiRSA: .rsaAES
         }
         configuration.preparesTigerVNCKeyboard = preparesTigerVNCKeyboard == true
-        configuration.usesMacHardwareKeyPositions = hardwareKeyboardMode == .keystrokes
+        configuration.usesMacHardwareKeyPositions = offersAppleDisplayOptions && hardwareKeyboardMode == .keystrokes
         configuration.usesLegacyHardwareKeyboardMapping = hardwareKeyboardMode == .legacy
         configuration.usesLegacySoftwareKeyboardMapping = softwareKeyboardMode == .legacy
         configuration.swapsHardwareCommandAndControl = swapsHardwareCommandAndControl == true
@@ -336,7 +341,9 @@ struct ConnectionEditor: View {
         let initialSizing: DesktopSizing
         if initialLayout == .combined { initialSizing = .physical }
         else if initialLayout == .virtualPair || display.fixedDesktop != nil { initialSizing = .fixed }
-        else if display.matchWindow || request.sharedOptions.quality == .adaptive { initialSizing = .dynamic }
+        else if display.matchWindow || (c?.offersAppleDisplayOptions != false && request.sharedOptions.quality == .adaptive) {
+            initialSizing = .dynamic
+        }
         else { initialSizing = .physical }
         _sizing = State(initialValue: initialSizing)
         _customWidth = State(initialValue: String(dimensions.width))
@@ -397,12 +404,22 @@ struct ConnectionEditor: View {
     private var canSubmit: Bool {
         guard endpoint != nil else { return false }
         if !isSaving, authentication == .macUser, desktopUsername.isEmpty { return false }
-        if sizing == .fixed, fixedDimensions?.isSupported != true { return false }
+        if selectedQuality == .adaptive, sizing == .fixed, fixedDimensions?.isSupported != true { return false }
         guard useSSH else { return true }
         if !sshServer.isEmpty, (try? Endpoint.hostOnly(sshServer)) == nil { return false }
         if sshUseKey && (awaitingKey || (selectedKeyName != nil && sshKey == nil)) { return false }
         guard let port = UInt16(sshPort), port > 0, !sshUser.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         return isSaving || !sshUseKey || sshKey != nil
+    }
+
+    private var showsAppleOptions: Bool {
+        let platform = request.platform(for: endpoint)
+        return platform == nil || platform == .mac
+    }
+
+    private var selectedQuality: PictureQuality { !showsAppleOptions && quality == .adaptive ? .standard : quality }
+    private var selectedHardwareKeyboard: DesktopKeyboardMode {
+        !showsAppleOptions && hardwareKeyboardMode == .keystrokes ? .unicode : hardwareKeyboardMode
     }
 
     private var fixedDimensions: DesktopDimensions? {
@@ -496,10 +513,10 @@ struct ConnectionEditor: View {
             do { keyNames = try PasswordStore.keyNames(synchronize: synchronizeCredentials) }
             catch { self.error = error.localizedDescription }
         }
-        .onChange(of: quality) {
-            if quality != .adaptive, layout == .virtualPair { layout = .single }
-            if quality != .adaptive, sizing == .fixed { sizing = .dynamic }
-            if quality == .adaptive, layout == .single, sizing == .physical { sizing = .dynamic }
+        .onChange(of: selectedQuality) {
+            if selectedQuality != .adaptive, layout == .virtualPair { layout = .single }
+            if selectedQuality != .adaptive, sizing == .fixed { sizing = .dynamic }
+            if selectedQuality == .adaptive, layout == .single, sizing == .physical { sizing = .dynamic }
         }
         .onChange(of: layout) {
             if layout == .combined { sizing = .physical }
@@ -664,22 +681,24 @@ struct ConnectionEditor: View {
             Toggle("播放远程响铃", isOn: $allowsRemoteBell)
                 .accessibilityIdentifier("connection.remoteBell")
             DisclosureGroup("显示器", isExpanded: $showSettings) {
-                Picker("图像质量", selection: $quality) {
+                Picker("图像质量", selection: Binding(get: { selectedQuality }, set: { quality = $0 })) {
                     Text(VNCConfiguration.VideoQualityMode.standard.title).tag(PictureQuality.standard)
-                    Text(VNCConfiguration.VideoQualityMode.adaptive.title).tag(PictureQuality.adaptive)
+                    if showsAppleOptions { Text(VNCConfiguration.VideoQualityMode.adaptive.title).tag(PictureQuality.adaptive) }
                     Text(VNCConfiguration.VideoQualityMode.fullQuality.title).tag(PictureQuality.lossless)
                 }
                 .accessibilityIdentifier("connection.quality")
-                if quality != .adaptive {
+                if selectedQuality != .adaptive {
                     Picker("颜色深度", selection: $colorDepth) {
                         Text("低").tag(ColorDepth.low)
                         Text("中").tag(ColorDepth.medium)
                         Text("高").tag(ColorDepth.full)
                     }
                 }
-                if quality == .standard, colorDepth == .full {
-                    imagePolicy("Mac 自适应画质", selection: $framebuffer.adaptive)
-                        .accessibilityIdentifier("connection.adaptiveQuality")
+                if selectedQuality == .standard, colorDepth == .full {
+                    if showsAppleOptions {
+                        imagePolicy("Mac 自适应画质", selection: $framebuffer.adaptive)
+                            .accessibilityIdentifier("connection.adaptiveQuality")
+                    }
                     imagePolicy("图像压缩", selection: $framebuffer.compression)
                         .accessibilityIdentifier("connection.tightCompression")
                     tightJPEGQualitySlider
@@ -704,7 +723,7 @@ struct ConnectionEditor: View {
                     Text(VNCConfiguration.DisplayMode.oneDisplay.title).tag(DisplayLayout.single)
                     Text(VNCConfiguration.DisplayMode.allDisplaysCombined.title).tag(DisplayLayout.combined)
                     #if targetEnvironment(macCatalyst)
-                    if quality == .adaptive {
+                    if selectedQuality == .adaptive {
                         Text(VNCConfiguration.DisplayMode.twoVirtualDisplays.title).tag(DisplayLayout.virtualPair)
                     }
                     #endif
@@ -720,7 +739,7 @@ struct ConnectionEditor: View {
                 #endif
                 Toggle("允许捏合缩放", isOn: $allowsViewportZoom)
                     .accessibilityIdentifier("connection.viewportZoom")
-                if quality == .adaptive {
+                if selectedQuality == .adaptive {
                     Picker("桌面尺寸", selection: $sizing) {
                         Text(VNCConfiguration.DisplaySizingMode.remoteDisplay.title).tag(DesktopSizing.physical)
                         Text("动态").tag(DesktopSizing.dynamic)
@@ -797,8 +816,8 @@ struct ConnectionEditor: View {
                 }
                 .disabled(observe)
                 .accessibilityIdentifier("connection.pcScrollSpeed")
-                Picker("实体键盘", selection: $hardwareKeyboardMode) {
-                    Text("按远端键位输入（Mac）").tag(DesktopKeyboardMode.keystrokes)
+                Picker("实体键盘", selection: Binding(get: { selectedHardwareKeyboard }, set: { hardwareKeyboardMode = $0 })) {
+                    if showsAppleOptions { Text("按远端键位输入（Mac）").tag(DesktopKeyboardMode.keystrokes) }
                     Text("发送本地字符").tag(DesktopKeyboardMode.unicode)
                     Text("旧版键盘映射").tag(DesktopKeyboardMode.legacy)
                 }
@@ -826,8 +845,10 @@ struct ConnectionEditor: View {
                     .disabled(observe)
                     .accessibilityIdentifier("connection.swapCommandControl")
                 #if !targetEnvironment(macCatalyst)
-                Toggle("连接 Mac 时使用惯性滚动", isOn: $momentumScrolling)
-                    .accessibilityIdentifier("connection.momentum")
+                if showsAppleOptions {
+                    Toggle("连接 Mac 时使用惯性滚动", isOn: $momentumScrolling)
+                        .accessibilityIdentifier("connection.momentum")
+                }
                 #endif
             }
             if isSaving || request.computer?.disconnectAction != nil {
@@ -932,6 +953,7 @@ struct ConnectionEditor: View {
         guard canSubmit, let endpoint else { return }
         var entry = request.computer ?? Computer(endpoint: endpoint)
         entry.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        entry.desktopPlatform = request.platform(for: endpoint)
         entry.endpoint = endpoint
         entry.username = desktopUsername
         entry.authentication = authentication
@@ -942,8 +964,9 @@ struct ConnectionEditor: View {
         entry.disconnectAction = disconnectAction
         entry.savesDisconnectScreenshot = savesDisconnectScreenshot ? true : nil
         var display = DesktopDisplayPreferences(
-            quality: quality, colorDepth: colorDepth == .full ? nil : colorDepth, layout: layout,
-            matchWindow: sizing != .physical, fixedDesktop: sizing == .fixed ? fixedDimensions : nil,
+            quality: selectedQuality, colorDepth: colorDepth == .full ? nil : colorDepth,
+            layout: selectedQuality != .adaptive && layout == .virtualPair ? .single : layout,
+            matchWindow: sizing != .physical, fixedDesktop: selectedQuality == .adaptive && sizing == .fixed ? fixedDimensions : nil,
             retinaResolution: retina ? nil : false, smoothVideo: smoothVideo ? nil : false, remoteAudio: audio)
         display.rememberMonitor = rememberMonitor ? nil : false
         if rememberMonitor {
@@ -962,7 +985,7 @@ struct ConnectionEditor: View {
         entry.usesFallbackCursor = usesFallbackCursor ? true : nil
         entry.touchHoldDuration = touchHoldDuration
         entry.preparesTigerVNCKeyboard = preparesTigerVNCKeyboard ? true : nil
-        entry.hardwareKeyboardMode = hardwareKeyboardMode
+        entry.hardwareKeyboardMode = selectedHardwareKeyboard
         #if !targetEnvironment(macCatalyst)
         if legacySoftwareKeyboard != (entry.softwareKeyboardMode == .legacy) {
             entry.softwareKeyboardMode = legacySoftwareKeyboard ? .legacy : .unicode
