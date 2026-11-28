@@ -557,7 +557,7 @@ struct LibraryWindow: View {
     @ViewBuilder private func connectionSheet(for request: EditorRequest) -> some View {
         if let selection = request.discoveredSelection {
             if !privacy.locked {
-                let profiles = library.profiles(forDiscovered: selection.computer.endpoint)
+                let profiles = selection.profiles(in: library)
                 DiscoveredProfilePicker(selection: selection, profiles: ComputerOrder.name.arrange(profiles)) { profile in
                     guard !privacy.locked, editor?.id == request.id,
                           let chosen = selection.editor(selecting: profile, in: library) else { return }
@@ -566,9 +566,9 @@ struct LibraryWindow: View {
             }
         } else {
             ConnectionEditor(request: request, library: library, tailnet: tailnet, privacy: privacy,
-                             hiddenSources: hiddenItems, selectDevice: { computer, sshPort in
+                             hiddenSources: hiddenItems, selectDevice: { computer, sshPort, addresses in
                 guard editor?.id == request.id else { return }
-                openDiscovered(computer, suggestedSSHPort: sshPort, quality: nil)
+                openDiscovered(computer, suggestedSSHPort: sshPort, quality: nil, resolvedAddresses: addresses)
             }, openLink: { value in
                 let route: ConnectionRoute
                 if value.lowercased().hasPrefix("desklink://"), let url = URL(string: value) {
@@ -722,9 +722,9 @@ struct LibraryWindow: View {
                             .contextMenu {
                                 DiscoveredConnectionActions { openNearbySearchResult(item, quality: $0) }
                                 Button("保存到连接库") {
-                                    nearby.select(item) {
+                                    nearby.select(item) { computer, _ in
                                         endUnifiedSearch()
-                                        saveDiscovered($0)
+                                        saveDiscovered(computer)
                                     }
                                 }
                             }
@@ -825,7 +825,7 @@ struct LibraryWindow: View {
         if page == .tailscale {
             TailnetView(directory: tailnet, archiveFolders: library.archive.screensDirectoryFolders?.tailscale ?? [],
                         query: categoryQuery, listLayout: listLayout, gridColumns: gridColumns,
-                        select: openDiscovered, save: saveDiscovered)
+                        select: { openDiscovered($0, suggestedSSHPort: $1, quality: $2) }, save: saveDiscovered)
         } else if page == .nearby {
             let query = categoryQuery
             let results = nearby.entries.filter { $0.matches(query) }
@@ -917,11 +917,11 @@ struct LibraryWindow: View {
                                            @ViewBuilder label: () -> Content) -> some View {
         DiscoveredConnectionItem(id: "nearby.computer." + entry.id, selection: $selectedConnection,
                                  cornerRadius: cornerRadius, endpoint: entry.endpoint) { quality in
-            nearby.select(entry) { openDiscovered($0, suggestedSSHPort: nil, quality: quality) }
+            nearby.select(entry) { openDiscovered($0, suggestedSSHPort: nil, quality: quality, resolvedAddresses: $1) }
         } label: {
             label()
         } actions: {
-            Button("保存到连接库") { nearby.select(entry) { saveDiscovered($0) } }
+            Button("保存到连接库") { nearby.select(entry) { computer, _ in saveDiscovered(computer) } }
         }
     }
 
@@ -1388,15 +1388,17 @@ struct LibraryWindow: View {
     }
 
     private func openNearbySearchResult(_ entry: NearbyComputer, quality: PictureQuality?) {
-        nearby.select(entry) {
+        nearby.select(entry) { computer, addresses in
             endUnifiedSearch()
-            openDiscovered($0, suggestedSSHPort: nil, quality: quality)
+            openDiscovered(computer, suggestedSSHPort: nil, quality: quality, resolvedAddresses: addresses)
         }
     }
 
-    private func openDiscovered(_ entry: Computer, suggestedSSHPort: UInt16?, quality: PictureQuality?) {
+    private func openDiscovered(_ entry: Computer, suggestedSSHPort: UInt16?, quality: PictureQuality?,
+                                resolvedAddresses: Set<Endpoint> = []) {
         guard !privacy.locked else { return }
-        editor = .connectingToDiscovered(entry, in: library, suggestedSSHPort: suggestedSSHPort, quality: quality)
+        editor = .connectingToDiscovered(entry, in: library, suggestedSSHPort: suggestedSSHPort, quality: quality,
+                                         resolvedAddresses: resolvedAddresses)
     }
 
     private func present(_ route: ConnectionRoute) {

@@ -220,6 +220,46 @@ final class LibraryTests: XCTestCase {
     }
 
     @MainActor
+    func testResolvedBonjourAddressesOfferSavedProfilesWithoutApplyingCredentialsAutomatically() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appending(path: "library.json")
+        let library = ConnectionLibrary(file: file)
+        var discovered = Computer(name: "Studio", endpoint: try Endpoint(address: "studio.local:15900"))
+        discovered.saved = false
+        var ipv4 = Computer(name: "Support", endpoint: try Endpoint(address: "192.0.2.19:15900"))
+        ipv4.username = "support-fixture"
+        ipv4.ssh = .init(port: 2222, username: "relay", usesKey: true, server: "gateway.fixture.invalid")
+        XCTAssertTrue(library.save(ipv4))
+
+        let addresses = Set(try ["192.0.2.19:15900", "[fe80::1%en0]:15900"].map { try Endpoint(address: $0) })
+        let initial = EditorRequest.connectingToDiscovered(discovered, in: library, suggestedSSHPort: nil, quality: nil,
+                                                           resolvedAddresses: addresses)
+        XCTAssertFalse(initial.loadsStoredCredentials)
+        XCTAssertEqual(initial.computer?.endpoint, discovered.endpoint)
+        let selection = try XCTUnwrap(initial.discoveredSelection)
+        XCTAssertEqual(selection.profiles(in: library).map(\.id), [ipv4.id])
+        let chosen = try XCTUnwrap(selection.editor(selecting: ipv4, in: library))
+        XCTAssertTrue(chosen.loadsStoredCredentials)
+        XCTAssertEqual(chosen.computer?.endpoint, ipv4.endpoint)
+        XCTAssertEqual(chosen.computer?.ssh, ipv4.ssh)
+        let manual = try XCTUnwrap(selection.editor(selecting: nil, in: library))
+        XCTAssertFalse(manual.loadsStoredCredentials)
+        XCTAssertEqual(manual.computer?.endpoint, discovered.endpoint)
+
+        let ipv6 = Computer(endpoint: try Endpoint(address: "[fe80:0:0:0:0:0:0:1%en0]:15900"))
+        let otherInterface = Computer(endpoint: try Endpoint(address: "[fe80::1%en1]:15900"))
+        let otherPort = Computer(endpoint: try Endpoint(address: "192.0.2.19:15901"))
+        for profile in [ipv6, otherInterface, otherPort] { XCTAssertTrue(library.save(profile)) }
+        XCTAssertEqual(Set(selection.profiles(in: library).map(\.id)), Set([ipv4.id, ipv6.id]))
+
+        let oldProfile = ipv4
+        ipv4.endpoint = try Endpoint(address: "192.0.2.20:15900")
+        XCTAssertTrue(library.save(ipv4))
+        XCTAssertNil(selection.editor(selecting: oldProfile, in: library))
+    }
+
+    @MainActor
     func testBonjourDiscoveryKeepsLatestEligibleHistoryAndExcludesLinks() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

@@ -101,7 +101,7 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
     private var browser: NWBrowser?
     private var discovery: [String: Discovery] = [:]
     private var resolving: NetService?
-    private var selection: ((Computer) -> Void)?
+    private var selection: ((Computer, Set<Endpoint>) -> Void)?
     private let isLocalComputer: ((NetService) -> Bool)?
 
     static var defaultLocalFilter: ((NetService) -> Bool)? {
@@ -164,7 +164,7 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
         retry()
     }
 
-    func select(_ entry: NearbyComputer, completion: @escaping (Computer) -> Void) {
+    func select(_ entry: NearbyComputer, completion: @escaping (Computer, Set<Endpoint>) -> Void) {
         guard entries.contains(where: { $0.id == entry.id }) else {
             reportMissingSelection()
             return
@@ -219,8 +219,10 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
             return
         }
         let action = selection
-        defer { cancelSelection() }
-        guard isLocalComputer?(sender) != true else {
+        let isLocal = isLocalComputer?(sender) == true
+        let numericAddresses = NearbyLocalIdentity.numericAddresses(for: sender)
+        cancelSelection()
+        guard !isLocal else {
             discovery[NearbyComputer.id(for: sender)] = .hidden
             publishDiscovered()
             errorMessage = String(localized: "这台电脑是本机。请选择另一台电脑。")
@@ -232,7 +234,10 @@ final class NearbyComputers: NSObject, @preconcurrency NetServiceDelegate {
         }
         var entry = Computer(name: sender.name, endpoint: endpoint)
         entry.saved = false
-        action?(entry)
+        let addresses = Set(numericAddresses.compactMap {
+            try? Endpoint(address: $0, defaultPort: endpoint.port)
+        })
+        action?(entry, addresses)
     }
 
     func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {

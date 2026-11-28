@@ -60,11 +60,18 @@ struct EditorRequest: Identifiable {
 
     @MainActor
     static func connectingToDiscovered(_ computer: Computer, in library: ConnectionLibrary,
-                                       suggestedSSHPort: UInt16?, quality: PictureQuality?) -> Self {
-        let selection = DiscoveredProfileSelection(computer: computer, suggestedSSHPort: suggestedSSHPort, quality: quality)
-        let profiles = library.profiles(forDiscovered: computer.endpoint)
-        var request = selection.editor(using: profiles.count == 1 ? profiles.first : nil)
-        if profiles.count > 1 { request.discoveredSelection = selection }
+                                       suggestedSSHPort: UInt16?, quality: PictureQuality?,
+                                       resolvedAddresses: Set<Endpoint> = []) -> Self {
+        let selection = DiscoveredProfileSelection(computer: computer, suggestedSSHPort: suggestedSSHPort, quality: quality,
+                                                   resolvedAddresses: resolvedAddresses)
+        let profiles = selection.profiles(in: library)
+        // A numeric address can be reassigned. Require an explicit choice
+        // before loading an account inferred solely from a live advertisement.
+        if profiles.count == 1, let automatic = library.profile(forDiscovered: computer.endpoint) {
+            return selection.editor(using: automatic)
+        }
+        var request = selection.editor(using: nil)
+        if !profiles.isEmpty { request.discoveredSelection = selection }
         return request
     }
 
@@ -224,7 +231,7 @@ struct ConnectionEditor: View {
     let tailnet: TailnetDirectory
     let privacy: AppLock
     let hiddenSources: HiddenSidebarItems
-    let selectDevice: (Computer, UInt16?) -> Void
+    let selectDevice: (Computer, UInt16?, Set<Endpoint>) -> Void
     let openLink: (String) throws -> Void
     let didSave: () -> Void
     let connect: (SessionRequest) -> Void
@@ -302,7 +309,7 @@ struct ConnectionEditor: View {
 
     init(request: EditorRequest, library: ConnectionLibrary, tailnet: TailnetDirectory, privacy: AppLock,
          hiddenSources: HiddenSidebarItems,
-         selectDevice: @escaping (Computer, UInt16?) -> Void, openLink: @escaping (String) throws -> Void,
+         selectDevice: @escaping (Computer, UInt16?, Set<Endpoint>) -> Void, openLink: @escaping (String) throws -> Void,
          didSave: @escaping () -> Void, connect: @escaping (SessionRequest) -> Void) {
         self.request = request
         self.library = library

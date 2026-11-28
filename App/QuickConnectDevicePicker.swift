@@ -5,7 +5,7 @@ struct QuickConnectDevicePicker: View {
     let privacy: AppLock
     let showsNearby: Bool
     let showsTailnet: Bool
-    let select: (Computer, UInt16?) -> Void
+    let select: (Computer, UInt16?, Set<Endpoint>) -> Void
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var nearby = NearbyComputers()
@@ -88,7 +88,7 @@ struct QuickConnectDevicePicker: View {
             }
             ForEach(results) { entry in
                 Button {
-                    nearby.select(entry) { choose($0, sshPort: nil) }
+                    nearby.select(entry) { choose($0, sshPort: nil, resolvedAddresses: $1) }
                 } label: {
                     computerLabel(entry.name, address: entry.address)
                 }
@@ -123,11 +123,11 @@ struct QuickConnectDevicePicker: View {
         }
     }
 
-    private func choose(_ computer: Computer, sshPort: UInt16?) {
+    private func choose(_ computer: Computer, sshPort: UInt16?, resolvedAddresses: Set<Endpoint> = []) {
         guard canBrowse else { return }
         editsSearch = false
         nearby.stop()
-        select(computer, sshPort)
+        select(computer, sshPort, resolvedAddresses)
     }
 
     private func computerLabel(_ name: String, address: String?, symbol: String = "desktopcomputer") -> some View {

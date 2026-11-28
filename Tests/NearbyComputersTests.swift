@@ -80,13 +80,18 @@ import XCTest
         XCTAssertTrue(nearby.matches(LibrarySearchQuery("\(host):\(port)")))
         XCTAssertTrue(nearby.matches(LibrarySearchQuery(socket)))
         var resolved: Computer?
-        browser.select(nearby) { resolved = $0 }
+        var resolvedAddresses: Set<Endpoint> = []
+        browser.select(nearby) { computer, addresses in
+            resolved = computer
+            resolvedAddresses = addresses
+        }
         try await waitFor { resolved != nil || browser.errorMessage != nil }
         let computer = try XCTUnwrap(resolved, browser.errorMessage ?? "The advertised computer did not resolve.")
         XCTAssertEqual(computer.name, name)
         XCTAssertEqual(computer.endpoint.port, port)
         XCTAssertFalse(computer.endpoint.host.isEmpty)
         XCTAssertFalse(computer.saved)
+        XCTAssertTrue(resolvedAddresses.contains(try Endpoint(address: ip, defaultPort: port)))
         browser.retry()
         XCTAssertTrue(browser.entries.isEmpty)
         try await waitFor { browser.entries.contains { $0.id == nearby.id } }
@@ -97,7 +102,7 @@ import XCTest
         DNSServiceRefDeallocate(service)
         registration = nil
         try await waitFor { !browser.entries.contains { $0.id == nearby.id } }
-        browser.select(nearby) { _ in XCTFail("An expired advertisement must not open a connection.") }
+        browser.select(nearby) { _, _ in XCTFail("An expired advertisement must not open a connection.") }
         XCTAssertNotNil(browser.errorMessage)
         XCTAssertFalse(browser.isResolvingSelection)
     }
@@ -142,7 +147,7 @@ import XCTest
         let visible = try XCTUnwrap(browser.entries.first { $0.name == visibleName })
         XCTAssertNotNil(visible.address)
         var selected: Computer?
-        browser.select(visible) { selected = $0 }
+        browser.select(visible) { computer, _ in selected = computer }
         try await waitFor { selected != nil || browser.errorMessage != nil }
         XCTAssertEqual(selected?.endpoint.port, 15277)
     }
@@ -162,7 +167,7 @@ import XCTest
         try await waitFor { unfiltered.entries.contains { $0.name == name } }
         let service = try XCTUnwrap(unfiltered.entries.first { $0.name == name })
         var resolved: Computer?
-        unfiltered.select(service) { resolved = $0 }
+        unfiltered.select(service) { computer, _ in resolved = computer }
         let deadline = Date().addingTimeInterval(12)
         repeat {
             XCTAssertFalse(browser.entries.contains { $0.id == service.id })

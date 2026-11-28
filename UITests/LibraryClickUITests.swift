@@ -189,6 +189,34 @@ final class LibraryClickUITests: XCTestCase {
         restored.name = "iPad Bonjour discovery restores the saved profile"
         restored.lifetime = .keepAlways
         add(restored)
+
+        app.navigationBars.buttons["取消"].firstMatch.tap()
+        let numericID = UUID().uuidString
+        var numericRecord = record
+        numericRecord["id"] = numericID
+        numericRecord["name"] = "Saved by IP"
+        numericRecord["hostname"] = "127.0.0.1"
+        numericRecord["users"] = [["username": "ip-fixture"]]
+        try JSONSerialization.data(withJSONObject: ["filename": "Numeric fixture", "screens": [numericRecord], "folders": []])
+            .write(to: archive)
+        app.open(archive)
+        XCTAssertTrue(imported.waitForExistence(timeout: 8))
+        imported.buttons.firstMatch.tap()
+        quick.tap()
+        XCTAssertTrue(choose.waitForExistence(timeout: 8))
+        choose.tap()
+        XCTAssertTrue(computer.waitForExistence(timeout: 12))
+        computer.tap()
+        let numeric = app.buttons["connection.profile." + numericID].firstMatch
+        XCTAssertTrue(numeric.waitForExistence(timeout: 8))
+        XCTAssertTrue(numeric.label.contains("127.0.0.1"))
+        XCTAssertTrue(numeric.label.contains("ip-fixture"))
+        XCTAssertFalse(username.exists)
+        numeric.tap()
+        XCTAssertTrue(username.waitForExistence(timeout: 8))
+        XCTAssertEqual(username.value as? String, "ip-fixture")
+        XCTAssertEqual(host.value as? String, "127.0.0.1")
+        XCTAssertEqual(portField.value as? String, String(port))
     }
 
     func testNearbyContextMenuChoosesAConnectionModeWithoutChangingTheDefault() throws {

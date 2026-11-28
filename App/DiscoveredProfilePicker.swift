@@ -1,14 +1,40 @@
 import SwiftUI
+import Network
 
 struct DiscoveredProfileSelection {
     let computer: Computer
     let suggestedSSHPort: UInt16?
     let quality: PictureQuality?
+    var resolvedAddresses: Set<Endpoint> = []
+
+    @MainActor
+    func profiles(in library: ConnectionLibrary) -> [Computer] {
+        let named = library.profiles(forDiscovered: computer.endpoint)
+        guard !resolvedAddresses.isEmpty else { return named }
+        let namedIDs = Set(named.map(\.id))
+        let resolved = library.archive.computers.filter {
+            $0.saved && !namedIDs.contains($0.id) && matchesResolvedAddress($0.endpoint)
+        }
+        return named + resolved
+    }
+
+    private func matchesResolvedAddress(_ endpoint: Endpoint) -> Bool {
+        if resolvedAddresses.contains(endpoint) { return true }
+        // Keep interface scopes distinct but compare the binary IPv6 address.
+        let parts = endpoint.host.split(separator: "%", maxSplits: 1)
+        guard let first = parts.first, let address = IPv6Address(String(first)) else { return false }
+        return resolvedAddresses.contains {
+            guard $0.port == endpoint.port else { return false }
+            let alias = $0.host.split(separator: "%", maxSplits: 1)
+            return alias.dropFirst().elementsEqual(parts.dropFirst())
+                && alias.first.flatMap { IPv6Address(String($0)) } == address
+        }
+    }
 
     @MainActor
     func editor(selecting profile: Computer?, in library: ConnectionLibrary) -> EditorRequest? {
         guard let profile else { return editor(using: nil) }
-        guard let current = library.profiles(forDiscovered: computer.endpoint).first(where: { $0.id == profile.id }),
+        guard let current = profiles(in: library).first(where: { $0.id == profile.id }),
               current.hasSameDestination(as: profile) else { return nil }
         return editor(using: current)
     }
@@ -62,6 +88,11 @@ struct DiscoveredProfilePicker: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(verbatim: profile.displayName)
                 .foregroundStyle(.primary)
+            if profile.endpoint != selection.computer.endpoint {
+                Text(verbatim: profile.endpoint.address)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if !profile.username.isEmpty {
                 Text(verbatim: profile.username)
                     .font(.subheadline)
