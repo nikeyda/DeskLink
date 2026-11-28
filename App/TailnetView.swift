@@ -178,8 +178,8 @@ struct TailnetView: View {
 
     private func devices(_ results: [TailnetDevice]) -> some View {
         ForEach(results) { item in
-            if let computer = directory.computer(for: item) {
-                deviceItem(item, computer: computer)
+            if let computer = directory.computer(for: item), let system = item.desktopSystem {
+                deviceItem(item, computer: computer, system: system)
             }
         }
     }
@@ -195,27 +195,27 @@ struct TailnetView: View {
         .accessibilityIdentifier("tailnet.folder.selection")
     }
 
-    private func deviceItem(_ device: TailnetDevice, computer: Computer) -> some View {
+    private func deviceItem(_ device: TailnetDevice, computer: Computer, system: TailnetDevice.DesktopSystem) -> some View {
         let id = directory.directoryID(for: device)
         let ports = id.flatMap { directory.ports(for: $0) }
         let membership = directory.folderID(for: device)
         let folderName = directory.folders.first { $0.id == membership }?.name
+        let details = system.details(address: computer.endpoint.address)
         return DiscoveredConnectionItem(id: "tailnet.device." + device.id, selection: $selectedDevice,
                                         cornerRadius: listLayout ? 8 : 16, endpoint: computer.endpoint,
-                                        offersHighPerformance: device.offersHighPerformance) { quality in
+                                        offersHighPerformance: system.offersHighPerformance) { quality in
             select(computer, ports?.ssh, quality)
         } label: {
             if listLayout {
                 Label {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(verbatim: computer.displayName)
-                        Text(verbatim: [computer.endpoint.address, device.os, folderName].compactMap { $0 }.joined(separator: " · "))
+                        Text(verbatim: [details, folderName].compactMap { $0 }.joined(separator: " · "))
                             .font(.caption).foregroundStyle(.secondary)
                     }
-                } icon: { Image(systemName: "desktopcomputer").foregroundStyle(Color.accentColor) }
+                } icon: { Image(systemName: system.symbol).foregroundStyle(Color.accentColor) }
             } else {
-                ConnectionTile(name: computer.displayName, address: computer.endpoint.address,
-                               symbol: "desktopcomputer", folder: folderName)
+                ConnectionTile(name: computer.displayName, address: details, symbol: system.symbol, folder: folderName)
             }
         } actions: {
             Button("保存到连接库") { save(computer, ports?.ssh) }
@@ -242,14 +242,14 @@ struct TailnetView: View {
     private var hiddenDeviceList: some View {
         NavigationStack {
             List(directory.hiddenDevices) { device in
-                if let computer = directory.computer(for: device) {
+                if let computer = directory.computer(for: device), let system = device.desktopSystem {
                     LabeledContent {
                         Button("恢复显示") { directory.setHidden(false, device: device) }
                             .accessibilityLabel(Text("恢复显示：\(computer.displayName)"))
                     } label: {
                         VStack(alignment: .leading) {
                             Text(computer.displayName)
-                            Text(computer.endpoint.address).font(.caption).foregroundStyle(.secondary)
+                            Text(verbatim: system.details(address: computer.endpoint.address)).font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -266,9 +266,8 @@ struct TailnetView: View {
     }
 
     private func matches(_ item: TailnetDevice) -> Bool {
-        search.isEmpty || item.hostname.localizedCaseInsensitiveContains(search) || item.name.localizedCaseInsensitiveContains(search)
-            || item.addresses.contains(where: { $0.localizedCaseInsensitiveContains(search) })
-            || directory.computer(for: item)?.endpoint.address.localizedCaseInsensitiveContains(search) == true
+        let fields = [item.hostname, item.name, item.desktopSystem?.name, directory.computer(for: item)?.endpoint.address]
+        return LibrarySearchQuery(search).matches(fields + item.addresses.map(Optional.some))
     }
 }
 

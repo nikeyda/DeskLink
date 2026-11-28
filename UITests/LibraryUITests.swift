@@ -382,13 +382,58 @@ final class LibraryUITests: XCTestCase {
         XCTAssertEqual(sshPort.value as? String, "2207")
     }
 
+    func testTailnetComputerShowsItsPlatformAndOpensWithThePcKeyboardDefault() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]
+        app.launchEnvironment["DESKLINK_TEST_TAILNET_LISTING"] = #"""
+        {"devices":[
+          {"id":"pc","hostname":"Workstation","name":"workstation.fixture.invalid","addresses":["100.64.7.91"],"os":"windows"},
+          {"id":"mobile","hostname":"Phone","name":"phone.fixture.invalid","addresses":["100.64.7.92"],"os":"android"}
+        ]}
+        """#
+        app.launch()
+        selectCollection("library.tailscale", in: app)
+        let pc = app.buttons["tailnet.device.pc"].firstMatch
+        XCTAssertTrue(pc.waitForExistence(timeout: 8))
+        XCTAssertTrue(pc.label.contains("Windows") || pc.staticTexts["100.64.7.91 · Windows"].exists)
+        XCTAssertFalse(app.buttons["tailnet.device.mobile"].firstMatch.exists)
+        attachLibraryScreenshot(app, name: "Tailscale desktop directory")
+        pc.tap()
+
+        let host = app.textFields["connection.host"].firstMatch
+        XCTAssertTrue(host.waitForExistence(timeout: 8))
+        XCTAssertEqual(host.value as? String, "100.64.7.91")
+        let form = app.collectionViews["connection.form"].firstMatch
+        func reveal(_ element: XCUIElement) {
+            for _ in 0..<10 {
+                if element.isHittable,
+                   form.frame.insetBy(dx: 0, dy: 18).contains(CGPoint(x: element.frame.midX, y: element.frame.midY)) { return }
+                let start = form.coordinate(withNormalizedOffset: CGVector(dx: 0.42, dy: 0.78))
+                let end = form.coordinate(withNormalizedOffset: CGVector(dx: 0.42, dy: 0.38))
+                start.press(forDuration: 0.05, thenDragTo: end)
+            }
+            XCTFail("Could not reveal \(element.identifier).")
+        }
+        let display = app.buttons["显示器"].firstMatch
+        reveal(display)
+        display.tap()
+        let keyboard = app.buttons["connection.hardwareKeyboard"].firstMatch
+        reveal(keyboard)
+        XCTAssertTrue(keyboard.label.contains("发送本地字符") || (keyboard.value as? String) == "发送本地字符",
+                      keyboard.debugDescription)
+        attachLibraryScreenshot(app, name: "Windows hardware keyboard default")
+    }
+
     func testDiscoveredComputerLetsMeChooseASavedProfileOrEnterAnAccountManually() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]
         app.launchEnvironment["DESKLINK_TEST_TAILNET_LISTING"] = #"""
-        {"devices":[{"id":"profile-studio","hostname":"Fixture Studio","name":"studio.fixture.invalid",
-          "addresses":["100.64.7.19"],"os":"macOS","authorized":true}]}
+        {"devices":[
+          {"id":"profile-studio","hostname":"Fixture Studio","name":"studio.fixture.invalid","addresses":["100.64.7.19"],"os":"macOS","authorized":true},
+          {"id":"mobile","hostname":"Fixture iPad","name":"ipad.fixture.invalid","addresses":["100.64.7.21"],"os":"iOS"}
+        ]}
         """#
         app.launch()
         XCTAssertTrue(app.buttons["library.new"].waitForExistence(timeout: 10))
@@ -418,6 +463,7 @@ final class LibraryUITests: XCTestCase {
         selectCollection("library.tailscale", in: app)
         let device = app.buttons["tailnet.device.profile-studio"].firstMatch
         XCTAssertTrue(device.waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["tailnet.device.mobile"].firstMatch.exists)
         device.tap()
         let support = app.buttons["connection.profile." + firstID].firstMatch
         let operatorProfile = app.buttons["connection.profile." + secondID].firstMatch
@@ -447,6 +493,7 @@ final class LibraryUITests: XCTestCase {
         }
         let quickDevice = app.buttons["connection.device.tailscale.profile-studio"].firstMatch
         XCTAssertTrue(quickDevice.waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["connection.device.tailscale.mobile"].firstMatch.exists)
         quickDevice.tap()
         let manual = app.buttons["connection.profile.manual"].firstMatch
         XCTAssertTrue(manual.waitForExistence(timeout: 8))

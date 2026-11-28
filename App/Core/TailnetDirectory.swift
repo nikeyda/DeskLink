@@ -54,28 +54,72 @@ struct TailnetAccount: Codable, Equatable, Sendable {
 }
 
 struct TailnetDevice: Decodable, Identifiable, Sendable {
+    enum DesktopSystem: String, Codable, Sendable {
+        case mac, windows, linux, raspberryPi, unspecified, other
+
+        var name: String? {
+            switch self {
+            case .mac: "macOS"
+            case .windows: "Windows"
+            case .linux: "Linux"
+            case .raspberryPi: "Raspberry Pi"
+            case .unspecified, .other: nil
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .windows: "pc"
+            case .raspberryPi: "cpu"
+            default: "desktopcomputer"
+            }
+        }
+
+        var offersHighPerformance: Bool { self == .mac || self == .unspecified }
+
+        func details(address: String) -> String {
+            guard let name else { return address }
+            return "\(address) · \(name)"
+        }
+
+        func computer(name: String, endpoint: Endpoint) -> Computer {
+            var computer = Computer(name: name, endpoint: endpoint)
+            computer.saved = false
+            switch self {
+            case .mac: computer.screensOperatingSystem = 1
+            case .raspberryPi: computer.screensOperatingSystem = 5
+            default: break
+            }
+            if !offersHighPerformance { computer.hardwareKeyboardMode = .unicode }
+            return computer
+        }
+    }
+
     let id: String
     let nodeId: String?
     let hostname: String
     let name: String
     let addresses: [String]
-    let os: String
+    let os: String?
     let authorized: Bool?
 
-    var offersHighPerformance: Bool {
-        switch os.lowercased() {
-        case "", "macos", "darwin": true
-        default: false
+    var desktopSystem: DesktopSystem? {
+        switch os?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? "" {
+        case "": .unspecified
+        case "macos", "darwin": .mac
+        case "windows": .windows
+        case "linux": .linux
+        case "raspbian", "raspberrypi", "raspberry pi os": .raspberryPi
+        case "ios", "ipados", "android", "tvos", "visionos", "js": nil
+        default: .other
         }
     }
 
     var computer: Computer? {
-        guard authorized != false else { return nil }
+        guard authorized != false, let desktopSystem else { return nil }
         guard let address = addresses.compactMap({ try? Endpoint(address: $0) }).first ??
                 (try? Endpoint(address: name)) else { return nil }
-        var item = Computer(name: hostname.isEmpty ? name : hostname, endpoint: address)
-        item.saved = false
-        return item
+        return desktopSystem.computer(name: hostname.isEmpty ? name : hostname, endpoint: address)
     }
 
     func directoryID(in account: TailnetAccount) -> UUID? {
@@ -83,11 +127,6 @@ struct TailnetDevice: Decodable, Identifiable, Sendable {
         // The same node keeps its identity across renames and address changes.
         let identity = "local.nikey.desklink/tailnet/" + account.tailnet.lowercased() + "/" + id
         return UUID.derived(from: identity)
-    }
-
-    func widgetComputer(in account: TailnetAccount) -> ComputerEntity? {
-        guard let id = directoryID(in: account), let computer else { return nil }
-        return ComputerEntity(id: id, name: computer.displayName, address: computer.endpoint.address)
     }
 }
 
@@ -126,7 +165,8 @@ struct TailnetSearchMatch: Identifiable, Equatable {
     let computer: Computer
     let folder: String?
     let sshPort: UInt16?
-    let offersHighPerformance: Bool
+    let system: TailnetDevice.DesktopSystem
+    var offersHighPerformance: Bool { system.offersHighPerformance }
 }
 
 private final class FixedServiceDelegate: NSObject, URLSessionTaskDelegate {
@@ -143,7 +183,12 @@ final class TailnetDirectory {
     private struct Listing: Decodable { let devices: [TailnetDevice] }
     private struct RememberedDirectory: Codable {
         let account: TailnetAccount
-        let computers: [ComputerEntity]
+        // Older caches stored only name and address. Refresh them before offering those targets.
+        let desktopTargets: [DesktopTarget]?
+    }
+    private struct DesktopTarget: Codable {
+        let entity: ComputerEntity
+        let system: TailnetDevice.DesktopSystem
     }
     private struct Folders: Codable {
         var entries = [TailnetFolder]()
@@ -163,9 +208,10 @@ final class TailnetDirectory {
     private var hiddenIDs: Set<UUID>
     private var devicePorts: [UUID: TailnetDevicePorts]
     private var foldersByTailnet: [String: Folders]
-    private var widgetCandidates = [ComputerEntity]()
+    private var widgetCandidates = [DesktopTarget]()
     private(set) var account: TailnetAccount?
     private(set) var devices = [TailnetDevice]()
+    private(set) var needsWidgetDirectoryRefresh = false
     private var hasLoadedDevices = false
     private(set) var loading = false
     var error: String?
@@ -186,13 +232,13 @@ final class TailnetDirectory {
     func searchMatches(_ query: LibrarySearchQuery) -> [TailnetSearchMatch] {
         let names = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0.name) })
         return visibleDevices.compactMap { device in
-            guard let computer = computer(for: device) else { return nil }
+            guard let computer = computer(for: device), let system = device.desktopSystem else { return nil }
             let folder = folderID(for: device).flatMap { names[$0] }
-            let fields: [String?] = [device.hostname, device.name, computer.endpoint.address, folder]
+            let fields: [String?] = [device.hostname, device.name, computer.endpoint.address, folder, system.name]
             guard query.matches(fields + device.addresses.map(Optional.some)) else { return nil }
             let sshPort = directoryID(for: device).flatMap { ports(for: $0)?.ssh }
             return TailnetSearchMatch(id: device.id, computer: computer, folder: folder,
-                                      sshPort: sshPort, offersHighPerformance: device.offersHighPerformance)
+                                      sshPort: sshPort, system: system)
         }
     }
 
@@ -202,7 +248,7 @@ final class TailnetDirectory {
     }
 
     var widgetComputers: [ComputerEntity] {
-        widgetCandidates.filter { !hiddenIDs.contains($0.id) }.map { item in
+        widgetCandidates.map(\.entity).filter { !hiddenIDs.contains($0.id) }.map { item in
             guard devicePorts[item.id]?.vnc != nil, let endpoint = try? Endpoint(address: item.address) else { return item }
             let configured = configuredEndpoint(endpoint, for: item.id)
             return ComputerEntity(id: item.id, name: item.name, address: configured.address)
@@ -230,7 +276,8 @@ final class TailnetDirectory {
             if let stored = cache?.account ?? (try? decoder.decode(TailnetAccount.self, from: data)),
                let validated = try? TailnetAccount(tailnet: stored.tailnet, clientID: stored.clientID) {
                 account = validated
-                widgetCandidates = cache?.computers ?? []
+                widgetCandidates = cache?.desktopTargets ?? []
+                needsWidgetDirectoryRefresh = cache?.desktopTargets == nil
             }
         }
     }
@@ -260,7 +307,7 @@ final class TailnetDirectory {
         guard let listing = try? JSONDecoder().decode(Listing.self, from: Data(json.utf8)),
               let testAccount = try? TailnetAccount(tailnet: "fixture.invalid") else { return }
         account = testAccount
-        devices = listing.devices.filter { $0.computer != nil }
+        devices = desktopDevices(in: listing)
         hasLoadedDevices = true
     }
     #endif
@@ -297,6 +344,7 @@ final class TailnetDirectory {
         devices = []
         hasLoadedDevices = false
         widgetCandidates = []
+        needsWidgetDirectoryRefresh = false
         loading = false
         error = nil
         defaults.removeObject(forKey: "tailnet.account")
@@ -447,23 +495,28 @@ final class TailnetDirectory {
     }
 
     func computerForWidget(_ id: UUID) -> Computer? {
-        guard let item = widgetComputers.first(where: { $0.id == id }),
-              let endpoint = try? Endpoint(address: item.address) else { return nil }
-        var computer = Computer(name: item.name, endpoint: endpoint)
-        computer.saved = false
-        return computer
+        guard !hiddenIDs.contains(id), let target = widgetCandidates.first(where: { $0.entity.id == id }),
+              let endpoint = try? Endpoint(address: target.entity.address) else { return nil }
+        return target.system.computer(name: target.entity.name, endpoint: configuredEndpoint(endpoint, for: id))
     }
 
     private func storeWidgetComputers(_ listing: [TailnetDevice], account: TailnetAccount, remember: Bool) throws {
         guard remember else {
             defaults.removeObject(forKey: "tailnet.account")
             widgetCandidates = []
+            needsWidgetDirectoryRefresh = false
             return
         }
-        let computers = listing.compactMap { $0.widgetComputer(in: account) }
-        let cache = RememberedDirectory(account: account, computers: computers)
+        let desktopTargets = listing.compactMap { device -> DesktopTarget? in
+            guard let id = device.directoryID(in: account), let computer = device.computer,
+                  let system = device.desktopSystem else { return nil }
+            let entity = ComputerEntity(id: id, name: computer.displayName, address: computer.endpoint.address)
+            return DesktopTarget(entity: entity, system: system)
+        }
+        let cache = RememberedDirectory(account: account, desktopTargets: desktopTargets)
         defaults.set(try JSONEncoder().encode(cache), forKey: "tailnet.account")
-        widgetCandidates = computers
+        widgetCandidates = desktopTargets
+        needsWidgetDirectoryRefresh = false
     }
 
     private func requestDevices(_ account: TailnetAccount, secret: String) async throws -> [TailnetDevice] {
@@ -474,8 +527,12 @@ final class TailnetDirectory {
         request.setValue("Bearer " + token.access_token, forHTTPHeaderField: "Authorization")
         let response = try await data(for: request)
         try Task.checkCancellation()
+        return desktopDevices(in: try JSONDecoder().decode(Listing.self, from: response))
+    }
+
+    private func desktopDevices(in listing: Listing) -> [TailnetDevice] {
         let localHosts = Self.numericHosts(localAddresses ?? NearbyLocalIdentity.interfaceAddresses())
-        return try JSONDecoder().decode(Listing.self, from: response).devices.filter { device in
+        return listing.devices.filter { device in
             let hosts = Self.numericHosts(device.addresses)
             return device.computer != nil && (hosts.isEmpty || !hosts.isSubset(of: localHosts))
         }.sorted { $0.hostname.localizedStandardCompare($1.hostname) == .orderedAscending }

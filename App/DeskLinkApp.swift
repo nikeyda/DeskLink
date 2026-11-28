@@ -119,6 +119,11 @@ struct DeskLinkApp: App {
                         WidgetCenter.shared.reloadTimelines(ofKind: WidgetCatalog.kind)
                     }
                 }
+                .task(id: phase == .active && !privacy.locked) {
+                    if phase == .active, !privacy.locked, tailnet.needsWidgetDirectoryRefresh {
+                        await tailnet.refresh()
+                    }
+                }
                 .task(id: phase) {
                     guard phase == .active else { return }
                     #if DEBUG

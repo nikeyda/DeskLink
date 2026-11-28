@@ -718,8 +718,8 @@ struct LibraryWindow: View {
                                 endUnifiedSearch()
                                 openDiscovered(item.computer, suggestedSSHPort: item.sshPort, quality: nil)
                             } label: {
-                                searchLabel(item.computer.displayName, address: item.computer.endpoint.address,
-                                            folder: item.folder, symbol: "network")
+                                searchLabel(item.computer.displayName, address: item.system.details(address: item.computer.endpoint.address),
+                                            folder: item.folder, symbol: item.system.symbol)
                             }
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("library.search.tailscale." + item.id)

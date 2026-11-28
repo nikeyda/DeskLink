@@ -141,7 +141,15 @@ final class TailnetTests: XCTestCase {
         let domain = "TelescopeTailnetLocalNode." + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
         let service = DirectoryFixture()
-        await service.changeListing(to: #"{"devices":[{"id":"local","hostname":"Notebook","name":"local.fixture","addresses":["100.64.1.42","FD7A:115C:A1E0:0:0:0:0:42"],"os":"macOS"},{"id":"peer","hostname":"Notebook","name":"peer.fixture","addresses":["100.64.1.42","fd7a:115c:a1e0::43"],"os":"macOS"},{"id":"v6","hostname":"IPv6 only","name":"v6.fixture","addresses":["FD7A:115C:A1E0:0:0:0:0:42"],"os":"macOS"},{"id":"named","hostname":"Name only","name":"remote.fixture","addresses":[],"os":"linux"}]}"#)
+        await service.changeListing(to: #"""
+        {"devices":[
+          {"id":"local","hostname":"Notebook","name":"local.fixture","addresses":["100.64.1.42","FD7A:115C:A1E0:0:0:0:0:42"],"os":"macOS"},
+          {"id":"peer","hostname":"Notebook","name":"peer.fixture","addresses":["100.64.1.42","fd7a:115c:a1e0::43"],"os":"macOS"},
+          {"id":"v6","hostname":"IPv6 only","name":"v6.fixture","addresses":["FD7A:115C:A1E0:0:0:0:0:42"],"os":"macOS"},
+          {"id":"named","hostname":"Name only","name":"remote.fixture","addresses":[],"os":"linux"},
+          {"id":"mobile","hostname":"Tablet","name":"tablet.fixture","addresses":["100.64.1.43"],"os":"iOS"}
+        ]}
+        """#)
         let directory = TailnetDirectory(defaults: defaults, localAddresses: ["100.64.1.42", "fd7a:115c:a1e0::42"]) {
             try await service.reply(to: $0)
         }
@@ -156,7 +164,83 @@ final class TailnetTests: XCTestCase {
         XCTAssertEqual(results.map(\.id), ["peer"])
         XCTAssertEqual(results.first?.offersHighPerformance, true)
         XCTAssertEqual(Set(directory.widgetComputers.map(\.name)), ["Notebook", "Name only"])
-        XCTAssertEqual(directory.widgetComputers, TailnetDirectory(defaults: defaults).widgetComputers)
+        let reopened = TailnetDirectory(defaults: defaults)
+        XCTAssertFalse(reopened.needsWidgetDirectoryRefresh)
+        XCTAssertEqual(directory.widgetComputers, reopened.widgetComputers)
+        let linuxID = try XCTUnwrap(reopened.widgetComputers.first { $0.name == "Name only" }?.id)
+        XCTAssertEqual(reopened.computerForWidget(linuxID)?.hardwareKeyboardMode, .unicode)
+    }
+
+    @MainActor func testDesktopPlatformsReachSearchAndTheConnectionEditor() async throws {
+        let domain = "TelescopeTailnetDesktopPlatforms." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        let account = try TailnetAccount(tailnet: "fixture.example", clientID: UUID().uuidString)
+        let service = DirectoryFixture()
+        let directory = TailnetDirectory(defaults: defaults, localAddresses: ["100.64.7.11"]) {
+            try await service.reply(to: $0)
+        }
+        defer { defaults.removePersistentDomain(forName: domain) }
+        await service.changeListing(to: #"""
+        {"devices":[
+          {"id":"local","hostname":"Local","name":"local.fixture","addresses":["100.64.7.11"],"os":"macOS"},
+          {"id":"mobile","hostname":"Mobile","name":"mobile.fixture","addresses":["100.64.7.12"],"os":"  iOS "},
+          {"id":"android","hostname":"Tablet","name":"tablet.fixture","addresses":["100.64.7.13"],"os":"android"},
+          {"id":"tv","hostname":"TV","name":"tv.fixture","addresses":["100.64.7.14"],"os":"tvOS"},
+          {"id":"mac","hostname":"Desk","name":"desk.fixture","addresses":["100.64.7.15"],"os":"Darwin"},
+          {"id":"windows","hostname":"Studio","name":"studio.fixture","addresses":["100.64.7.16"],"os":"Windows"},
+          {"id":"linux","hostname":"Build","name":"build.fixture","addresses":["100.64.7.17"],"os":"Linux"},
+          {"id":"pi","hostname":"Lab","name":"lab.fixture","addresses":["100.64.7.18"],"os":"Raspbian"},
+          {"id":"legacy","hostname":"Legacy","name":"legacy.fixture","addresses":["100.64.7.19"]},
+          {"id":"bsd","hostname":"BSD","name":"bsd.fixture","addresses":["100.64.7.20"],"os":"freebsd"}
+        ]}
+        """#)
+        try await directory.link(account, secret: "fixture-only", remember: false)
+        XCTAssertEqual(Set(directory.visibleDevices.map(\.id)), ["mac", "windows", "linux", "pi", "legacy", "bsd"])
+        XCTAssertTrue(directory.searchMatches(LibrarySearchQuery("100.64.7.12")).isEmpty)
+
+        let windows = try XCTUnwrap(directory.searchMatches(LibrarySearchQuery("windows 7.16")).first)
+        XCTAssertEqual(windows.system.details(address: windows.computer.endpoint.address), "100.64.7.16 · Windows")
+        XCTAssertFalse(windows.offersHighPerformance)
+        XCTAssertEqual(windows.computer.authentication, .automatic)
+        XCTAssertEqual(windows.computer.hardwareKeyboardMode, .unicode)
+        let mac = try XCTUnwrap(directory.searchMatches(LibrarySearchQuery("macos")).first)
+        XCTAssertTrue(mac.offersHighPerformance)
+        XCTAssertEqual(mac.computer.hardwareKeyboardMode, .keystrokes)
+        let pi = try XCTUnwrap(directory.searchMatches(LibrarySearchQuery("Raspberry Pi")).first)
+        XCTAssertEqual(pi.computer.screensOperatingSystem, 5)
+        XCTAssertEqual(pi.computer.hardwareKeyboardMode, .unicode)
+        XCTAssertFalse(try XCTUnwrap(directory.searchMatches(LibrarySearchQuery("BSD")).first).offersHighPerformance)
+        XCTAssertTrue(try XCTUnwrap(directory.searchMatches(LibrarySearchQuery("Legacy")).first).offersHighPerformance)
+
+        let root = FileManager.default.temporaryDirectory.appending(path: domain, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = ConnectionLibrary(file: root.appending(path: "library.json"))
+        let editor = EditorRequest.connectingToDiscovered(windows.computer, in: library, suggestedSSHPort: nil, quality: nil)
+        XCTAssertEqual(editor.computer?.hardwareKeyboardMode, .unicode)
+        var profile = Computer(name: "My Studio", endpoint: windows.computer.endpoint)
+        profile.hardwareKeyboardMode = .legacy
+        XCTAssertTrue(library.save(profile))
+        let savedEditor = EditorRequest.connectingToDiscovered(windows.computer, in: library, suggestedSSHPort: nil, quality: nil)
+        XCTAssertEqual(savedEditor.computer?.id, profile.id)
+        XCTAssertEqual(savedEditor.computer?.hardwareKeyboardMode, .legacy)
+    }
+
+    @MainActor func testOlderWidgetDirectoryKeepsAccountAndWaitsForRefreshedTargets() async throws {
+        let domain = "TelescopeTailnetOlderWidgetCache." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let account = try TailnetAccount(tailnet: "fixture.invalid", clientID: "fixture")
+        let mobile = ComputerEntity(id: UUID(), name: "Mobile", address: "100.64.7.12")
+        struct OldCache: Encodable {
+            let account: TailnetAccount
+            let computers: [ComputerEntity]
+        }
+        defaults.set(try JSONEncoder().encode(OldCache(account: account, computers: [mobile])), forKey: "tailnet.account")
+        let directory = TailnetDirectory(defaults: defaults)
+        XCTAssertEqual(directory.account, account)
+        XCTAssertTrue(directory.needsWidgetDirectoryRefresh)
+        XCTAssertTrue(directory.widgetComputers.isEmpty)
+        XCTAssertNil(directory.computerForWidget(mobile.id))
     }
 
     @MainActor func testRefreshKeepsExistingDevicesWhenAuthorizationIsRevoked() async throws {

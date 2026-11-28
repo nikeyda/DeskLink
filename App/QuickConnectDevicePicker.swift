@@ -113,7 +113,8 @@ struct QuickConnectDevicePicker: View {
                 Button {
                     choose(entry.computer, sshPort: entry.sshPort)
                 } label: {
-                    computerLabel(entry.computer.displayName, address: entry.computer.endpoint.address)
+                    computerLabel(entry.computer.displayName, address: entry.system.details(address: entry.computer.endpoint.address),
+                                  symbol: entry.system.symbol)
                 }
                 .accessibilityIdentifier("connection.device.tailscale." + entry.id)
             }
@@ -129,7 +130,7 @@ struct QuickConnectDevicePicker: View {
         select(computer, sshPort)
     }
 
-    private func computerLabel(_ name: String, address: String?) -> some View {
+    private func computerLabel(_ name: String, address: String?, symbol: String = "desktopcomputer") -> some View {
         Label {
             VStack(alignment: .leading, spacing: 3) {
                 Text(verbatim: name).foregroundStyle(.primary)
@@ -137,7 +138,7 @@ struct QuickConnectDevicePicker: View {
                     Text(verbatim: address).font(.caption).foregroundStyle(.secondary)
                 }
             }
-        } icon: { Image(systemName: "desktopcomputer") }
+        } icon: { Image(systemName: symbol) }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
