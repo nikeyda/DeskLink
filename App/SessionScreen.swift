@@ -53,7 +53,8 @@ struct SessionScreen: View {
     @State private var mirrorEnabled = false
     @State private var toolbar = DeskToolbarState()
     @State private var toolbarBeforeFullScreen = true
-    @AppStorage("toolbar.style") private var toolbarStyle = DeskToolbarStyle.docked
+    private var toolbarProfile = ToolbarProfile(device: .current)
+    private var toolbarStyle: DeskToolbarStyle { toolbarProfile.style }
     @AppStorage("toolbar.portraitSplit") private var portraitSplit = false
     @AppStorage("pencil.doubleTap") private var pencilDoubleTap = RemotePencilAction.secondaryClick
     @AppStorage("pencil.squeeze") private var pencilSqueeze = RemotePencilAction.toggleToolbar

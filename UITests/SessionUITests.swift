@@ -1755,6 +1755,74 @@ final class SessionUITests: XCTestCase {
         app.buttons["session.close"].tap()
     }
 
+    func testIPadToolbarProfileSurvivesEditingThePhoneProfile() async throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires the iPad toolbar")
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
+
+        let desktop = LocalTestDisplay()
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+
+        func choose(_ title: String, from picker: String) {
+            let control = app.buttons[picker].firstMatch
+            XCTAssertTrue(control.waitForExistence(timeout: 6))
+            control.tap()
+            app.buttons[title].firstMatch.tap()
+        }
+
+        openChart(app, port: port) {
+            app.buttons["library.more"].tap()
+            app.buttons["设置"].firstMatch.tap()
+            let entry = app.buttons["preferences.toolbar"]
+            for _ in 0..<5 where !entry.isHittable { app.swipeUp() }
+            XCTAssertTrue(entry.isHittable)
+            entry.tap()
+            XCTAssertTrue(app.navigationBars["互动工具栏"].waitForExistence(timeout: 5))
+
+            let device = app.segmentedControls["toolbar.profileDevice"].firstMatch
+            XCTAssertTrue(device.waitForExistence(timeout: 6))
+            XCTAssertTrue(device.buttons["iPad"].isSelected)
+            choose("大", from: "toolbar.size.setting")
+            choose("末尾位置", from: "toolbar.keyboardPosition.setting")
+            XCTAssertTrue(device.buttons["iPhone"].isHittable)
+            device.buttons["iPhone"].tap()
+            XCTAssertTrue(device.buttons["iPhone"].isSelected)
+            choose("轮播", from: "toolbar.style.setting")
+            choose("小", from: "toolbar.size.setting")
+            choose("起始位置", from: "toolbar.keyboardPosition.setting")
+            attachToolbarScreenshot(app, name: "iPhone toolbar settings selected on iPad")
+
+            device.buttons["iPad"].tap()
+            XCTAssertTrue(device.buttons["iPad"].isSelected)
+            attachToolbarScreenshot(app, name: "Independent iPad toolbar settings")
+            let add = app.buttons["toolbar.addButton"]
+            for _ in 0..<5 where !add.isHittable { app.swipeUp() }
+            XCTAssertTrue(add.isHittable)
+            add.tap()
+            let option = app.buttons["toolbar.add.f5"]
+            for _ in 0..<5 where !option.isHittable { app.swipeUp() }
+            XCTAssertTrue(option.isHittable)
+            option.tap()
+            app.buttons["添加"].tap()
+            app.terminate()
+            app.launch()
+        }
+
+        let f5 = app.buttons["toolbar.f5"].firstMatch
+        let tab = app.buttons["toolbar.tab"].firstMatch
+        let keyboard = app.buttons["toolbar.keyboard"].firstMatch
+        try await waitUntil { desktop.frameCount > 0 && f5.isHittable && tab.isHittable && keyboard.isHittable }
+        XCTAssertFalse(app.buttons["toolbar.next"].exists)
+        XCTAssertGreaterThan(keyboard.frame.midX, tab.frame.midX)
+        XCTAssertEqual(f5.frame.width, 54, accuracy: 2)
+        f5.tap()
+        try await waitUntil { desktop.keyDowns == [0xFFC2] }
+        attachToolbarScreenshot(app, name: "iPad toolbar in a live remote session")
+        app.buttons["session.close"].tap()
+    }
+
     private func selectToolbar(_ style: String, in app: XCUIApplication) {
         app.buttons["library.more"].tap()
         app.buttons["设置"].firstMatch.tap()

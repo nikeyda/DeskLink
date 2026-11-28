@@ -4,6 +4,48 @@ import XCTest
 @testable import DeskLink
 
 @MainActor final class ToolbarTests: XCTestCase {
+    func testDeviceProfilesInheritLegacyFieldsUntilEachDeviceEditsThem() throws {
+        let suite = UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("floating", forKey: SyncedPreference.style.rawValue)
+        defaults.set("extraLarge", forKey: SyncedPreference.size.rawValue)
+        defaults.set("f12,spacer,tab", forKey: SyncedPreference.buttons.rawValue)
+        defaults.set(true, forKey: SyncedPreference.keyboardTrailing.rawValue)
+
+        for device in ToolbarProfileDevice.allCases {
+            let profile = ToolbarProfile(device: device, store: defaults)
+            XCTAssertEqual(profile.style, .floating)
+            XCTAssertEqual(profile.size, .extraLarge)
+            XCTAssertEqual(profile.buttons, "f12,spacer,tab")
+            XCTAssertTrue(profile.keyboardTrailing)
+        }
+        XCTAssertNil(defaults.object(forKey: SyncedPreference.phoneToolbarStyle.rawValue))
+        XCTAssertNil(defaults.object(forKey: SyncedPreference.padToolbarStyle.rawValue))
+
+        let phone = ToolbarProfile(device: .iPhone, store: defaults)
+        phone.style = .docked
+        phone.size = .small
+        phone.buttons = ""
+        phone.keyboardTrailing = false
+        let pad = ToolbarProfile(device: .iPad, store: defaults)
+        pad.style = .carousel
+        pad.buttons = "enter"
+        defaults.set("large", forKey: SyncedPreference.size.rawValue)
+
+        let reloadedPhone = ToolbarProfile(device: .iPhone, store: defaults)
+        XCTAssertEqual(reloadedPhone.style, .docked)
+        XCTAssertEqual(reloadedPhone.size, .small)
+        XCTAssertEqual(reloadedPhone.buttons, "")
+        XCTAssertFalse(reloadedPhone.keyboardTrailing)
+        let reloadedPad = ToolbarProfile(device: .iPad, store: defaults)
+        XCTAssertEqual(reloadedPad.style, .carousel)
+        XCTAssertEqual(reloadedPad.size, .large)
+        XCTAssertEqual(reloadedPad.buttons, "enter")
+        XCTAssertTrue(reloadedPad.keyboardTrailing)
+        XCTAssertEqual(defaults.string(forKey: SyncedPreference.style.rawValue), "floating")
+    }
+
     func testHardwareRepeatTimingStopsOnReleaseAndCanBeDisabled() async throws {
         var wire = [Bool]()
         let input = HardwareKeyboardController(keyboardHandler: KeyboardInputHandler { down, _ in wire.append(down) })

@@ -3,32 +3,52 @@ import SwiftUI
 import rootshellVNC
 
 struct ToolbarPreferences: View {
-    @AppStorage("toolbar.style") private var style = DeskToolbarStyle.docked
-    @AppStorage("toolbar.size") private var size = DeskToolbarSize.standard
-    @AppStorage("toolbar.buttons") private var stored = DeskToolbarButton.standard
-    @AppStorage("toolbar.keyboardTrailing") private var keyboardTrailing = false
+    @State private var device = ToolbarProfileDevice.current
+
+    var body: some View {
+        ToolbarProfileEditor(device: $device).id(device)
+    }
+}
+
+private struct ToolbarProfileEditor: View {
+    @Binding private var device: ToolbarProfileDevice
+    private var profile: ToolbarProfile
     @AppStorage("toolbar.twoFingerToggle") private var twoFingerToggle = true
     @AppStorage("toolbar.portraitSplit") private var portraitSplit = false
     @AppStorage("toolbar.splitControls") private var splitControls = DeskSplitControls.sideBySide
     @State private var adding = false
     @State private var selected: Set<DeskToolbarButton> = []
-    private var buttons: [DeskToolbarButton] { DeskToolbarButton.buttons(in: stored) }
+    private var buttons: [DeskToolbarButton] { DeskToolbarButton.buttons(in: profile.buttons) }
+
+    init(device: Binding<ToolbarProfileDevice>) {
+        _device = device
+        profile = ToolbarProfile(device: device.wrappedValue)
+    }
 
     var body: some View {
         List {
             Section {
-                Picker("样式", selection: $style) {
+                Picker("设备", selection: $device) {
+                    ForEach(ToolbarProfileDevice.allCases, id: \.self) { Text(verbatim: $0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("toolbar.profileDevice")
+            }
+            Section {
+                Picker("样式", selection: Binding(get: { profile.style }, set: { profile.style = $0 })) {
                     ForEach(DeskToolbarStyle.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.menu)
                 .accessibilityIdentifier("toolbar.style.setting")
-                Picker("按钮大小", selection: $size) {
+                Picker("按钮大小", selection: Binding(get: { profile.size }, set: { profile.size = $0 })) {
                     ForEach(DeskToolbarSize.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
-                Picker("键盘按钮位置", selection: $keyboardTrailing) {
+                .accessibilityIdentifier("toolbar.size.setting")
+                Picker("键盘按钮位置", selection: Binding(get: { profile.keyboardTrailing }, set: { profile.keyboardTrailing = $0 })) {
                     Text("起始位置").tag(false)
                     Text("末尾位置").tag(true)
                 }
+                .accessibilityIdentifier("toolbar.keyboardPosition.setting")
                 Toggle("双指双击切换全屏幕", isOn: $twoFingerToggle)
             }
             Section("分屏控制") {
@@ -89,12 +109,12 @@ struct ToolbarPreferences: View {
     }
 
     private func save(_ items: [DeskToolbarButton]) {
-        stored = items.map(\.rawValue).joined(separator: ",")
+        profile.buttons = items.map(\.rawValue).joined(separator: ",")
     }
 }
 
 struct PencilPreferences: View {
-    @AppStorage("toolbar.style") private var style = DeskToolbarStyle.docked
+    private var toolbar = ToolbarProfile(device: .current)
     @AppStorage("pencil.doubleTap") private var doubleTap = RemotePencilAction.secondaryClick
     @AppStorage("pencil.squeeze") private var squeeze = RemotePencilAction.toggleToolbar
 
@@ -111,8 +131,8 @@ struct PencilPreferences: View {
             Text("右键点击（次级点击）").tag(RemotePencilAction.secondaryClick)
             Text("中键点击").tag(RemotePencilAction.middleClick)
             Text("切换工具栏的可见性").tag(RemotePencilAction.toggleToolbar)
-            if style == .floating || selection.wrappedValue == .toggleExpandedToolbar {
-                Text("展开或折叠工具栏").tag(RemotePencilAction.toggleExpandedToolbar).disabled(style != .floating)
+            if toolbar.style == .floating || selection.wrappedValue == .toggleExpandedToolbar {
+                Text("展开或折叠工具栏").tag(RemotePencilAction.toggleExpandedToolbar).disabled(toolbar.style != .floating)
             }
         }
         .accessibilityIdentifier(title == "双击" ? "pencil.doubleTap" : "pencil.squeeze")

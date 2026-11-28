@@ -306,10 +306,10 @@ struct InteractiveDesktop<SessionHeader: View>: View {
     let captureScreenshot: () -> Void
     let toggleFullScreen: () -> Void
     @ViewBuilder let sessionHeader: () -> SessionHeader
-    @AppStorage("toolbar.style") private var style = DeskToolbarStyle.docked
-    @AppStorage("toolbar.size") private var size = DeskToolbarSize.standard
-    @AppStorage("toolbar.buttons") private var order = DeskToolbarButton.standard
-    @AppStorage("toolbar.keyboardTrailing") private var keyboardTrailing = false
+    private var toolbarProfile = ToolbarProfile(device: .current)
+    private var style: DeskToolbarStyle { toolbarProfile.style }
+    private var size: DeskToolbarSize { toolbarProfile.size }
+    private var keyboardTrailing: Bool { toolbarProfile.keyboardTrailing }
     @AppStorage("toolbar.splitControls") private var splitControls = DeskSplitControls.sideBySide
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var contrast
@@ -325,7 +325,7 @@ struct InteractiveDesktop<SessionHeader: View>: View {
     private let laptopKeySpacing: CGFloat = 6
     private let laptopPanelInset: CGFloat = 10
     private let wideLaptopKeyboardWidth: CGFloat = 540
-    private var buttons: [DeskToolbarButton] { DeskToolbarButton.buttons(in: order) }
+    private var buttons: [DeskToolbarButton] { DeskToolbarButton.buttons(in: toolbarProfile.buttons) }
     private var laptopOutline: Color { .white.opacity(contrast == .increased ? 0.28 : 0.12) }
     private var keyboardVisible: Bool { deck != nil && dockedKeyboardInset >= 1 }
     private var usesDirectTouchInDeck: Bool {
@@ -383,7 +383,7 @@ struct InteractiveDesktop<SessionHeader: View>: View {
         }
         .environment(\.colorScheme, deck == nil ? colorScheme : .dark)
         .sheet(isPresented: $showsDraft) { draftSheet }
-        .onChange(of: order) { _, _ in bar.page = 0 }
+        .onChange(of: toolbarProfile.buttons) { _, _ in bar.page = 0 }
         .onChange(of: deck == nil) { _, regular in
             if regular { dockedKeyboardInset = 0 }
         }

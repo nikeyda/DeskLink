@@ -30,6 +30,14 @@ enum SyncedPreference: String, CaseIterable {
     case size = "toolbar.size"
     case buttons = "toolbar.buttons"
     case keyboardTrailing = "toolbar.keyboardTrailing"
+    case phoneToolbarStyle = "toolbar.iPhone.style"
+    case phoneToolbarSize = "toolbar.iPhone.size"
+    case phoneToolbarButtons = "toolbar.iPhone.buttons"
+    case phoneToolbarKeyboardTrailing = "toolbar.iPhone.keyboardTrailing"
+    case padToolbarStyle = "toolbar.iPad.style"
+    case padToolbarSize = "toolbar.iPad.size"
+    case padToolbarButtons = "toolbar.iPad.buttons"
+    case padToolbarKeyboardTrailing = "toolbar.iPad.keyboardTrailing"
     case twoFingerToggle = "toolbar.twoFingerToggle"
     case doubleTap = "pencil.doubleTap"
     case squeeze = "pencil.squeeze"
@@ -57,7 +65,9 @@ enum SyncedPreference: String, CaseIterable {
 
     func accepts(_ value: PreferenceValue) -> Bool {
         switch (self, value) {
-        case (.list, .flag), (.reconnect, .flag), (.cursor, .flag), (.keyboardTrailing, .flag), (.twoFingerToggle, .flag), (.keyRepeat, .flag):
+        case (.list, .flag), (.reconnect, .flag), (.cursor, .flag), (.keyboardTrailing, .flag),
+             (.phoneToolbarKeyboardTrailing, .flag), (.padToolbarKeyboardTrailing, .flag),
+             (.twoFingerToggle, .flag), (.keyRepeat, .flag):
             true
         case (.speed, .speed(let value)): (0.5...3).contains(value)
         case (.pointerMode, .text(let value)): RemotePointerMode(rawValue: value) != nil
@@ -65,13 +75,15 @@ enum SyncedPreference: String, CaseIterable {
         case (.keyDelay, .speed(let value)): VNCKeyRepeat.delayRange.contains(value)
         case (.keyInterval, .speed(let value)): VNCKeyRepeat.intervalRange.contains(value)
         case (.up, .number(let n)), (.down, .number(let n)), (.horizontal, .number(let n)): [0, 3, 4].contains(n)
-        case (.style, .text(let text)): ["docked", "floating", "carousel"].contains(text)
+        case (.style, .text(let text)), (.phoneToolbarStyle, .text(let text)), (.padToolbarStyle, .text(let text)):
+            ["docked", "floating", "carousel"].contains(text)
         case (.savedOrder, .text(let text)), (.favoriteOrder, .text(let text)), (.linkOrder, .text(let text)): ComputerOrder(rawValue: text) != nil
         case (.recentOrder, .text(let text)): ComputerOrder(rawValue: text).map { $0 != .manual } == true
-        case (.size, .text(let text)): ["small", "standard", "large", "extraLarge"].contains(text)
+        case (.size, .text(let text)), (.phoneToolbarSize, .text(let text)), (.padToolbarSize, .text(let text)):
+            ["small", "standard", "large", "extraLarge"].contains(text)
         case (.doubleTap, .text(let text)), (.squeeze, .text(let text)):
             ["none", "secondaryClick", "middleClick", "toggleToolbar", "toggleExpandedToolbar"].contains(text)
-        case (.buttons, .text): true
+        case (.buttons, .text), (.phoneToolbarButtons, .text), (.padToolbarButtons, .text): true
         default: false
         }
     }
@@ -80,10 +92,13 @@ enum SyncedPreference: String, CaseIterable {
         guard defaults.object(forKey: rawValue) != nil else { return nil }
         let result: PreferenceValue?
         switch self {
-        case .list, .reconnect, .cursor, .keyboardTrailing, .twoFingerToggle, .keyRepeat: result = .flag(defaults.bool(forKey: rawValue))
+        case .list, .reconnect, .cursor, .keyboardTrailing, .phoneToolbarKeyboardTrailing, .padToolbarKeyboardTrailing,
+                .twoFingerToggle, .keyRepeat: result = .flag(defaults.bool(forKey: rawValue))
         case .speed, .holdDuration, .keyDelay, .keyInterval: result = .speed(defaults.double(forKey: rawValue))
         case .up, .down, .horizontal: result = .number(defaults.integer(forKey: rawValue))
-        case .style, .size, .buttons, .doubleTap, .squeeze, .savedOrder, .favoriteOrder, .recentOrder, .linkOrder, .pointerMode:
+        case .style, .size, .buttons, .phoneToolbarStyle, .phoneToolbarSize, .phoneToolbarButtons,
+                .padToolbarStyle, .padToolbarSize, .padToolbarButtons,
+                .doubleTap, .squeeze, .savedOrder, .favoriteOrder, .recentOrder, .linkOrder, .pointerMode:
             result = defaults.string(forKey: rawValue).map(PreferenceValue.text)
         }
         return result.flatMap { accepts($0) ? $0 : nil }
