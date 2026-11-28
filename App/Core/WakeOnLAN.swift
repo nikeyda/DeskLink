@@ -78,11 +78,64 @@ enum WakeOnLAN {
     }
 
     @MainActor static func prepare(_ endpoint: Endpoint, hardwareAddress: WakeHardwareAddress) async throws {
-        guard let target = address(endpoint.host),
-              let route = interface(for: target, in: interfaces()), let broadcast = route.broadcast(for: target) else { return }
+        let targets = await addresses(for: endpoint.host)
+        try Task.checkCancellation()
+        guard let route = broadcastRoute(for: targets, in: interfaces()) else { return }
         try await waitForDesktop(probe: { await ScreenSharingCheck.check(endpoint, timeout: .milliseconds(450)) }, send: {
-            sendPacket(hardwareAddress.packet, to: broadcast, interface: route.index)
+            sendPacket(hardwareAddress.packet, to: route.destination, interface: route.interfaceIndex)
         })
+    }
+
+    static func broadcastRoute(for targets: [UInt32],
+                               in interfaces: [Interface]) -> (destination: UInt32, interfaceIndex: UInt32)? {
+        for target in targets {
+            if let route = interface(for: target, in: interfaces), let destination = route.broadcast(for: target) {
+                return (destination, route.index)
+            }
+        }
+        return nil
+    }
+
+    static func addresses(for host: String) async -> [UInt32] {
+        if let literal = address(host) { return [literal] }
+        guard !host.contains(":"), !Task.isCancelled else { return [] }
+        let (results, output) = AsyncStream.makeStream(of: [UInt32].self, bufferingPolicy: .bufferingOldest(1))
+        DispatchQueue.global(qos: .utility).async {
+            output.yield(resolveIPv4(host))
+            output.finish()
+        }
+        let deadline = Task {
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            output.finish()
+        }
+        defer {
+            deadline.cancel()
+            output.finish()
+        }
+        var iterator = results.makeAsyncIterator()
+        return await iterator.next() ?? []
+    }
+
+    private static func resolveIPv4(_ host: String) -> [UInt32] {
+        var hints = addrinfo()
+        hints.ai_family = AF_INET
+        hints.ai_socktype = SOCK_STREAM
+        var result: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, nil, &hints, &result) == 0, let result else { return [] }
+        defer { freeaddrinfo(result) }
+
+        var addresses: [UInt32] = []
+        var next: UnsafeMutablePointer<addrinfo>? = result
+        while let entry = next?.pointee {
+            next = entry.ai_next
+            guard let socketAddress = entry.ai_addr,
+                  entry.ai_addrlen >= MemoryLayout<sockaddr_in>.size else { continue }
+            let ipv4 = socketAddress.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+                UInt32(bigEndian: $0.pointee.sin_addr.s_addr)
+            }
+            addresses.append(ipv4)
+        }
+        return addresses
     }
 
     @MainActor static func waitForDesktop(attempts: Int = 8, delay: Duration = .seconds(1),

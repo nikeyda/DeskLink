@@ -43,6 +43,29 @@ final class WakeOnLANTests: XCTestCase {
         }
     }
 
+    func testResolvesHostnamesAndUsesTheFirstAttachedRemoteAddress() async throws {
+        let lookup = await WakeOnLAN.addresses(for: "localhost")
+        XCTAssertTrue(lookup.contains(INADDR_LOOPBACK))
+        let testInterface = WakeOnLAN.Interface(index: 4, address: 0x7f00_0002, mask: 0xff00_0000)
+        let resolvedRoute = WakeOnLAN.broadcastRoute(for: lookup, in: [testInterface])
+        XCTAssertEqual(resolvedRoute?.interfaceIndex, 4)
+        XCTAssertEqual(resolvedRoute?.destination, 0x7fff_ffff)
+
+        let literal = await WakeOnLAN.addresses(for: "192.168.10.27")
+        let ipv6 = await WakeOnLAN.addresses(for: "::1")
+        XCTAssertEqual(literal, [try XCTUnwrap(WakeOnLAN.address("192.168.10.27"))])
+        XCTAssertTrue(ipv6.isEmpty)
+
+        let localAddress = try XCTUnwrap(WakeOnLAN.address("192.168.10.1"))
+        let mask = try XCTUnwrap(WakeOnLAN.address("255.255.255.0"))
+        let offLink = try XCTUnwrap(WakeOnLAN.address("203.0.113.2"))
+        let network = [WakeOnLAN.Interface(index: 5, address: localAddress, mask: mask)]
+        XCTAssertNil(WakeOnLAN.broadcastRoute(for: lookup + [localAddress, offLink], in: network))
+        let route = WakeOnLAN.broadcastRoute(for: [offLink, localAddress] + literal, in: network)
+        XCTAssertEqual(route?.destination, WakeOnLAN.address("192.168.10.255"))
+        XCTAssertEqual(route?.interfaceIndex, 5)
+    }
+
     @MainActor func testBroadcastIsSkippedForAnAwakeServerAndRunsOnceForASleepingOne() async throws {
         var broadcasts = 0
         try await WakeOnLAN.waitForDesktop(delay: .zero, probe: { .responding }, send: { broadcasts += 1; return true })

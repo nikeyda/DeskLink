@@ -611,7 +611,8 @@ struct ConnectionEditor: View {
     #if targetEnvironment(macCatalyst)
     private var hasWakeAddress: Bool { !wakeAddressText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     private var validWakeSettings: Bool {
-        endpoint.flatMap { WakeOnLAN.address($0.host) } != nil && WakeHardwareAddress(wakeAddressText) != nil
+        guard let endpoint, !endpoint.host.contains(":") else { return false }
+        return WakeHardwareAddress(wakeAddressText) != nil
     }
 
     private var wakeSection: some View {
@@ -623,7 +624,7 @@ struct ConnectionEditor: View {
             Text("网络唤醒")
         } footer: {
             if hasWakeAddress, !validWakeSettings {
-                Text("请输入有效的 MAC 地址，并在连接地址中使用这台电脑的局域网 IPv4 地址。")
+                Text("请输入有效的 MAC 地址，并使用电脑的主机名或局域网 IPv4 地址。")
                     .foregroundStyle(.red)
             } else {
                 Text("填写后，连接时会尝试唤醒同一局域网内支持网络唤醒的电脑。")
