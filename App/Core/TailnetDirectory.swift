@@ -259,16 +259,31 @@ final class TailnetDirectory {
         return visibleDevices.filter { folderID(for: $0) == selection }
     }
 
+    func devicesInSelectedFolder(matching query: LibrarySearchQuery) -> [TailnetDevice] {
+        let devices = devicesInSelectedFolder
+        guard !query.isEmpty else { return devices }
+        return matchingDevices(devices, query: query).map(\.device)
+    }
+
     func searchMatches(_ query: LibrarySearchQuery) -> [TailnetSearchMatch] {
-        let names = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0.name) })
-        return visibleDevices.compactMap { device in
-            guard let computer = computer(for: device), let system = device.desktopSystem else { return nil }
-            let folder = folderID(for: device).flatMap { names[$0] }
-            guard device.matches(query, computer: computer, folder: folder) else { return nil }
+        matchingDevices(visibleDevices, query: query).compactMap { device, computer, folder in
+            guard let system = device.desktopSystem else { return nil }
             let sshPort = directoryID(for: device).flatMap { ports(for: $0)?.ssh }
             return TailnetSearchMatch(id: device.id, computer: computer, folder: folder,
                                       sshPort: sshPort, system: system,
                                       advertisedEndpoints: device.advertisedEndpoints(port: computer.endpoint.port))
+        }
+    }
+
+    private func matchingDevices(_ devices: [TailnetDevice], query: LibrarySearchQuery)
+        -> [(device: TailnetDevice, computer: Computer, folder: String?)]
+    {
+        let names = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0.name) })
+        return devices.compactMap { device in
+            guard let computer = computer(for: device) else { return nil }
+            let folder = folderID(for: device).flatMap { names[$0] }
+            guard device.matches(query, computer: computer, folder: folder) else { return nil }
+            return (device, computer, folder)
         }
     }
 

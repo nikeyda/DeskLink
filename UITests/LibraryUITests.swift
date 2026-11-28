@@ -450,6 +450,64 @@ final class LibraryUITests: XCTestCase {
     }
 
     #if targetEnvironment(simulator)
+    func testTailnetCategorySearchMatchesFolderAndDeviceTermsTogether() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]
+        app.launchEnvironment["DESKLINK_TEST_TAILNET_LISTING"] = #"""
+        {"devices":[
+            {"id":"search-pc","hostname":"Workstation","name":"workstation.fixture.invalid","addresses":["100.64.7.81"],"os":"windows"},
+            {"id":"search-mac","hostname":"Mini","name":"mini.fixture.invalid","addresses":["100.64.7.82"],"os":"macOS"}
+        ]}
+        """#
+        app.launch()
+        let file = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString + ".screens")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let groups: [[String: Any]] = [
+            ["id": UUID().uuidString, "name": "Editing Room", "items": [String](),
+             "rawItems": ["search-pc"], "contentType": 16]
+        ]
+        try JSONSerialization.data(withJSONObject: ["filename": "Directory search",
+                                                     "screens": [], "folders": [], "tsFolders": groups]).write(to: file)
+        app.open(file)
+        let done = app.buttons["完成"].firstMatch
+        XCTAssertTrue(done.waitForExistence(timeout: 10))
+        done.tap()
+
+        selectCollection("library.tailscale", in: app)
+        let pc = app.buttons["tailnet.device.search-pc"].firstMatch
+        let mac = app.buttons["tailnet.device.search-mac"].firstMatch
+        XCTAssertTrue(pc.waitForExistence(timeout: 8))
+        XCTAssertTrue(mac.exists)
+        app.buttons["tailnet.menu"].firstMatch.tap()
+        let importGroups = app.buttons["tailnet.folder.import"].firstMatch
+        XCTAssertTrue(importGroups.waitForExistence(timeout: 5))
+        importGroups.tap()
+        let confirmation = app.alerts["导入归档分组"].firstMatch
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        confirmation.buttons["导入"].tap()
+
+        XCTAssertTrue(app.staticTexts["tailnet.folder.importResult"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(pc.exists)
+        XCTAssertTrue(mac.exists)
+        let search = app.searchFields.firstMatch
+        if !search.exists {
+            let searchButton = app.navigationBars["Tailscale"].buttons["搜索"].firstMatch
+            XCTAssertTrue(searchButton.waitForExistence(timeout: 5))
+            searchButton.tap()
+        }
+        XCTAssertTrue(search.waitForExistence(timeout: 6))
+        search.tap()
+        search.typeText("editing Windows")
+        XCTAssertTrue(pc.waitForExistence(timeout: 5))
+        XCTAssertTrue(mac.waitForNonExistence(timeout: 5))
+        attachLibraryScreenshot(app, name: "Tailscale search by folder and operating system")
+
+        search.typeText(" missing")
+        XCTAssertTrue(pc.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["未找到匹配的连接"].firstMatch.waitForExistence(timeout: 5))
+    }
+
     func testQuickConnectOpensTailnetDeviceWithItsConfiguredPorts() throws {
         continueAfterFailure = false
         let app = XCUIApplication()

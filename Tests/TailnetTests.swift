@@ -84,8 +84,18 @@ final class TailnetTests: XCTestCase {
         XCTAssertEqual(result.computer.endpoint.port, 5910)
         XCTAssertEqual(result.sshPort, 2200)
         XCTAssertFalse(result.offersHighPerformance)
+        XCTAssertTrue(directory.devicesInSelectedFolder(matching: query).isEmpty)
+
+        directory.selectFolder(studio.id)
+        XCTAssertEqual(directory.devicesInSelectedFolder(matching: query).map(\.id), [device.id])
+        directory.renameFolder(studio.id, to: "Office")
+        XCTAssertTrue(directory.devicesInSelectedFolder(matching: query).isEmpty)
+        let renamedQuery = LibrarySearchQuery("OFFICE 5910")
+        XCTAssertEqual(directory.devicesInSelectedFolder(matching: renamedQuery).map(\.id), [device.id])
+
         directory.setHidden(true, device: device)
-        XCTAssertTrue(directory.searchMatches(query).isEmpty)
+        XCTAssertTrue(directory.searchMatches(renamedQuery).isEmpty)
+        XCTAssertTrue(directory.devicesInSelectedFolder(matching: renamedQuery).isEmpty)
     }
 
     @MainActor func testDiscoveredProfilesUseAdvertisedAddressesAtTheConfiguredDesktopPort() async throws {

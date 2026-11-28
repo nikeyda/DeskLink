@@ -112,7 +112,7 @@ struct TailnetView: View {
     }
 
     private var devicesCollection: some View {
-        let results = directory.devicesInSelectedFolder.filter(matches)
+        let results = directory.devicesInSelectedFolder(matching: query)
         return Group {
             if listLayout {
                 List {
@@ -265,11 +265,6 @@ struct TailnetView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("关闭") { managingHiddenDevices = false } } }
         }
-    }
-
-    private func matches(_ item: TailnetDevice) -> Bool {
-        guard let computer = directory.computer(for: item) else { return false }
-        return item.matches(query, computer: computer)
     }
 }
 
