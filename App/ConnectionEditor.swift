@@ -47,6 +47,7 @@ struct EditorRequest: Identifiable {
     var loadsStoredCredentials = true
     var remembersObservation = true
     var rejectedSSHCredential = false
+    var discoveredSelection: DiscoveredProfileSelection?
 
     var allowsDeviceSelection: Bool {
         purpose == .quick && initialAddress.isEmpty && initialSSHPort == nil && link == nil
@@ -55,11 +56,11 @@ struct EditorRequest: Identifiable {
     @MainActor
     static func connectingToDiscovered(_ computer: Computer, in library: ConnectionLibrary,
                                        suggestedSSHPort: UInt16?, quality: PictureQuality?) -> Self {
-        let stored = library.profile(forDiscovered: computer.endpoint)
-        let profile = stored ?? computer
-        let connection = quality.map { profile.connecting(with: $0, on: .current) } ?? profile
-        return Self(purpose: .connect, computer: connection, suggestedSSHPort: suggestedSSHPort,
-                    loadsStoredCredentials: stored != nil)
+        let selection = DiscoveredProfileSelection(computer: computer, suggestedSSHPort: suggestedSSHPort, quality: quality)
+        let profiles = library.profiles(forDiscovered: computer.endpoint)
+        var request = selection.editor(using: profiles.count == 1 ? profiles.first : nil)
+        if profiles.count > 1 { request.discoveredSelection = selection }
+        return request
     }
 
     static func from(_ link: DesktopLink, in archive: LibraryArchive, allowUnsavedHost: Bool) throws -> Self {

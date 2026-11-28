@@ -109,6 +109,27 @@ final class LibraryTests: XCTestCase {
         XCTAssertEqual(ambiguous.computer?.username, "")
         XCTAssertNil(ambiguous.computer?.ssh)
         XCTAssertFalse(ambiguous.loadsStoredCredentials)
+
+        let selection = try XCTUnwrap(ambiguous.discoveredSelection)
+        XCTAssertEqual(Set(library.profiles(forDiscovered: endpoint).map(\.id)), Set([saved.id, secondAccount.id]))
+        let chosen = try XCTUnwrap(selection.editor(selecting: secondAccount, in: library))
+        XCTAssertEqual(chosen.computer?.id, secondAccount.id)
+        XCTAssertEqual(chosen.computer?.username, "another-fixture")
+        XCTAssertEqual(chosen.computer?.ssh, saved.ssh)
+        XCTAssertEqual(chosen.computer?.display(for: .current).quality, .standard)
+        XCTAssertTrue(chosen.loadsStoredCredentials)
+        XCTAssertNil(chosen.discoveredSelection)
+
+        let manual = try XCTUnwrap(selection.editor(selecting: nil, in: library))
+        XCTAssertEqual(manual.computer?.id, discovered.id)
+        XCTAssertFalse(manual.loadsStoredCredentials)
+        XCTAssertNil(manual.discoveredSelection)
+        XCTAssertNil(selection.editor(selecting: alternatePort, in: library))
+
+        var updated = secondAccount
+        updated.username = "changed-after-display"
+        XCTAssertTrue(library.save(updated))
+        XCTAssertNil(selection.editor(selecting: secondAccount, in: library))
     }
 
     @MainActor
@@ -138,6 +159,16 @@ final class LibraryTests: XCTestCase {
         XCTAssertFalse(display.matchWindow)
         XCTAssertNil(display.fixedDesktop)
         XCTAssertEqual(library.profile(forDiscovered: endpoint)?.display(for: .current).layout, .virtualPair)
+
+        var alternate = discovered
+        alternate.id = UUID()
+        alternate.username = "second-recent-fixture"
+        library.recordSuccess(alternate)
+        let choice = EditorRequest.connectingToDiscovered(discovered, in: library, suggestedSSHPort: nil, quality: nil)
+        let selection = try XCTUnwrap(choice.discoveredSelection)
+        XCTAssertEqual(Set(library.profiles(forDiscovered: endpoint).map(\.id)), Set([recent.id, alternate.id]))
+        XCTAssertNil(selection.editor(selecting: link, in: library))
+        XCTAssertEqual(selection.editor(selecting: recent, in: library)?.computer?.username, "recent-fixture")
     }
 
     func testLibraryWindowRequestReadsExistingSavedWindowAndRoundTripsNewDestinations() throws {

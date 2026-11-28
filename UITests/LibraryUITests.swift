@@ -382,6 +382,80 @@ final class LibraryUITests: XCTestCase {
         XCTAssertEqual(sshPort.value as? String, "2207")
     }
 
+    func testDiscoveredComputerLetsMeChooseASavedProfileOrEnterAnAccountManually() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]
+        app.launchEnvironment["DESKLINK_TEST_TAILNET_LISTING"] = #"""
+        {"devices":[{"id":"profile-studio","hostname":"Fixture Studio","name":"studio.fixture.invalid",
+          "addresses":["100.64.7.19"],"os":"macOS","authorized":true}]}
+        """#
+        app.launch()
+        XCTAssertTrue(app.buttons["library.new"].waitForExistence(timeout: 10))
+
+        let firstID = UUID().uuidString
+        let secondID = UUID().uuidString
+        func record(id: String, name: String, account: String) -> [String: Any] {
+            [
+                "version": 6, "id": id, "type": ["saved": [:] as [String: String]], "name": name,
+                "hostname": "100.64.7.19", "port": 5900, "clientProtocol": "vnc",
+                "users": [["username": account]], "authenticationMethod": 1, "operatingSystem": 1,
+                "startInObserveMode": false, "onDisconnectAction": 0,
+                "useSharedClipboard": true, "useSecureConnection": false
+            ]
+        }
+        let records = [record(id: firstID, name: "Fixture Support", account: "support-fixture"),
+                       record(id: secondID, name: "Fixture Operator", account: "operator-fixture")]
+        let file = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString + ".screens")
+        defer { try? FileManager.default.removeItem(at: file) }
+        try JSONSerialization.data(withJSONObject: ["filename": "Profile choices", "screens": records, "folders": []])
+            .write(to: file)
+        app.open(file)
+        let imported = app.alerts["导入完成"]
+        XCTAssertTrue(imported.waitForExistence(timeout: 10))
+        imported.buttons.firstMatch.tap()
+
+        selectCollection("library.tailscale", in: app)
+        let device = app.buttons["tailnet.device.profile-studio"].firstMatch
+        XCTAssertTrue(device.waitForExistence(timeout: 8))
+        device.tap()
+        let support = app.buttons["connection.profile." + firstID].firstMatch
+        let operatorProfile = app.buttons["connection.profile." + secondID].firstMatch
+        XCTAssertTrue(support.waitForExistence(timeout: 8))
+        XCTAssertTrue(operatorProfile.label.contains("operator-fixture"))
+        XCTAssertTrue(support.label.contains("support-fixture"))
+        XCTAssertFalse(app.textFields["connection.username"].firstMatch.exists)
+        attachLibraryScreenshot(app, name: "Saved profiles for a discovered computer")
+        operatorProfile.tap()
+
+        let username = app.textFields["connection.username"].firstMatch
+        XCTAssertTrue(username.waitForExistence(timeout: 8))
+        XCTAssertEqual(username.value as? String, "operator-fixture")
+        XCTAssertEqual(app.textFields["connection.host"].firstMatch.value as? String, "100.64.7.19")
+        app.navigationBars.buttons["取消"].firstMatch.tap()
+
+        app.buttons["library.quick"].firstMatch.tap()
+        let chooseDevice = app.buttons["connection.chooseDevice"].firstMatch
+        XCTAssertTrue(chooseDevice.waitForExistence(timeout: 8))
+        chooseDevice.tap()
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let networkPrompt = springboard.alerts.containing(
+            NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS %@", "local network", "本地网络")
+        ).firstMatch
+        if networkPrompt.waitForExistence(timeout: 3) {
+            networkPrompt.buttons.matching(NSPredicate(format: "label IN %@", ["Allow", "允许"])).firstMatch.tap()
+        }
+        let quickDevice = app.buttons["connection.device.tailscale.profile-studio"].firstMatch
+        XCTAssertTrue(quickDevice.waitForExistence(timeout: 8))
+        quickDevice.tap()
+        let manual = app.buttons["connection.profile.manual"].firstMatch
+        XCTAssertTrue(manual.waitForExistence(timeout: 8))
+        manual.tap()
+        XCTAssertTrue(username.waitForExistence(timeout: 8))
+        XCTAssertTrue((username.value as? String ?? "").isEmpty || username.value as? String == username.placeholderValue)
+        XCTAssertEqual(app.textFields["connection.host"].firstMatch.value as? String, "100.64.7.19")
+    }
+
     func testOpeningScreensDirectoryArchiveReportsPreservedFolders() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]

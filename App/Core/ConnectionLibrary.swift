@@ -583,11 +583,15 @@ final class ConnectionLibrary {
     }
 
     func profile(forDiscovered endpoint: Endpoint) -> Computer? {
+        let profiles = profiles(forDiscovered: endpoint)
+        return profiles.count == 1 ? profiles.first : nil
+    }
+
+    func profiles(forDiscovered endpoint: Endpoint) -> [Computer] {
         let matches = archive.computers.filter { $0.endpoint == endpoint }
         let saved = matches.filter(\.saved)
-        if !saved.isEmpty { return saved.count == 1 ? saved.first : nil }
-        let recent = matches.filter { $0.lastConnected != nil && $0.openedFromLink != true }
-        return recent.count == 1 ? recent.first : nil
+        if !saved.isEmpty { return saved }
+        return matches.filter { $0.lastConnected != nil && $0.openedFromLink != true }
     }
 
     func startsInObservation(_ computer: Computer) -> Bool {

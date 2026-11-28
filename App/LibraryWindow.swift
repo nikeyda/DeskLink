@@ -402,21 +402,7 @@ struct LibraryWindow: View {
         }
         .onDisappear { nearby.stop() }
         .sheet(item: $editor) { request in
-            ConnectionEditor(request: request, library: library, hiddenSources: hiddenItems, selectDevice: { computer, sshPort in
-                guard editor?.id == request.id else { return }
-                openDiscovered(computer, suggestedSSHPort: sshPort, quality: nil)
-            }, openLink: { value in
-                let route: ConnectionRoute
-                if value.lowercased().hasPrefix("desklink://"), let url = URL(string: value) {
-                    route = try ConnectionRoute(url: url)
-                } else { route = .desktopLink(try DesktopLink(text: value)) }
-                editor = try editorRequest(for: route)
-            }, didSave: {
-                if request.purpose == .new, page == .recent { page = .all }
-            }) { offer in
-                start(offer)
-            }
-            .id(request.id)
+            connectionSheet(for: request).id(request.id)
         }
         .sheet(isPresented: $settings) { ApplicationPreferences(preferences: preferences) }
         .sheet(isPresented: $downloads) { DownloadsView() }
@@ -554,6 +540,34 @@ struct LibraryWindow: View {
                 #endif
                 if activeSession != nil { queuedRoute = route } else { present(route) }
             } catch { ownError = error.localizedDescription }
+        }
+    }
+
+    @ViewBuilder private func connectionSheet(for request: EditorRequest) -> some View {
+        if let selection = request.discoveredSelection {
+            if !privacy.locked {
+                let profiles = library.profiles(forDiscovered: selection.computer.endpoint)
+                DiscoveredProfilePicker(selection: selection, profiles: ComputerOrder.name.arrange(profiles)) { profile in
+                    guard !privacy.locked, editor?.id == request.id,
+                          let chosen = selection.editor(selecting: profile, in: library) else { return }
+                    editor = chosen
+                }
+            }
+        } else {
+            ConnectionEditor(request: request, library: library, hiddenSources: hiddenItems, selectDevice: { computer, sshPort in
+                guard editor?.id == request.id else { return }
+                openDiscovered(computer, suggestedSSHPort: sshPort, quality: nil)
+            }, openLink: { value in
+                let route: ConnectionRoute
+                if value.lowercased().hasPrefix("desklink://"), let url = URL(string: value) {
+                    route = try ConnectionRoute(url: url)
+                } else { route = .desktopLink(try DesktopLink(text: value)) }
+                editor = try editorRequest(for: route)
+            }, didSave: {
+                if request.purpose == .new, page == .recent { page = .all }
+            }) { offer in
+                start(offer)
+            }
         }
     }
 
