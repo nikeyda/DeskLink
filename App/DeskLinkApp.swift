@@ -164,6 +164,10 @@ struct DeskLinkApp: App {
             SharedClipboardCommands()
             #if targetEnvironment(macCatalyst)
             MacMenus()
+            #elseif os(iOS)
+            if #available(iOS 26, *), UIDevice.current.userInterfaceIdiom == .pad {
+                PadMenus()
+            }
             #endif
         }
     }

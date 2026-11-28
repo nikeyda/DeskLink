@@ -399,6 +399,13 @@ struct SessionScreen: View {
         .onChange(of: observing, syncTransferPermission)
         #if targetEnvironment(macCatalyst)
         .focusedSceneValue(\.deskLinkSession, macMenu)
+        #elseif os(iOS)
+        .focusedSceneValue(\.telescopePadSession, padSessionMenu)
+        .onChange(of: observing) {
+            if #available(iOS 26, *), UIDevice.current.userInterfaceIdiom == .pad {
+                UIMenuSystem.main.setNeedsRebuild()
+            }
+        }
         #endif
         .background { SessionWindowFocus { keyWindowFocused = $0 }.frame(width: 0, height: 0) }
         .focusedSceneValue(\.deskLinkClipboardSharing, clipboardSharing)
@@ -702,9 +709,28 @@ struct SessionScreen: View {
         capture(nil)
     }
 
+    private var canUseSessionMenu: Bool {
+        !privacy.locked && hostTrust.prompt == nil && !confirmClose && !closing && !stopped
+    }
+
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+    private var padSessionMenu: PadSessionMenuActions? {
+        guard UIDevice.current.userInterfaceIdiom == .pad, canUseSessionMenu,
+              phase != .background, !showsDictation, !showsConnectionDetails, monitorError == nil else { return nil }
+        return PadSessionMenuActions(session: session, controls: controls, clipboard: observing ? nil : clipboard,
+                                     observing: observing, toggleObservation: toggleObservation,
+                                     toggleFullScreen: toggleFullScreen, disconnect: { finish(edit: false) },
+                                     chooseMonitor: chooseMonitor, captureScreenshot: captureScreenshot,
+                                     allowsInput: {
+                                         canUseSessionMenu && phase != .background && !observing
+                                             && session.connectionState.isConnected
+                                     })
+    }
+    #endif
+
     #if targetEnvironment(macCatalyst)
     private var macMenu: MacSessionMenuActions? {
-        guard !privacy.locked, hostTrust.prompt == nil, !confirmClose, !closing, !stopped else { return nil }
+        guard canUseSessionMenu else { return nil }
         return MacSessionMenuActions(session: session, controls: controls, clipboard: clipboard, clipboardSharing: clipboardSharing,
                                      observing: observing, toggleObservation: toggleObservation,
                                      toggleFullScreen: toggleFullScreen, disconnect: { finish(edit: false) },

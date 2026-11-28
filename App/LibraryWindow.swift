@@ -354,6 +354,8 @@ struct LibraryWindow: View {
                 }
                 #if targetEnvironment(macCatalyst)
                 .focusedSceneValue(\.deskLinkLibrary, libraryMenu)
+                #elseif os(iOS)
+                .focusedSceneValue(\.telescopePadLibrary, padLibraryMenu)
                 #endif
                 .onAppear {
                     let startupRequest = self.startupRequest
@@ -1305,13 +1307,23 @@ struct LibraryWindow: View {
         Button("删除", role: .destructive) { deletion = item }
     }
 
+    private var canUseLibraryMenu: Bool {
+        !privacy.locked && editor == nil && !settings && !downloads && !importFile && !exportFile
+            && !showFolder && deletingFolder == nil && deletion == nil
+    }
+
     #if targetEnvironment(macCatalyst)
     private var libraryMenu: MacLibraryMenuActions? {
-        guard !privacy.locked, editor == nil, !settings, !downloads, !showsDiagnostics, !importFile, !exportFile,
-              !showFolder, deletingFolder == nil, deletion == nil else { return nil }
+        guard canUseLibraryMenu, !showsDiagnostics else { return nil }
         return MacLibraryMenuActions(quickConnect: { editor = EditorRequest(purpose: .quick) },
                                      create: newEntry, settings: { settings = true }, transfers: { downloads = true },
                                      diagnostics: { showsDiagnostics = true }, toolbarVisible: $libraryToolbarVisible)
+    }
+    #elseif os(iOS)
+    private var padLibraryMenu: PadLibraryMenuActions? {
+        guard UIDevice.current.userInterfaceIdiom == .pad, canUseLibraryMenu, scenePhase != .background else { return nil }
+        return PadLibraryMenuActions(quickConnect: { editor = EditorRequest(purpose: .quick) }, create: newEntry,
+                                     settings: { settings = true }, transfers: { downloads = true })
     }
     #endif
 

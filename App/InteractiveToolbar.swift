@@ -1032,10 +1032,10 @@ struct InteractiveDesktop<SessionHeader: View>: View {
     }
 
     @ViewBuilder private var remoteCommands: some View {
-        RemoteCommandsMenu(session: session) {
+        RemoteCommandsMenu(session: session, willSend: {
             bar.keyboard.noteExternalInput()
             bar.consume()
-        }
+        })
         if session.selectableMonitorIDs.count > 1 {
             Divider()
             MonitorMenu(session: session, select: chooseMonitor)
