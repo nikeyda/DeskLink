@@ -81,12 +81,30 @@ final class LibraryClickUITests: XCTestCase {
     #else
     func testQuickConnectBrowsesNearbyAndPreservesManualDraftWhenGoingBack() throws {
         continueAfterFailure = false
-        let name = "Telescope quick " + UUID().uuidString.prefix(8)
+        let token = UUID().uuidString.prefix(8).lowercased()
+        let name = "Telescope quick " + token
+        let discoveredHost = "telescope-\(token).local"
+        let savedHost = discoveredHost + "."
         let port: UInt16 = 15282
+        var addressRegistration: DNSServiceRef?
         var registration: DNSServiceRef?
-        defer { if let registration { DNSServiceRefDeallocate(registration) } }
+        defer {
+            if let registration { DNSServiceRefDeallocate(registration) }
+            if let addressRegistration { DNSServiceRefDeallocate(addressRegistration) }
+        }
+        XCTAssertEqual(DNSServiceCreateConnection(&addressRegistration), DNSServiceErrorType(kDNSServiceErr_NoError))
+        let addressService = try XCTUnwrap(addressRegistration)
+        var addressRecord: DNSRecordRef?
+        let loopback: [UInt8] = [127, 0, 0, 1]
+        let addressStatus = loopback.withUnsafeBytes { data in
+            DNSServiceRegisterRecord(addressService, &addressRecord, DNSServiceFlags(kDNSServiceFlagsUnique),
+                                     kDNSServiceInterfaceIndexLocalOnly, savedHost, UInt16(kDNSServiceType_A),
+                                     UInt16(kDNSServiceClass_IN), UInt16(data.count), data.baseAddress, 0,
+                                     { _, _, _, _, _ in }, nil)
+        }
+        XCTAssertEqual(addressStatus, DNSServiceErrorType(kDNSServiceErr_NoError))
         XCTAssertEqual(DNSServiceRegister(&registration, 0, kDNSServiceInterfaceIndexLocalOnly, name,
-                                          "_rfb._tcp", "local.", nil, port.bigEndian, 0, nil, nil, nil),
+                                          "_rfb._tcp", "local.", savedHost, port.bigEndian, 0, nil, nil, nil),
                        DNSServiceErrorType(kDNSServiceErr_NoError))
 
         let app = XCUIApplication()
@@ -137,8 +155,40 @@ final class LibraryClickUITests: XCTestCase {
         let portField = app.textFields["connection.port"].firstMatch
         XCTAssertTrue(portField.waitForExistence(timeout: 8))
         XCTAssertEqual(portField.value as? String, String(port))
-        XCTAssertNotEqual(host.value as? String, "draft.fixture.invalid")
+        XCTAssertEqual(host.value as? String, discoveredHost)
         XCTAssertFalse(choose.exists)
+
+        app.navigationBars.buttons["取消"].firstMatch.tap()
+        let record: [String: Any] = [
+            "version": 6, "id": UUID().uuidString, "type": ["saved": [:] as [String: String]],
+            "name": "Saved Bonjour Mac", "hostname": savedHost, "port": port, "clientProtocol": "vnc",
+            "users": [["username": "bonjour-fixture"]], "authenticationMethod": 1, "operatingSystem": 1,
+            "startInObserveMode": false, "onDisconnectAction": 0,
+            "useSharedClipboard": true, "useSecureConnection": false
+        ]
+        let archive = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString + ".screens")
+        defer { try? FileManager.default.removeItem(at: archive) }
+        try JSONSerialization.data(withJSONObject: ["filename": "Bonjour fixture", "screens": [record], "folders": []])
+            .write(to: archive)
+        app.open(archive)
+        let imported = app.alerts["导入完成"]
+        XCTAssertTrue(imported.waitForExistence(timeout: 8))
+        imported.buttons.firstMatch.tap()
+        XCTAssertTrue(quick.waitForExistence(timeout: 8))
+        quick.tap()
+        XCTAssertTrue(choose.waitForExistence(timeout: 8))
+        choose.tap()
+        XCTAssertTrue(computer.waitForExistence(timeout: 12))
+        computer.tap()
+        let username = app.textFields["connection.username"].firstMatch
+        XCTAssertTrue(username.waitForExistence(timeout: 8))
+        XCTAssertEqual(username.value as? String, "bonjour-fixture")
+        XCTAssertEqual(host.value as? String, savedHost)
+        XCTAssertEqual(portField.value as? String, String(port))
+        let restored = XCTAttachment(screenshot: app.screenshot())
+        restored.name = "iPad Bonjour discovery restores the saved profile"
+        restored.lifetime = .keepAlways
+        add(restored)
     }
 
     func testNearbyContextMenuChoosesAConnectionModeWithoutChangingTheDefault() throws {

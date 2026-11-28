@@ -400,9 +400,13 @@ struct LibraryArchive: Codable, Equatable, Sendable {
     var folderCount: Int { folders.count + (linkFolders?.count ?? 0) + (screensDirectoryFolders?.count ?? 0) }
 
     func recentComputers(matching query: LibrarySearchQuery = LibrarySearchQuery("")) -> [Computer] {
+        Self.coalescingBonjourHistory(computers.lazy.filter { $0.lastConnected != nil && query.matches($0) })
+    }
+
+    fileprivate static func coalescingBonjourHistory(_ computers: some Sequence<Computer>) -> [Computer] {
         var entries: [Computer] = []
         var positions: [Computer.BonjourRecent: Int] = [:]
-        for computer in computers where computer.lastConnected != nil && query.matches(computer) {
+        for computer in computers {
             if let identity = computer.bonjourRecent {
                 if let position = positions[identity] {
                     if (computer.lastConnected ?? .distantPast) > (entries[position].lastConnected ?? .distantPast) {
@@ -639,10 +643,16 @@ final class ConnectionLibrary {
     }
 
     func profiles(forDiscovered endpoint: Endpoint) -> [Computer] {
-        let matches = archive.computers.filter { $0.endpoint == endpoint }
+        let bonjourHost = endpoint.bonjourHost
+        let matches = archive.computers.filter { computer in
+            guard computer.endpoint.port == endpoint.port else { return false }
+            if computer.endpoint == endpoint { return true }
+            return bonjourHost != nil && computer.endpoint.bonjourHost == bonjourHost
+        }
         let saved = matches.filter(\.saved)
         if !saved.isEmpty { return saved }
-        return matches.filter { $0.lastConnected != nil && $0.openedFromLink != true }
+        let history = matches.filter { $0.lastConnected != nil && $0.openedFromLink != true }
+        return LibraryArchive.coalescingBonjourHistory(history)
     }
 
     func startsInObservation(_ computer: Computer) -> Bool {

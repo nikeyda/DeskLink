@@ -172,6 +172,87 @@ final class LibraryTests: XCTestCase {
     }
 
     @MainActor
+    func testBonjourDiscoveryOffersAllSavedAliasesWithoutSelectingCredentialsForMe() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appending(path: "library.json")
+        let library = ConnectionLibrary(file: file)
+        let endpoint = try Endpoint(address: "studio.local:15900")
+        var discovered = Computer(name: "Studio", endpoint: endpoint)
+        discovered.saved = false
+        var saved = Computer(name: "Support", endpoint: try Endpoint(address: "Studio.LOCAL.:15900"))
+        saved.authentication = .macUser
+        saved.username = "support-fixture"
+        saved.ssh = .init(port: 2222, username: "gateway-fixture", usesKey: false)
+        XCTAssertTrue(library.save(saved))
+        var alternatePort = Computer(name: "Other port", endpoint: try Endpoint(address: "studio.local.:15901"))
+        alternatePort.username = "other-port"
+        XCTAssertTrue(library.save(alternatePort))
+        let originalArchive = try Data(contentsOf: file)
+
+        let unique = EditorRequest.connectingToDiscovered(discovered, in: library, suggestedSSHPort: nil, quality: nil)
+        XCTAssertEqual(unique.computer?.id, saved.id)
+        XCTAssertEqual(unique.computer?.endpoint, saved.endpoint)
+        XCTAssertEqual(unique.computer?.username, saved.username)
+        XCTAssertEqual(unique.computer?.ssh, saved.ssh)
+        XCTAssertTrue(unique.loadsStoredCredentials)
+        XCTAssertNil(unique.discoveredSelection)
+        XCTAssertEqual(try Data(contentsOf: file), originalArchive)
+
+        var exact = Computer(name: "Operator", endpoint: endpoint)
+        exact.authentication = .macUser
+        exact.username = "operator-fixture"
+        XCTAssertTrue(library.save(exact))
+        let shared = EditorRequest.connectingToDiscovered(discovered, in: library, suggestedSSHPort: nil, quality: nil)
+        XCTAssertFalse(shared.loadsStoredCredentials)
+        XCTAssertEqual(shared.computer?.username, "")
+        let selection = try XCTUnwrap(shared.discoveredSelection)
+        XCTAssertEqual(Set(library.profiles(forDiscovered: endpoint).map(\.id)), Set([saved.id, exact.id]))
+        let chosen = try XCTUnwrap(selection.editor(selecting: saved, in: library))
+        XCTAssertEqual(chosen.computer?.id, saved.id)
+        XCTAssertEqual(chosen.computer?.endpoint, saved.endpoint)
+        XCTAssertTrue(chosen.loadsStoredCredentials)
+        XCTAssertNil(selection.editor(selecting: alternatePort, in: library))
+
+        let otherDomain = Computer(endpoint: try Endpoint(address: "studio.fixture.invalid."))
+        XCTAssertTrue(library.save(otherDomain))
+        XCTAssertTrue(library.profiles(forDiscovered: try Endpoint(address: "studio.fixture.invalid")).isEmpty)
+    }
+
+    @MainActor
+    func testBonjourDiscoveryKeepsLatestEligibleHistoryAndExcludesLinks() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appending(path: "library.json")
+        let endpoint = try Endpoint(address: "studio.local")
+        var first = Computer(name: "Studio", endpoint: endpoint)
+        first.saved = false
+        first.username = "fixture"
+        first.lastConnected = .init(timeIntervalSince1970: 100)
+        var latest = first
+        latest.id = UUID()
+        latest.endpoint = try Endpoint(address: "studio.local.")
+        latest.lastConnected = .init(timeIntervalSince1970: 200)
+        var link = latest
+        link.id = UUID()
+        link.openedFromLink = true
+        link.lastConnected = .init(timeIntervalSince1970: 300)
+        try LibraryArchive(computers: [first, latest, link]).encoded().write(to: file)
+        let library = ConnectionLibrary(file: file)
+
+        XCTAssertEqual(library.profiles(forDiscovered: endpoint).map(\.id), [latest.id])
+        XCTAssertEqual(library.profile(forDiscovered: endpoint)?.endpoint, latest.endpoint)
+        XCTAssertEqual(library.archive.computers.count, 3)
+
+        var other = first
+        other.id = UUID()
+        other.username = "another-fixture"
+        library.recordSuccess(other, now: .init(timeIntervalSince1970: 400))
+        XCTAssertEqual(Set(library.profiles(forDiscovered: endpoint).map(\.id)), Set([latest.id, other.id]))
+    }
+
+    @MainActor
     func testBonjourRecentAliasesShowTheLatestRecordWithoutChangingStoredDestinations() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
