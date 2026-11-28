@@ -247,6 +247,26 @@ final class LibraryTests: XCTestCase {
         XCTAssertFalse(manual.loadsStoredCredentials)
         XCTAssertEqual(manual.computer?.endpoint, discovered.endpoint)
 
+        let save = DiscoveredProfileSelection(computer: discovered, suggestedSSHPort: nil, intent: .save,
+                                              resolvedAddresses: addresses)
+        let saveRequest = save.request(in: library)
+        XCTAssertNotNil(saveRequest.discoveredSelection)
+        let edit = try XCTUnwrap(save.editor(selecting: ipv4, in: library))
+        XCTAssertEqual(edit.purpose, .edit)
+        XCTAssertTrue(edit.loadsStoredCredentials)
+        var updated = try XCTUnwrap(edit.computer)
+        XCTAssertEqual(updated.id, ipv4.id)
+        XCTAssertEqual(updated.endpoint, ipv4.endpoint)
+        XCTAssertEqual(updated.ssh, ipv4.ssh)
+        updated.name = "Updated support profile"
+        XCTAssertTrue(library.save(updated))
+        XCTAssertEqual(ConnectionLibrary(file: file).archive.computers.map(\.name), [updated.name])
+        let new = try XCTUnwrap(save.editor(selecting: nil, in: library))
+        XCTAssertEqual(new.purpose, .new)
+        XCTAssertFalse(new.loadsStoredCredentials)
+        XCTAssertNotEqual(new.computer?.id, ipv4.id)
+        XCTAssertEqual(new.computer?.endpoint, discovered.endpoint)
+
         let ipv6 = Computer(endpoint: try Endpoint(address: "[fe80:0:0:0:0:0:0:1%en0]:15900"))
         let otherInterface = Computer(endpoint: try Endpoint(address: "[fe80::1%en1]:15900"))
         let otherPort = Computer(endpoint: try Endpoint(address: "192.0.2.19:15901"))
@@ -257,6 +277,7 @@ final class LibraryTests: XCTestCase {
         ipv4.endpoint = try Endpoint(address: "192.0.2.20:15900")
         XCTAssertTrue(library.save(ipv4))
         XCTAssertNil(selection.editor(selecting: oldProfile, in: library))
+        XCTAssertNil(save.editor(selecting: oldProfile, in: library))
     }
 
     @MainActor

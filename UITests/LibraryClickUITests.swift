@@ -217,6 +217,38 @@ final class LibraryClickUITests: XCTestCase {
         XCTAssertEqual(username.value as? String, "ip-fixture")
         XCTAssertEqual(host.value as? String, "127.0.0.1")
         XCTAssertEqual(portField.value as? String, String(port))
+
+        app.navigationBars.buttons["取消"].firstMatch.tap()
+        let sideEntry = app.descendants(matching: .any).matching(identifier: "library.nearby").firstMatch
+        if !sideEntry.isHittable {
+            let sidebar = app.buttons["ToggleSideBar"].firstMatch
+            let back = app.buttons["BackButton"].firstMatch
+            if sidebar.isHittable { sidebar.tap() }
+            else if back.isHittable { back.tap() }
+        }
+        XCTAssertTrue(sideEntry.waitForExistence(timeout: 8))
+        sideEntry.tap()
+        let nearbyComputer = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@",
+                                                              "nearby.computer.", name)).firstMatch
+        let saveToLibrary = app.buttons["保存到连接库"].firstMatch
+        XCTAssertTrue(nearbyComputer.waitForExistence(timeout: 12))
+        nearbyComputer.press(forDuration: 0.9)
+        XCTAssertTrue(saveToLibrary.waitForExistence(timeout: 8))
+        saveToLibrary.tap()
+        XCTAssertTrue(numeric.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["connection.profile.manual"].firstMatch.label.contains("新建连接"))
+        XCTAssertFalse(username.exists)
+        numeric.tap()
+        let nameField = app.textFields["connection.name"].firstMatch
+        XCTAssertTrue(nameField.waitForExistence(timeout: 8))
+        XCTAssertEqual(nameField.value as? String, "Saved by IP")
+        XCTAssertEqual(host.value as? String, "127.0.0.1")
+        XCTAssertEqual(username.value as? String, "ip-fixture")
+        XCTAssertTrue(app.navigationBars["编辑连接"].firstMatch.exists)
+        let editProfile = XCTAttachment(screenshot: app.screenshot())
+        editProfile.name = "Edit saved IP profile from Nearby"
+        editProfile.lifetime = .keepAlways
+        add(editProfile)
     }
 
     func testNearbyContextMenuChoosesAConnectionModeWithoutChangingTheDefault() throws {

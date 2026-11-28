@@ -722,9 +722,9 @@ struct LibraryWindow: View {
                             .contextMenu {
                                 DiscoveredConnectionActions { openNearbySearchResult(item, quality: $0) }
                                 Button("保存到连接库") {
-                                    nearby.select(item) { computer, _ in
+                                    nearby.select(item) { computer, addresses in
                                         endUnifiedSearch()
-                                        saveDiscovered(computer)
+                                        saveDiscovered(computer, resolvedAddresses: addresses)
                                     }
                                 }
                             }
@@ -825,7 +825,8 @@ struct LibraryWindow: View {
         if page == .tailscale {
             TailnetView(directory: tailnet, archiveFolders: library.archive.screensDirectoryFolders?.tailscale ?? [],
                         query: categoryQuery, listLayout: listLayout, gridColumns: gridColumns,
-                        select: { openDiscovered($0, suggestedSSHPort: $1, quality: $2) }, save: saveDiscovered)
+                        select: { openDiscovered($0, suggestedSSHPort: $1, quality: $2) },
+                        save: { saveDiscovered($0, suggestedSSHPort: $1) })
         } else if page == .nearby {
             let query = categoryQuery
             let results = nearby.entries.filter { $0.matches(query) }
@@ -921,7 +922,9 @@ struct LibraryWindow: View {
         } label: {
             label()
         } actions: {
-            Button("保存到连接库") { nearby.select(entry) { computer, _ in saveDiscovered(computer) } }
+            Button("保存到连接库") {
+                nearby.select(entry) { saveDiscovered($0, resolvedAddresses: $1) }
+            }
         }
     }
 
@@ -1379,12 +1382,11 @@ struct LibraryWindow: View {
     }
     #endif
 
-    private func saveDiscovered(_ entry: Computer, suggestedSSHPort: UInt16? = nil) {
+    private func saveDiscovered(_ entry: Computer, suggestedSSHPort: UInt16? = nil,
+                                resolvedAddresses: Set<Endpoint> = []) {
         guard !privacy.locked else { return }
-        let profile = library.profile(forDiscovered: entry.endpoint)
-        editor = EditorRequest(purpose: profile?.saved == true ? .edit : .new,
-                               computer: profile?.withDiscoveredPlatform(from: entry) ?? entry,
-                               suggestedSSHPort: suggestedSSHPort, loadsStoredCredentials: profile != nil)
+        editor = DiscoveredProfileSelection(computer: entry, suggestedSSHPort: suggestedSSHPort,
+                                            intent: .save, resolvedAddresses: resolvedAddresses).request(in: library)
     }
 
     private func openNearbySearchResult(_ entry: NearbyComputer, quality: PictureQuality?) {

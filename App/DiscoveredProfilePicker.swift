@@ -2,10 +2,34 @@ import SwiftUI
 import Network
 
 struct DiscoveredProfileSelection {
+    enum Intent {
+        case connect(PictureQuality?)
+        case save
+
+        var manualActionTitle: LocalizedStringKey {
+            switch self {
+            case .connect: "手动填写"
+            case .save: "新建连接"
+            }
+        }
+    }
+
     let computer: Computer
     let suggestedSSHPort: UInt16?
-    let quality: PictureQuality?
+    let intent: Intent
     var resolvedAddresses: Set<Endpoint> = []
+
+    @MainActor
+    func request(in library: ConnectionLibrary) -> EditorRequest {
+        let candidates = profiles(in: library)
+        // A numeric address can be reassigned. Require a choice before using its saved profile.
+        if candidates.count == 1, let named = library.profile(forDiscovered: computer.endpoint) {
+            return editor(using: named)
+        }
+        var request = editor(using: nil)
+        if !candidates.isEmpty { request.discoveredSelection = self }
+        return request
+    }
 
     @MainActor
     func profiles(in library: ConnectionLibrary) -> [Computer] {
@@ -40,11 +64,17 @@ struct DiscoveredProfileSelection {
     }
 
     @MainActor
-    func editor(using profile: Computer?) -> EditorRequest {
+    private func editor(using profile: Computer?) -> EditorRequest {
         let source = profile?.withDiscoveredPlatform(from: computer) ?? computer
-        let connection = quality.map { source.connecting(with: $0, on: .current) } ?? source
-        return EditorRequest(purpose: .connect, computer: connection, suggestedSSHPort: suggestedSSHPort,
-                             loadsStoredCredentials: profile != nil)
+        switch intent {
+        case .connect(let quality):
+            let connection = quality.map { source.connecting(with: $0, on: .current) } ?? source
+            return EditorRequest(purpose: .connect, computer: connection, suggestedSSHPort: suggestedSSHPort,
+                                 loadsStoredCredentials: profile != nil)
+        case .save:
+            return EditorRequest(purpose: source.saved ? .edit : .new, computer: source,
+                                 suggestedSSHPort: suggestedSSHPort, loadsStoredCredentials: profile != nil)
+        }
     }
 }
 
@@ -70,7 +100,7 @@ struct DiscoveredProfilePicker: View {
                     Text(verbatim: selection.computer.endpoint.address)
                         .textCase(nil)
                 }
-                Button("手动填写", systemImage: "square.and.pencil") { select(nil) }
+                Button(selection.intent.manualActionTitle, systemImage: "square.and.pencil") { select(nil) }
                     .accessibilityIdentifier("connection.profile.manual")
             }
             .navigationTitle("选择连接配置")

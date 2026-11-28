@@ -62,17 +62,8 @@ struct EditorRequest: Identifiable {
     static func connectingToDiscovered(_ computer: Computer, in library: ConnectionLibrary,
                                        suggestedSSHPort: UInt16?, quality: PictureQuality?,
                                        resolvedAddresses: Set<Endpoint> = []) -> Self {
-        let selection = DiscoveredProfileSelection(computer: computer, suggestedSSHPort: suggestedSSHPort, quality: quality,
-                                                   resolvedAddresses: resolvedAddresses)
-        let profiles = selection.profiles(in: library)
-        // A numeric address can be reassigned. Require an explicit choice
-        // before loading an account inferred solely from a live advertisement.
-        if profiles.count == 1, let automatic = library.profile(forDiscovered: computer.endpoint) {
-            return selection.editor(using: automatic)
-        }
-        var request = selection.editor(using: nil)
-        if !profiles.isEmpty { request.discoveredSelection = selection }
-        return request
+        DiscoveredProfileSelection(computer: computer, suggestedSSHPort: suggestedSSHPort,
+                                   intent: .connect(quality), resolvedAddresses: resolvedAddresses).request(in: library)
     }
 
     static func from(_ link: DesktopLink, in archive: LibraryArchive, allowUnsavedHost: Bool) throws -> Self {
