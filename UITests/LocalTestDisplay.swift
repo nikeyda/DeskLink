@@ -44,6 +44,7 @@ final class LocalTestDisplay {
     private(set) var keyDowns: [UInt32] = []
     var onWireKey: ((_ down: Bool, _ keysym: UInt32) -> Void)?
     var onWirePointer: ((_ buttons: UInt8, _ point: CGPoint) -> Void)?
+    var onWirePreciseScroll: ((CGPoint) -> Void)?
     var expectsClientDisconnect = false
     private(set) var receivedClipboard = Data()
     private(set) var clipboardWrites = 0
@@ -236,6 +237,17 @@ final class LocalTestDisplay {
                 halfResolutionRequested = true
             case 21 where appleScalingCapability != nil:
                 _ = try await read(7, from: connection)
+            case 23 where appleScalingCapability != nil:
+                let header = try await read(3, from: connection)
+                let count = Int(header[1]) * 256 + Int(header[2])
+                guard [12, 32, 54].contains(count) else { throw URLError(.badServerResponse) }
+                let event = try await read(count, from: connection)
+                // The precise wheel record carries point deltas at 22...33 and coordinates at the end.
+                if count == 54, event[22..<34].contains(where: { $0 != 0 }) {
+                    let x = Int(event[50]) * 256 + Int(event[51])
+                    let y = Int(event[52]) * 256 + Int(event[53])
+                    onWirePreciseScroll?(CGPoint(x: x, y: y))
+                }
             default: throw UnexpectedMessage(type: type)
             }
         }

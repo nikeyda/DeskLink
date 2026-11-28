@@ -2855,7 +2855,10 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         lastScrollPoint = nil
         scrollPointAccumulator.reset()
         horizontalScrollIntentFilter.reset()
-        if let overridingScrollPoint {
+        let dragPoint = activeDragPoint
+        if let dragPoint {
+            lastScrollPoint = dragPoint
+        } else if let overridingScrollPoint {
             lastScrollPoint = overridingScrollPoint
         } else {
             captureScrollPoint(at: location)
@@ -2864,8 +2867,11 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
             // The Apple scroll record carries coordinates, but remote WebKit
             // hit-testing still follows the server's current pointer. Sync it
             // explicitly before the gesture envelope just like a local hover.
-            lastPointerPoint = point
-            touchHandler.handleMove(x: point.x, y: point.y)
+            // A zero-button move here would release a drag already in progress.
+            if dragPoint == nil {
+                lastPointerPoint = point
+                touchHandler.handleMove(x: point.x, y: point.y)
+            }
             touchHandler.handleGesture(
                 kind: .began,
                 x: point.x,
@@ -3281,6 +3287,12 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         finishScrollInteraction()
     }
 
+    private var activeDragPoint: (x: UInt16, y: UInt16)? {
+        if let physicalButtonPress { return physicalButtonPress.lastPoint }
+        if pointerDragActive { return lastPointerPoint }
+        return touchHoldDragActive ? touchHoldDragLastPoint : nil
+    }
+
     private func captureScrollPoint(at location: CGPoint) {
         // For UIEvent.scroll, UIKit supplies the actual trackpad pointer
         // position at gesture begin. Direct touch supplies its committed start
@@ -3302,6 +3314,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         scrollPhase: AppleScrollEvent.Phase,
         momentumPhase: AppleScrollEvent.MomentumPhase = .none
     ) {
+        if momentumPhase == .none, let activeDragPoint { lastScrollPoint = activeDragPoint }
         guard let point = lastScrollPoint else { return }
         let coarse = wheelUnitAccumulator.consume(
             pointDeltaX: pointDeltaX,
@@ -4958,6 +4971,12 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         _ gestureRecognizer: UIGestureRecognizer,
         shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
+        #if targetEnvironment(macCatalyst)
+        if (gestureRecognizer === pointerDragRecognizer && otherGestureRecognizer === scrollRecognizer)
+            || (gestureRecognizer === scrollRecognizer && otherGestureRecognizer === pointerDragRecognizer) {
+            return true
+        }
+        #endif
         let pair = Set([ObjectIdentifier(gestureRecognizer), ObjectIdentifier(otherGestureRecognizer)])
         // Scroll only ever receives UIEvent.scroll, so pairing it with pinch
         // affects trackpad pinches alone.
