@@ -37,6 +37,51 @@ final class FileTransferTests: XCTestCase {
     }
 
     #if os(iOS) && !targetEnvironment(macCatalyst)
+    func testDownloadTargetRequiresContinuousDwellAndShowsReadinessWhileStationary() async throws {
+        let controller = VNCFileTransferController()
+        controller.updateSupport(upload: false, download: true)
+        let reply = Wire.DragOutReply(handle: 3, paths: ["/Fixture/sample.txt"], dragImagePNG: nil)
+        let second = Wire.DragOutReply(handle: 4, paths: ["/Fixture/other.txt"], dragImagePNG: nil)
+        let rect = CGRect(x: 150, y: 200, width: 200, height: 56)
+        controller.dragOutTarget = rect
+
+        func enterTarget() {
+            controller.observePointer(buttonMask: 1, x: 250, y: 275)
+            controller.observePointer(buttonMask: 1, x: 250, y: 235)
+            controller.handle(reply)
+        }
+
+        func release() { controller.observePointer(buttonMask: 0, x: 250, y: 235) }
+
+        enterTarget()
+        XCTAssertTrue(controller.showsDragOutTarget)
+        XCTAssertFalse(controller.remoteDragOverTarget)
+        release()
+        XCTAssertEqual(controller.dragStatistics.downloadRequests, 0)
+
+        enterTarget()
+        try await waitUntil { controller.remoteDragOverTarget }
+        controller.handle(reply)
+        XCTAssertTrue(controller.remoteDragOverTarget, "Repeated announcements for the same files must not restart dwell")
+        controller.observePointer(buttonMask: 1, x: 250, y: 260)
+        XCTAssertTrue(controller.showsDragOutTarget)
+        XCTAssertFalse(controller.remoteDragOverTarget)
+        controller.observePointer(buttonMask: 1, x: 250, y: 235)
+        XCTAssertFalse(controller.remoteDragOverTarget)
+        try await waitUntil { controller.remoteDragOverTarget }
+        controller.dragOutTarget = rect.offsetBy(dx: 3, dy: 0)
+        XCTAssertFalse(controller.remoteDragOverTarget)
+        try await waitUntil { controller.remoteDragOverTarget }
+        controller.handle(second)
+        XCTAssertEqual(controller.remoteDraggedNames, ["other.txt"])
+        XCTAssertFalse(controller.remoteDragOverTarget)
+        try await waitUntil { controller.remoteDragOverTarget }
+        release()
+        XCTAssertEqual(controller.dragStatistics.downloadRequests, 1)
+        XCTAssertFalse(controller.remoteDragOverTarget)
+        XCTAssertFalse(controller.showsDragOutTarget)
+    }
+
     private final class BackgroundRuntime: VNCFileTransferBackgroundRuntime {
         let cancel: @MainActor () -> Void
         var progress: Double?
@@ -102,6 +147,20 @@ final class FileTransferTests: XCTestCase {
         let url = try XCTUnwrap(result.localURLs.first)
         XCTAssertEqual(url.standardizedFileURL.path, URL.documentsDirectory.appending(path: "Downloads/" + name).standardizedFileURL.path)
         XCTAssertEqual(try Data(contentsOf: url), bytes)
+    }
+    #endif
+
+    #if targetEnvironment(macCatalyst)
+    func testDesktopDownloadTargetStillAcceptsImmediateRelease() {
+        let controller = VNCFileTransferController()
+        controller.updateSupport(upload: false, download: true)
+        controller.dragOutTarget = CGRect(x: 150, y: 200, width: 200, height: 56)
+        controller.observePointer(buttonMask: 1, x: 250, y: 275)
+        controller.observePointer(buttonMask: 1, x: 250, y: 235)
+        controller.handle(Wire.DragOutReply(handle: 3, paths: ["/Fixture/sample.txt"], dragImagePNG: nil))
+        XCTAssertTrue(controller.remoteDragOverTarget)
+        controller.observePointer(buttonMask: 0, x: 250, y: 235)
+        XCTAssertEqual(controller.dragStatistics.downloadRequests, 1)
     }
     #endif
 
@@ -214,7 +273,7 @@ final class FileTransferTests: XCTestCase {
         controller.handle(reply)
         XCTAssertTrue(controller.showsDragOutTarget)
         controller.observePointer(buttonMask: 1, x: 120, y: 120)
-        XCTAssertTrue(controller.remoteDragOverTarget)
+        try await waitUntil { controller.remoteDragOverTarget }
         controller.observePointer(buttonMask: 0, x: 120, y: 120)
         controller.handle(reply)
         XCTAssertEqual(controller.dragStatistics.remoteDrags, 1)

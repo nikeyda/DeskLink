@@ -82,7 +82,7 @@ public final class VNCFileTransferController {
     /// Names of the files the Mac says are being dragged on its screen.
     public private(set) var remoteDraggedNames: [String] = []
     @ObservationIgnored private(set) var remoteDraggedPaths: [String] = []
-    /// The remote pointer is over ``dragOutTarget`` during that drag.
+    /// Releasing the current drag over ``dragOutTarget`` will download it.
     public private(set) var remoteDragOverTarget = false
 
     /// The Mac is dragging files on its screen, so the host shows its target.
@@ -93,7 +93,9 @@ public final class VNCFileTransferController {
     /// none is shown.
     public var dragOutTarget: CGRect? {
         didSet {
-            if dragOutTarget == nil { remoteDragOverTarget = false }
+            guard dragOutTarget != oldValue else { return }
+            clearDragOutReadiness()
+            updateDragOutReadiness()
         }
     }
 
@@ -108,11 +110,14 @@ public final class VNCFileTransferController {
     /// When the last drag-out request was sent; replies after the deadline are ignored.
     @ObservationIgnored private var pendingDragOut: ContinuousClock.Instant?
     @ObservationIgnored private var pressPoint: (x: UInt16, y: UInt16)?
+    @ObservationIgnored private var heldDragPoint: CGPoint?
+    @ObservationIgnored private var dragOutDwellTask: Task<Void, Never>?
 
     static let dragThreshold = 16
     static let dropTimeout: Duration = .seconds(20)
     static let completionTimeout: Duration = .seconds(30)
     static let dragOutReplyWindow: Duration = .seconds(10)
+    static let dragOutDwell: Duration = .milliseconds(250)
     static let escapeKeysym: UInt32 = 0xff1b
 
     @ObservationIgnored private let downloadStore: VNCDownloadStore
@@ -241,6 +246,7 @@ public final class VNCFileTransferController {
     func updateSupport(upload: Bool, download: Bool) {
         uploadSupported = upload
         downloadSupported = download
+        if !download { clearDragOutReadiness() }
     }
 
     func setAllowed(_ value: Bool) {
@@ -252,10 +258,15 @@ public final class VNCFileTransferController {
 
     private func resetDragTracking() {
         pendingDragOut = nil
+        clearRemoteDrag()
+    }
+
+    private func clearRemoteDrag() {
         pressPoint = nil
+        heldDragPoint = nil
         remoteDragAnchor = nil
-        remoteDragOverTarget = false
-        remoteDraggedNames = []
+        clearDragOutReadiness()
+        if !remoteDraggedNames.isEmpty { remoteDraggedNames = [] }
         remoteDraggedPaths = []
     }
 
@@ -264,12 +275,7 @@ public final class VNCFileTransferController {
         uploadSupported = false
         downloadSupported = false
         activeUploadDrag = nil
-        pendingDragOut = nil
-        remoteDraggedNames = []
-        remoteDraggedPaths = []
-        pressPoint = nil
-        remoteDragAnchor = nil
-        remoteDragOverTarget = false
+        resetDragTracking()
         let message = String(localized: "The connection closed.", bundle: .module)
         for transfer in transfers where transfer.isActive {
             // A local move needs no connection; it finishes on its own.
@@ -294,16 +300,13 @@ public final class VNCFileTransferController {
     func observePointer(buttonMask: UInt8, x: UInt16, y: UInt16) {
         guard canDownload, activeUploadDrag == nil else { return }
         guard buttonMask & TouchInputHandler.leftButton != 0 else {
-            if pressPoint != nil, showsDragOutTarget, targetContains(x, y) {
+            if pressPoint != nil, showsDragOutTarget, targetContains(x, y), canReleaseForDownload {
                 requestDragOut()
             }
-            pressPoint = nil
-            remoteDragAnchor = nil
-            remoteDragOverTarget = false
-            if !remoteDraggedNames.isEmpty { remoteDraggedNames = [] }
-            remoteDraggedPaths = []
+            clearRemoteDrag()
             return
         }
+        heldDragPoint = CGPoint(x: Int(x), y: Int(y))
         guard let press = pressPoint else {
             pressPoint = (x, y)
             dragTargetDismissed = false
@@ -321,13 +324,46 @@ public final class VNCFileTransferController {
             dismissDragOutTarget()
         }
         #endif
-        let over = showsDragOutTarget && targetContains(x, y)
-        if over != remoteDragOverTarget { remoteDragOverTarget = over }
+        updateDragOutReadiness()
     }
 
     func dismissDragOutTarget() {
         dragTargetDismissed = true
-        remoteDragOverTarget = false
+        clearDragOutReadiness()
+    }
+
+    private var canReleaseForDownload: Bool {
+        #if (os(iOS) || os(visionOS)) && !targetEnvironment(macCatalyst)
+        remoteDragOverTarget
+        #else
+        true
+        #endif
+    }
+
+    private func clearDragOutReadiness() {
+        dragOutDwellTask?.cancel()
+        dragOutDwellTask = nil
+        if remoteDragOverTarget { remoteDragOverTarget = false }
+    }
+
+    private func updateDragOutReadiness() {
+        guard showsDragOutTarget, let heldDragPoint, dragOutTarget?.contains(heldDragPoint) == true else {
+            clearDragOutReadiness()
+            return
+        }
+        guard !remoteDragOverTarget, dragOutDwellTask == nil else { return }
+        #if (os(iOS) || os(visionOS)) && !targetEnvironment(macCatalyst)
+        let deadline = ContinuousClock.now + Self.dragOutDwell
+        dragOutDwellTask = Task { [weak self] in
+            do { try await Task.sleep(until: deadline, clock: .continuous) }
+            catch { return }
+            guard !Task.isCancelled, let self else { return }
+            self.dragOutDwellTask = nil
+            self.remoteDragOverTarget = true
+        }
+        #else
+        remoteDragOverTarget = true
+        #endif
     }
 
     func handle(_ request: AppleFileTransferProtocol.UploadRequest) {
@@ -353,8 +389,11 @@ public final class VNCFileTransferController {
         } else if pressPoint != nil {
             // Unasked, it announces a file drag that started on its screen.
             dragStatistics.fileAnnouncements += 1
+            guard remoteDraggedPaths != reply.paths else { return }
+            clearDragOutReadiness()
             remoteDraggedNames = reply.paths.map { ($0 as NSString).lastPathComponent }
             remoteDraggedPaths = reply.paths
+            updateDragOutReadiness()
         }
     }
 
@@ -413,8 +452,7 @@ public final class VNCFileTransferController {
         transfers.append(transfer)
         uploads[transfer.id] = UploadJob(id: transfer.id, handle: handle)
         activeUploadDrag = transfer.id
-        pressPoint = nil
-        remoteDragAnchor = nil
+        clearRemoteDrag()
         lastUploadDragPoint = (x, y)
 
         // The Mac's helper starts its drag at the pointer and drops on the next
@@ -618,11 +656,7 @@ public final class VNCFileTransferController {
     /// A local drag took over the Mac's file drag: Escape cancels it on the
     /// Mac before the caller releases the button.
     func handOffRemoteDrag() {
-        pressPoint = nil
-        remoteDragAnchor = nil
-        remoteDragOverTarget = false
-        remoteDraggedNames = []
-        remoteDraggedPaths = []
+        clearRemoteDrag()
         session?.sendKeyEvent(downFlag: true, key: Self.escapeKeysym)
         session?.sendKeyEvent(downFlag: false, key: Self.escapeKeysym)
     }

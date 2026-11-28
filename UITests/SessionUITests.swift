@@ -1121,6 +1121,7 @@ final class SessionUITests: XCTestCase {
     }
 
     func testDraggingToTheNearbyDownloadTargetRequestsOnlyTheChosenFile() async throws {
+        continueAfterFailure = false
         let desktop = LocalTestDisplay(appleScalingCapability: false, offersDraggedFile: true)
         let port = try await desktop.start()
         defer { desktop.stop() }
@@ -1133,6 +1134,10 @@ final class SessionUITests: XCTestCase {
         try await waitUntil { desktop.heldLeftX.count > 1 }
         XCTAssertEqual(desktop.downloadRequests, 0)
         let target = file.withOffset(CGVector(dx: 78, dy: -44))
+        file.press(forDuration: 1.2, thenDragTo: target, withVelocity: .fast, thenHoldForDuration: 0)
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertNil(desktop.failure)
+        XCTAssertEqual(desktop.downloadRequests, 0, "Releasing immediately on the target must not start a download")
         file.press(forDuration: 1.2, thenDragTo: target, withVelocity: .slow, thenHoldForDuration: 0.4)
         try await waitUntil { desktop.downloadRequests == 1 || desktop.failure != nil }
         XCTAssertNil(desktop.failure)
