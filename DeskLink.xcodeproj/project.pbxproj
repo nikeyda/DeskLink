@@ -11,11 +11,30 @@
 		DA0000000000000000000007 = {isa = PBXFileSystemSynchronizedRootGroup; path = Tests; sourceTree = "<group>"; };
 		DA0000000000000000000008 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Telescope.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		DA0000000000000000000009 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DeskLinkTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		DA0000000000000000000005 = {isa = PBXNativeTarget; buildConfigurationList = DA0000000000000000000021; buildPhases = (DA0000000000000000000010, DA0000000000000000000011, DA0000000000000000000012, DA0000000000000000000077); buildRules = (); dependencies = (DA0000000000000000000079); fileSystemSynchronizedGroups = (DA0000000000000000000004, DA0000000000000000000072); name = DeskLink; packageProductDependencies = (DA0000000000000000000031, DA0000000000000000000063, DA0000000000000000000064, DA0000000000000000000065, DA0000000000000000000066, DA0000000000000000000067, DA0000000000000000000081); productName = DeskLink; productReference = DA0000000000000000000008; productType = "com.apple.product-type.application"; };
+		DA0000000000000000000005 = {isa = PBXNativeTarget; buildConfigurationList = DA0000000000000000000021; buildPhases = (DA0000000000000000000010, DA0000000000000000000011, DA0000000000000000000012, DA0000000000000000000077, DA0000000000000000000092); buildRules = (); dependencies = (DA0000000000000000000079); fileSystemSynchronizedGroups = (DA0000000000000000000004, DA0000000000000000000072); name = DeskLink; packageProductDependencies = (DA0000000000000000000031, DA0000000000000000000063, DA0000000000000000000064, DA0000000000000000000065, DA0000000000000000000066, DA0000000000000000000067, DA0000000000000000000081); productName = DeskLink; productReference = DA0000000000000000000008; productType = "com.apple.product-type.application"; };
 		DA0000000000000000000006 = {isa = PBXNativeTarget; buildConfigurationList = DA0000000000000000000022; buildPhases = (DA0000000000000000000013, DA0000000000000000000014, DA0000000000000000000015); buildRules = (); dependencies = (DA0000000000000000000018); fileSystemSynchronizedGroups = (DA0000000000000000000007); name = DeskLinkTests; productName = DeskLinkTests; productReference = DA0000000000000000000009; productType = "com.apple.product-type.bundle.unit-test"; };
 		DA0000000000000000000010 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		DA0000000000000000000011 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (DA0000000000000000000032, DA0000000000000000000069, DA000000000000000000006A, DA000000000000000000006B, DA000000000000000000006C, DA000000000000000000006D, DA0000000000000000000082); runOnlyForDeploymentPostprocessing = 0; };
 		DA0000000000000000000012 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		DA0000000000000000000092 = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			inputPaths = (
+				"$(SRCROOT)/script/mac-vnc-settings/build.sh",
+				"$(SRCROOT)/script/mac-vnc-settings/Info.plist",
+				"$(SRCROOT)/script/mac-vnc-settings/TelescopeVNC.swift",
+				"$(SRCROOT)/App/MacVNCLinkHandler.swift",
+				"$(SRCROOT)/Config/App.xcconfig",
+				"$(SRCROOT)/Shared/en.lproj/Localizable.strings",
+				"$(SRCROOT)/Shared/zh-Hans.lproj/Localizable.strings",
+			);
+			name = "Embed Mac VNC Settings";
+			outputPaths = ("$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/TelescopeVNC.app");
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "/bin/bash \"$SRCROOT/script/mac-vnc-settings/build.sh\"";
+		};
 		DA0000000000000000000013 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (DA0000000000000000000091); runOnlyForDeploymentPostprocessing = 0; };
 		DA0000000000000000000090 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/LocalTestDisplay.swift; sourceTree = SOURCE_ROOT; };
 		DA0000000000000000000091 = {isa = PBXBuildFile; fileRef = DA0000000000000000000090; };
