@@ -4,7 +4,7 @@ import UIKit
 struct TailnetView: View {
     @Bindable var directory: TailnetDirectory
     let archiveFolders: [ScreensDirectoryFolder]
-    var search: String
+    var query: LibrarySearchQuery
     var listLayout: Bool
     var gridColumns: [GridItem]
     var select: (Computer, UInt16?, PictureQuality?) -> Void
@@ -164,7 +164,7 @@ struct TailnetView: View {
         if directory.loading {
             ProgressView("正在查找 Tailscale 设备…")
         } else if directory.error == nil {
-            if !search.isEmpty {
+            if !query.isEmpty {
                 Text("未找到匹配的连接").foregroundStyle(.secondary)
             } else if directory.selectedFolder != nil {
                 Text("此文件夹没有设备").foregroundStyle(.secondary)
@@ -266,8 +266,9 @@ struct TailnetView: View {
     }
 
     private func matches(_ item: TailnetDevice) -> Bool {
-        let fields = [item.hostname, item.name, item.desktopSystem?.name, directory.computer(for: item)?.endpoint.address]
-        return LibrarySearchQuery(search).matches(fields + item.addresses.map(Optional.some))
+        let endpoint = directory.computer(for: item)?.endpoint
+        let fields = [item.hostname, item.name, item.desktopSystem?.name, endpoint?.address, endpoint.map { String($0.port) }]
+        return query.matches(fields + item.addresses.map(Optional.some))
     }
 }
 

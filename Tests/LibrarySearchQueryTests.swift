@@ -10,6 +10,9 @@ final class LibrarySearchQueryTests: XCTestCase {
         XCTAssertEqual(results.saved, [item])
         XCTAssertTrue(LibrarySearchQuery("private-account").storedMatches(in: [item]).isEmpty)
         XCTAssertTrue(LibrarySearchQuery("  \t\n").isEmpty)
+        item.endpoint = try Endpoint(address: "office.invalid")
+        XCTAssertTrue(LibrarySearchQuery("5900 production café").matches(item))
+        XCTAssertFalse(LibrarySearchQuery("5910 production café").matches(item))
     }
 
     func testSavedLinksAndRecentConnectionsAppearOnceInTheirMostSpecificSection() throws {

@@ -250,7 +250,14 @@ final class LibraryUITests: XCTestCase {
         press(app.buttons["connection.submit"])
         let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.computer.")).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 5))
+        #if targetEnvironment(macCatalyst)
+        press(app.buttons["library.presentation"].firstMatch)
+        XCTAssertTrue(app.menuItems["排序"].firstMatch.exists || app.buttons["排序"].firstMatch.exists)
+        let layout = app.menuItems["列表"].firstMatch
+        press(layout.exists ? layout : app.buttons["列表"].firstMatch)
+        #else
         choose("列表")
+        #endif
         let folderHeading = app.staticTexts["library.list.folderHeading"].firstMatch
         XCTAssertFalse(folderHeading.exists)
         XCTAssertFalse(row.label.contains(folder))
@@ -276,6 +283,58 @@ final class LibraryUITests: XCTestCase {
         add(capture)
     }
 
+    func testCategorySearchMatchesNameAndPortAndClearsForSetup() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]
+        app.launch()
+        func press(_ element: XCUIElement) {
+            #if targetEnvironment(macCatalyst)
+            element.click()
+            #else
+            element.tap()
+            #endif
+        }
+        XCTAssertTrue(app.buttons["library.quick"].firstMatch.waitForExistence(timeout: 10))
+        let id = UUID()
+        let file = FileManager.default.temporaryDirectory.appending(path: id.uuidString + ".screens")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let fixture: [String: Any] = [
+            "filename": "Search fixture", "folders": [],
+            "screens": [["id": id.uuidString, "name": "Studio Fixture", "hostname": "studio.fixture.invalid",
+                         "version": 6, "type": ["saved": [:]], "port": 5916, "clientProtocol": "vnc",
+                         "users": [], "authenticationMethod": 2, "operatingSystem": 6, "startInObserveMode": false,
+                         "onDisconnectAction": 0, "useSharedClipboard": true, "useSecureConnection": false]]
+        ]
+        try JSONSerialization.data(withJSONObject: fixture).write(to: file)
+        app.open(file)
+        let done = app.buttons["完成"].firstMatch
+        XCTAssertTrue(done.waitForExistence(timeout: 8))
+        press(done)
+
+        let item = app.buttons["library.computer." + id.uuidString].firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 8))
+        let search = app.searchFields.firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 6))
+        press(search)
+        search.typeText("5916 Studio")
+        XCTAssertTrue(item.waitForExistence(timeout: 5))
+        search.typeText(" missing")
+        XCTAssertTrue(item.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["未找到匹配的连接"].firstMatch.waitForExistence(timeout: 5))
+        let picture = XCTAttachment(screenshot: app.screenshot())
+        picture.name = "Collection search has no matches"
+        picture.lifetime = .keepAlways
+        add(picture)
+
+        #if targetEnvironment(macCatalyst)
+        selectCollection("library.remoteAccess", in: app)
+        XCTAssertTrue(search.waitForNonExistence(timeout: 5))
+        selectCollection("library.all", in: app)
+        XCTAssertTrue(item.waitForExistence(timeout: 5))
+        #endif
+    }
+
     func testDiscoveryDistinguishesTailscaleSetupFromDirectoryAuthorization() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -283,21 +342,25 @@ final class LibraryUITests: XCTestCase {
         app.launch()
 
         #if targetEnvironment(macCatalyst)
-        selectCollection("library.nearby", in: app)
+        app.open(URL(string: "desklink:///menu/nearby")!)
         let layout = app.buttons["library.discoveryLayout"].firstMatch
         XCTAssertTrue(layout.waitForExistence(timeout: 8))
-        layout.click()
-        let listItem = app.menuItems["列表"].firstMatch
-        if listItem.exists { listItem.click() } else { app.buttons["列表"].firstMatch.click() }
         attachLibraryScreenshot(app, name: "Mac Nearby discovery")
+        app.open(URL(string: "desklink:///menu/tailscale")!)
+        #else
+        selectCollection("library.tailscale", in: app)
         #endif
 
-        selectCollection("library.tailscale", in: app)
         let link = app.buttons["tailnet.linkAccount"].firstMatch
         XCTAssertTrue(link.waitForExistence(timeout: 8))
         XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "tailnet.setup").firstMatch.exists)
         #if targetEnvironment(macCatalyst)
+        XCTAssertTrue(app.searchFields.firstMatch.waitForNonExistence(timeout: 5))
         XCTAssertTrue(layout.waitForNonExistence(timeout: 5))
+        #else
+        if UIDevice.current.userInterfaceIdiom != .phone {
+            XCTAssertTrue(app.searchFields.firstMatch.waitForNonExistence(timeout: 5))
+        }
         #endif
         attachLibraryScreenshot(app, name: "Tailscale discovery setup")
         link.tap()

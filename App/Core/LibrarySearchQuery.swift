@@ -22,8 +22,12 @@ struct LibrarySearchQuery: Equatable {
         return words.allSatisfy { word in values.contains { $0.localizedStandardContains(word) } }
     }
 
+    func matches(_ computer: Computer) -> Bool {
+        matches([computer.displayName, computer.endpoint.address, String(computer.endpoint.port), computer.folder, computer.linkFolder])
+    }
+
     func storedMatches(in computers: [Computer]) -> StoredMatches {
-        let matching = computers.filter { matches([$0.displayName, $0.endpoint.address, $0.folder, $0.linkFolder]) }
+        let matching = computers.filter(matches)
         var results = StoredMatches()
         for item in ComputerOrder.name.arrange(matching) {
             if item.saved { results.saved.append(item) }

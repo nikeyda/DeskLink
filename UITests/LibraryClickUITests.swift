@@ -74,7 +74,7 @@ final class LibraryClickUITests: XCTestCase {
     }
 
     private func showList(in app: XCUIApplication) {
-        app.buttons["library.more"].firstMatch.click()
+        app.buttons["library.presentation"].firstMatch.click()
         let list = app.menuItems["列表"].firstMatch
         if list.exists { list.click() } else { app.buttons["列表"].firstMatch.click() }
     }

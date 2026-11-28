@@ -244,7 +244,13 @@ struct LibraryWindow: View {
         #endif
     }
     private var unifiedQuery: LibrarySearchQuery { LibrarySearchQuery(search) }
-    private var categorySearch: String { usesUnifiedSearch ? "" : search }
+    private var categoryQuery: LibrarySearchQuery { usesUnifiedSearch ? LibrarySearchQuery("") : unifiedQuery }
+    private var offersCategorySearch: Bool {
+        #if targetEnvironment(macCatalyst)
+        if page == .remoteAccess { return false }
+        #endif
+        return page != .tailscale || tailnet.account != nil
+    }
     private var searchesAllSources: Bool {
         usesUnifiedSearch && (sidebarSearchPresented || detailSearchPresented) && !unifiedQuery.isEmpty
     }
@@ -281,9 +287,8 @@ struct LibraryWindow: View {
         default:
             list = library.archive.computers.filter(\.saved)
         }
-        let matching = categorySearch.isEmpty ? list : list.filter {
-            $0.displayName.localizedCaseInsensitiveContains(categorySearch) || $0.endpoint.address.localizedCaseInsensitiveContains(categorySearch)
-        }
+        let query = categoryQuery
+        let matching = query.isEmpty ? list : list.filter(query.matches)
         return order.wrappedValue.arrange(matching)
     }
 
@@ -325,12 +330,11 @@ struct LibraryWindow: View {
                                     placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索所有来源")
                         .toolbar { libraryToolbar }
                     } else {
-                        collection
+                        searchableCollection
                             .navigationTitle((page ?? .all).title)
                             #if targetEnvironment(macCatalyst)
                             .navigationBarTitleDisplayMode(.inline)
                             #endif
-                            .searchable(text: $search, prompt: "搜索")
                             .toolbar { libraryToolbar }
                     }
                 }
@@ -344,6 +348,9 @@ struct LibraryWindow: View {
                     #if targetEnvironment(macCatalyst)
                     if page == .nearby { hasVisitedNearby = true }
                     #endif
+                }
+                .onChange(of: offersCategorySearch) { _, offersSearch in
+                    if !usesUnifiedSearch, !offersSearch { search = "" }
                 }
                 #if targetEnvironment(macCatalyst)
                 .focusedSceneValue(\.deskLinkLibrary, libraryMenu)
@@ -556,7 +563,8 @@ struct LibraryWindow: View {
                 }
             }
         } else {
-            ConnectionEditor(request: request, library: library, hiddenSources: hiddenItems, selectDevice: { computer, sshPort in
+            ConnectionEditor(request: request, library: library, tailnet: tailnet, privacy: privacy,
+                             hiddenSources: hiddenItems, selectDevice: { computer, sshPort in
                 guard editor?.id == request.id else { return }
                 openDiscovered(computer, suggestedSSHPort: sshPort, quality: nil)
             }, openLink: { value in
@@ -791,6 +799,14 @@ struct LibraryWindow: View {
         search = ""
     }
 
+    @ViewBuilder private var searchableCollection: some View {
+        if offersCategorySearch {
+            collection.searchable(text: $search, prompt: "搜索")
+        } else {
+            collection
+        }
+    }
+
     @ViewBuilder private var collection: some View {
         #if targetEnvironment(macCatalyst)
         if page == .remoteAccess {
@@ -806,10 +822,10 @@ struct LibraryWindow: View {
     @ViewBuilder private var connectionCollection: some View {
         if page == .tailscale {
             TailnetView(directory: tailnet, archiveFolders: library.archive.screensDirectoryFolders?.tailscale ?? [],
-                        search: categorySearch, listLayout: listLayout, gridColumns: gridColumns,
+                        query: categoryQuery, listLayout: listLayout, gridColumns: gridColumns,
                         select: openDiscovered, save: saveDiscovered)
         } else if page == .nearby {
-            let query = LibrarySearchQuery(categorySearch)
+            let query = categoryQuery
             let results = nearby.entries.filter { $0.matches(query) }
             Group {
                 if let error = nearby.searchError {
@@ -1051,7 +1067,7 @@ struct LibraryWindow: View {
     }
 
     @ViewBuilder private var emptyCollection: some View {
-        if !categorySearch.isEmpty {
+        if !categoryQuery.isEmpty {
             emptySearch
         } else {
             switch page ?? .all {
@@ -1127,16 +1143,8 @@ struct LibraryWindow: View {
                 Button { nearby.retry() } label: { Label("重新查找附近的电脑", systemImage: "arrow.clockwise") }
                     .accessibilityIdentifier("nearby.refresh")
             }
-            if showsDiscoveryLayout {
-                Menu {
-                    Picker("显示方式", selection: $listLayout) {
-                        Label("网格", systemImage: "square.grid.2x2").tag(false)
-                        Label("列表", systemImage: "list.bullet").tag(true)
-                    }
-                } label: {
-                    Label("显示方式", systemImage: listLayout ? "list.bullet" : "square.grid.2x2")
-                }
-                .accessibilityIdentifier("library.discoveryLayout")
+            if supportsLibraryOrganization || showsDiscoveryLayout {
+                libraryPresentationMenu
             }
             #endif
             Button { newEntry() } label: { Label("新建连接", systemImage: "plus") }
@@ -1152,26 +1160,17 @@ struct LibraryWindow: View {
                         showFolder = true
                     } label: { Label("新建文件夹", systemImage: "folder.badge.plus") }
                 }
-                #if targetEnvironment(macCatalyst)
-                let offersLayoutInMenu = supportsLibraryOrganization
-                #else
-                let offersLayoutInMenu = supportsLibraryOrganization || showsDiscoveryLayout
-                #endif
-                if offersLayoutInMenu {
+                #if !targetEnvironment(macCatalyst)
+                if supportsLibraryOrganization || showsDiscoveryLayout {
                     Button { listLayout.toggle() } label: {
                         Label(listLayout ? "网格" : "列表", systemImage: listLayout ? "square.grid.2x2" : "list.bullet")
                     }
                     .accessibilityIdentifier("library.changeLayout")
                 }
                 if supportsLibraryOrganization {
-                    Menu("排序") {
-                        Picker("排序", selection: order) {
-                            ForEach(ComputerOrder.allCases.filter { page != .recent || $0 != .manual }, id: \.self) { option in
-                                Text(option.title).tag(option)
-                            }
-                        }.pickerStyle(.inline)
-                    }
+                    librarySortMenu
                 }
+                #endif
                 Divider()
                 Button("导入") { importFile = true }
                 Button("导出") {
@@ -1192,6 +1191,33 @@ struct LibraryWindow: View {
                 Button("设置") { settings = true }
             } label: { Label("更多", systemImage: "ellipsis.circle") }
             .accessibilityIdentifier("library.more")
+        }
+    }
+
+    #if targetEnvironment(macCatalyst)
+    private var libraryPresentationMenu: some View {
+        Menu {
+            Picker("显示方式", selection: $listLayout) {
+                Label("网格", systemImage: "square.grid.2x2").tag(false)
+                Label("列表", systemImage: "list.bullet").tag(true)
+            }
+            if supportsLibraryOrganization {
+                librarySortMenu
+            }
+        } label: {
+            Label("显示方式", systemImage: listLayout ? "list.bullet" : "square.grid.2x2")
+        }
+        .accessibilityIdentifier(showsDiscoveryLayout ? "library.discoveryLayout" : "library.presentation")
+    }
+    #endif
+
+    private var librarySortMenu: some View {
+        Menu("排序") {
+            Picker("排序", selection: order) {
+                ForEach(ComputerOrder.allCases.filter { page != .recent || $0 != .manual }, id: \.self) { option in
+                    Text(option.title).tag(option)
+                }
+            }.pickerStyle(.inline)
         }
     }
 

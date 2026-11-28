@@ -221,13 +221,14 @@ extension Computer {
 struct ConnectionEditor: View {
     let request: EditorRequest
     let library: ConnectionLibrary
+    let tailnet: TailnetDirectory
+    let privacy: AppLock
     let hiddenSources: HiddenSidebarItems
     let selectDevice: (Computer, UInt16?) -> Void
     let openLink: (String) throws -> Void
     let didSave: () -> Void
     let connect: (SessionRequest) -> Void
     @Environment(\.dismiss) private var dismiss
-    @Environment(TailnetDirectory.self) private var tailnet
     @State private var name: String
     @State private var host: String
     @State private var port: String
@@ -299,11 +300,14 @@ struct ConnectionEditor: View {
     @State private var showSettings = false
     @FocusState private var editingHost: Bool
 
-    init(request: EditorRequest, library: ConnectionLibrary, hiddenSources: HiddenSidebarItems,
+    init(request: EditorRequest, library: ConnectionLibrary, tailnet: TailnetDirectory, privacy: AppLock,
+         hiddenSources: HiddenSidebarItems,
          selectDevice: @escaping (Computer, UInt16?) -> Void, openLink: @escaping (String) throws -> Void,
          didSave: @escaping () -> Void, connect: @escaping (SessionRequest) -> Void) {
         self.request = request
         self.library = library
+        self.tailnet = tailnet
+        self.privacy = privacy
         self.hiddenSources = hiddenSources
         self.selectDevice = selectDevice
         self.openLink = openLink
@@ -462,7 +466,8 @@ struct ConnectionEditor: View {
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(isPresented: $showsDevicePicker) {
-                QuickConnectDevicePicker(showsNearby: offersNearbyDevices, showsTailnet: offersTailnetDevices,
+                QuickConnectDevicePicker(tailnet: tailnet, privacy: privacy,
+                                         showsNearby: offersNearbyDevices, showsTailnet: offersTailnetDevices,
                                          select: selectDevice)
             }
             .toolbar {

@@ -1,12 +1,12 @@
 import SwiftUI
 
 struct QuickConnectDevicePicker: View {
+    let tailnet: TailnetDirectory
+    let privacy: AppLock
     let showsNearby: Bool
     let showsTailnet: Bool
     let select: (Computer, UInt16?) -> Void
 
-    @Environment(TailnetDirectory.self) private var tailnet
-    @Environment(AppLock.self) private var privacy
     @Environment(\.scenePhase) private var scenePhase
     @State private var nearby = NearbyComputers()
     @State private var search = ""

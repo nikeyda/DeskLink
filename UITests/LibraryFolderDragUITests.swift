@@ -54,7 +54,11 @@ final class LibraryFolderDragUITests: XCTestCase {
         attachment.lifetime = .keepAlways
         add(attachment)
 
+        #if targetEnvironment(macCatalyst)
+        press(app.buttons["library.presentation"].firstMatch)
+        #else
         press(app.buttons["library.more"].firstMatch)
+        #endif
         let list = app.menuItems["列表"].firstMatch
         press(list.exists ? list : app.buttons["列表"].firstMatch)
         XCTAssertTrue(first.waitForExistence(timeout: 8))
