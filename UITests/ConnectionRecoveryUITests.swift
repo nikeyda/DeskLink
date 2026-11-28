@@ -3,6 +3,71 @@ import XCTest
 #if !targetEnvironment(macCatalyst)
 @MainActor
 final class ConnectionRecoveryUITests: XCTestCase {
+    func testChangingThePortInTheLoginFormRecordsTheDesktopActuallyReached() async throws {
+        continueAfterFailure = false
+        let savedDesktop = LocalTestDisplay()
+        let otherDesktop = LocalTestDisplay()
+        let savedPort = try await savedDesktop.start()
+        let otherPort = try await otherDesktop.start()
+        defer { savedDesktop.stop(); otherDesktop.stop() }
+
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]
+        app.launch()
+        let create = app.buttons["library.empty.new"].firstMatch
+        XCTAssertTrue(create.waitForExistence(timeout: 12))
+        create.tap()
+        let name = app.textFields["connection.name"].firstMatch
+        let host = app.textFields["connection.host"].firstMatch
+        let port = app.textFields["connection.port"].firstMatch
+        let submit = app.buttons["connection.submit"].firstMatch
+        name.tap()
+        name.typeText("Saved test desktop")
+        host.tap()
+        host.typeText("127.0.0.1:\(savedPort)")
+        submit.tap()
+
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.computer."))
+        let saved = rows.matching(NSPredicate(format: "label CONTAINS %@", "Saved test desktop")).firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 8))
+        let savedID = saved.identifier
+        saved.tap()
+        XCTAssertTrue(port.waitForExistence(timeout: 8))
+        let initialPort = try XCTUnwrap(port.value as? String)
+        XCTAssertEqual(initialPort, String(savedPort))
+        port.tap()
+        port.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: initialPort.count) + String(otherPort))
+        XCTAssertEqual(port.value as? String, String(otherPort))
+        submit.tap()
+
+        let deadline = ContinuousClock.now + .seconds(14)
+        while otherDesktop.frameCount == 0 && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertGreaterThan(otherDesktop.frameCount, 0)
+        XCTAssertEqual(savedDesktop.acceptedConnections, 0)
+        XCTAssertEqual(otherDesktop.acceptedConnections, 1)
+        XCTAssertTrue(app.buttons["session.mode"].firstMatch.waitForExistence(timeout: 8))
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.buttons[savedID].firstMatch.waitForExistence(timeout: 8))
+        let recentSection = app.staticTexts["最近连接"].firstMatch
+        if !recentSection.isHittable, app.buttons["ToggleSideBar"].firstMatch.isHittable {
+            app.buttons["ToggleSideBar"].firstMatch.tap()
+        }
+        XCTAssertTrue(recentSection.waitForExistence(timeout: 8))
+        recentSection.tap()
+
+        let recent = rows.firstMatch
+        XCTAssertTrue(recent.waitForExistence(timeout: 8))
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertNotEqual(recent.identifier, savedID)
+        recent.tap()
+        XCTAssertTrue(port.waitForExistence(timeout: 8))
+        XCTAssertEqual(port.value as? String, String(otherPort))
+    }
+
     func testRejectedSSHLoginReopensTheFormAndConnectsWithTheCorrectedPassword() throws {
         continueAfterFailure = false
         let env = ProcessInfo.processInfo.environment

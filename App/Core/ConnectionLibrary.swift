@@ -287,6 +287,21 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
         return ssh == nil && other.ssh == nil
     }
 
+    func forConnectionAttempt(from original: Self?) -> Self {
+        guard let original, original.saved || original.lastConnected != nil,
+              !hasSameDestination(as: original) else { return self }
+        var recent = withoutSessionHistory
+        recent.id = UUID()
+        recent.saved = false
+        recent.favorite = false
+        recent.modifiedAt = nil
+        recent.folder = nil
+        recent.linkFolder = nil
+        recent.openedFromLink = false
+        if endpoint != original.endpoint { recent.name = "" }
+        return recent
+    }
+
     fileprivate struct BonjourRecent: Hashable {
         let host: String
         let port: UInt16
@@ -641,7 +656,10 @@ final class ConnectionLibrary {
     }
 
     func recordSuccess(_ computer: Computer, now: Date = .now) {
-        var entry = existingComputer(matching: computer) ?? computer
+        let current = existingComputer(matching: computer)
+        // A profile might have been edited while its old destination was connecting.
+        if let current, !current.hasSameDestination(as: computer) { return }
+        var entry = current ?? computer
         if computer.openedFromLink == true { entry.openedFromLink = true }
         entry.recordConnection(at: now, writer: activityWriter)
         store(entry, backup: false)

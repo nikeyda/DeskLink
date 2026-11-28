@@ -1086,6 +1086,7 @@ struct ConnectionEditor: View {
             } catch { self.error = error.localizedDescription }
         } else {
             if request.computer == nil { entry.saved = false }
+            entry = entry.forConnectionAttempt(from: request.computer)
             if request.purpose == .quick || request.link != nil { entry.openedFromLink = true }
             if !remember, let loadedAccount {
                 do { try PasswordStore.write(nil, for: loadedAccount, synchronize: synchronizeCredentials) }

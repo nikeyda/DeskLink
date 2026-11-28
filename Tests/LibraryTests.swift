@@ -404,6 +404,65 @@ final class LibraryTests: XCTestCase {
         }
     }
 
+    @MainActor func testTemporaryDestinationRecordsItsOwnHistoryWithoutChangingSavedProfile() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "library.json")
+        let library = ConnectionLibrary(file: file)
+        var original = Computer(name: "Studio", endpoint: try Endpoint(address: "desk.fixture.invalid:5901"))
+        original.username = "fixture"
+        original.favorite = true
+        original.folder = "Work"
+        original.lastConnected = Date(timeIntervalSince1970: 10)
+        var display = original.display(for: .current)
+        display.lastMonitor = .display(2)
+        original.setDisplay(display, for: .current)
+        XCTAssertTrue(library.save(original))
+        let saved = try XCTUnwrap(library.archive.computers.first)
+
+        var changed = saved
+        changed.endpoint = try Endpoint(address: "desk.fixture.invalid:5902")
+        let recent = changed.forConnectionAttempt(from: saved)
+        XCTAssertNotEqual(recent.id, saved.id)
+        XCTAssertFalse(recent.saved)
+        XCTAssertFalse(recent.favorite)
+        XCTAssertNil(recent.folder)
+        XCTAssertNil(recent.lastConnected)
+        XCTAssertNil(recent.display(for: .current).lastMonitor)
+        XCTAssertEqual(recent.displayName, "desk.fixture.invalid")
+        library.recordSuccess(recent, now: Date(timeIntervalSince1970: 20))
+        let reopened = ConnectionLibrary(file: file)
+        XCTAssertEqual(reopened.archive.computers.first, saved)
+        let recorded = try XCTUnwrap(reopened.archive.recentComputers().first { $0.id == recent.id })
+        XCTAssertEqual(recorded.endpoint.port, 5902)
+        XCTAssertEqual(recorded.totalConnections, 1)
+
+        XCTAssertEqual(saved.connecting(with: .lossless, on: .current).forConnectionAttempt(from: saved).id, saved.id)
+        changed = saved
+        changed.username = "another-fixture"
+        XCTAssertNotEqual(changed.forConnectionAttempt(from: saved).id, saved.id)
+        changed = saved
+        changed.ssh = SSHSettings(port: 2222, username: "jump-fixture")
+        XCTAssertNotEqual(changed.forConnectionAttempt(from: saved).id, saved.id)
+    }
+
+    @MainActor func testLateSuccessDoesNotCountAgainstAProfileChangedDuringConnection() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "library.json")
+        let library = ConnectionLibrary(file: file)
+        let old = Computer(endpoint: try Endpoint(address: "former.fixture.invalid"))
+        XCTAssertTrue(library.save(old))
+        var updated = old
+        updated.endpoint = try Endpoint(address: "updated.fixture.invalid")
+        XCTAssertTrue(library.applySync(LibraryArchive(computers: [updated])))
+        library.recordSuccess(old)
+        XCTAssertEqual(library.archive.computers, [updated])
+        XCTAssertTrue(library.archive.recentComputers().isEmpty)
+        library.recordSuccess(updated)
+        XCTAssertEqual(library.archive.recentComputers().first?.endpoint, updated.endpoint)
+    }
+
     func testUnavailableFolderFallsBackToItsOwnCollection() {
         var archive = LibraryArchive()
         archive.setFolders(["Studio"], in: .custom)
