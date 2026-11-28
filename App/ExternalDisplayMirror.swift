@@ -55,7 +55,10 @@ struct ExternalDisplayMirror: UIViewControllerRepresentable {
             let available = registration?.isAvailable == true && view.window?.windowScene?.screen == UIScreen.main
             guard available != lastAvailable else { return }
             lastAvailable = available
-            Task { @MainActor [weak self] in self?.availabilityChanged?(available) }
+            Task { @MainActor [weak self] in
+                guard let self, lastAvailable == available else { return }
+                availabilityChanged?(available)
+            }
         }
     }
 }
@@ -89,7 +92,9 @@ private struct MirroredDesktop: View {
     var body: some View {
         ZStack {
             Color.black
-            if !privacy.locked, session.connectionState.isConnected { ObservedPicture(session: session) }
+            if !privacy.locked, session.connectionState.isConnected, session.hasPresentedCurrentPicture {
+                ObservedPicture(session: session, showsPlaceholder: false)
+            }
         }.ignoresSafeArea()
     }
 }

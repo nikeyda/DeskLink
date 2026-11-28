@@ -318,8 +318,10 @@ struct SessionScreen: View {
             toolbar.keyboard.usesReturnForRemoteAppSwitcher = value
         }
         .background {
-            if #available(iOS 27.0, *), session.connectionState.isConnected {
-                ExternalDisplayMirror(session: session, privacy: privacy, enabled: mirrorEnabled && !privacy.locked && phase == .active) {
+            if #available(iOS 27.0, *), !stopped {
+                // Keep the external window registered while this session reconnects.
+                let outputEnabled = mirrorAvailable && mirrorEnabled && !privacy.locked && !closing && phase == .active
+                ExternalDisplayMirror(session: session, privacy: privacy, enabled: outputEnabled) {
                     mirrorAvailable = $0
                     if !$0 { mirrorEnabled = false }
                 }
@@ -345,9 +347,6 @@ struct SessionScreen: View {
                 liveReport = nil
                 lastReportWrite = nil
             } else { reportStartedAt = .now }
-            #if !targetEnvironment(macCatalyst)
-            if !state.isConnected { mirrorAvailable = false; mirrorEnabled = false }
-            #endif
             if state.isConnected, !recorded {
                 recorded = true
                 library.recordSuccess(request.computer)

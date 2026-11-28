@@ -2263,6 +2263,34 @@ final class SessionUITests: XCTestCase {
         output.lifetime = .keepAlways
         add(output)
         XCTAssertTrue(Self.hasColorChart(app.screenshot().image))
+
+        desktop.withholdFramesAfterConnection = 1
+        let originalFrames = desktop.frameCount
+        desktop.dropCurrentConnection()
+        let waiting = app.descendants(matching: .any)["session.waitingForScreen"].firstMatch
+        try await waitUntil { desktop.acceptedConnections == 2 && waiting.exists }
+        XCTAssertEqual(desktop.frameCount, originalFrames)
+        try await waitUntil {
+            guard let screen = XCUIScreen.screens.dropFirst().first else { return false }
+            return !Self.hasColorChart(screen.screenshot().image, minimumFraction: 0.18)
+        }
+        let blankScreen = try XCTUnwrap(XCUIScreen.screens.dropFirst().first)
+        let blank = XCTAttachment(screenshot: blankScreen.screenshot())
+        blank.name = "External display waiting for a fresh desktop"
+        blank.lifetime = .keepAlways
+        add(blank)
+
+        desktop.withholdFramesAfterConnection = nil
+        try await waitUntil { desktop.frameCount > originalFrames && !waiting.exists }
+        try await waitUntil {
+            XCUIScreen.screens.dropFirst().contains { Self.hasColorChart($0.screenshot().image, minimumFraction: 0.18) }
+        }
+        let restoredScreen = try XCTUnwrap(XCUIScreen.screens.dropFirst().first)
+        let restored = XCTAttachment(screenshot: restoredScreen.screenshot())
+        restored.name = "External display restored after reconnect"
+        restored.lifetime = .keepAlways
+        add(restored)
+
         app.buttons["session.close"].tap()
         try await waitUntil { app.buttons["library.quick"].exists }
         try await waitUntil { XCUIScreen.screens.dropFirst().allSatisfy { !Self.hasColorChart($0.screenshot().image, minimumFraction: 0.18) } }
