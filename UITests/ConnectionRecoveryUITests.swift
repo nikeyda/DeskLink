@@ -14,31 +14,41 @@ final class ConnectionRecoveryUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]
         app.launch()
-        let create = app.buttons["library.empty.new"].firstMatch
-        XCTAssertTrue(create.waitForExistence(timeout: 12))
-        create.tap()
-        let name = app.textFields["connection.name"].firstMatch
-        let host = app.textFields["connection.host"].firstMatch
-        let port = app.textFields["connection.port"].firstMatch
-        let submit = app.buttons["connection.submit"].firstMatch
-        name.tap()
-        name.typeText("Saved test desktop")
-        host.tap()
-        host.typeText("127.0.0.1:\(savedPort)")
-        submit.tap()
-
+        let id = UUID()
+        let file = FileManager.default.temporaryDirectory.appending(path: id.uuidString + ".desklink")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let computer: [String: Any] = [
+            "id": id.uuidString, "name": "Saved test desktop", "username": "",
+            "endpoint": ["host": "127.0.0.1", "port": savedPort], "saved": true, "favorite": false,
+            "viewOnly": false, "quality": "standard", "layout": "single", "matchWindow": false,
+            "remoteAudio": true, "trackpad": false
+        ]
+        try JSONSerialization.data(withJSONObject: ["version": 1, "folders": [], "computers": [computer]]).write(to: file)
+        app.open(file)
+        let imported = app.alerts["导入完成"].buttons["完成"]
+        XCTAssertTrue(imported.waitForExistence(timeout: 12))
+        imported.tap()
         let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.computer."))
-        let saved = rows.matching(NSPredicate(format: "label CONTAINS %@", "Saved test desktop")).firstMatch
+        let savedID = "library.computer." + id.uuidString
+        let saved = app.buttons[savedID].firstMatch
         XCTAssertTrue(saved.waitForExistence(timeout: 8))
-        let savedID = saved.identifier
         saved.tap()
+        let port = app.textFields["connection.port"].firstMatch
         XCTAssertTrue(port.waitForExistence(timeout: 8))
+        let submit = app.buttons["connection.submit"].firstMatch
+        let buttonFrame = submit.frame
+        let windowFrame = app.frame
+        XCTAssertTrue(windowFrame.contains(buttonFrame) && !buttonFrame.isEmpty)
         let initialPort = try XCTUnwrap(port.value as? String)
         XCTAssertEqual(initialPort, String(savedPort))
         port.tap()
         port.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: initialPort.count) + String(otherPort))
         XCTAssertEqual(port.value as? String, String(otherPort))
-        submit.tap()
+        // The visible toolbar button can lose its XCTest hit point while the shared iPad number pad is open.
+        let currentFrame = submit.frame
+        let target = windowFrame.contains(currentFrame) && !currentFrame.isEmpty ? currentFrame : buttonFrame
+        app.coordinate(withNormalizedOffset: .init(dx: (target.midX - windowFrame.minX) / windowFrame.width,
+                                                   dy: (target.midY - windowFrame.minY) / windowFrame.height)).tap()
 
         let deadline = ContinuousClock.now + .seconds(14)
         while otherDesktop.frameCount == 0 && ContinuousClock.now < deadline {
