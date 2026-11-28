@@ -201,7 +201,8 @@ public actor TCPConnection: RFBConnection {
                 // Network.framework's .waiting (cold DNS or path not ready).
                 let elapsedMilliseconds =
                     (DispatchTime.now().uptimeNanoseconds &- attemptStart) / 1_000_000
-                guard attempt < maxDialAttempts, !isClosing else {
+                guard attempt < maxDialAttempts, !isClosing,
+                      error as? VNCProtocolError != .localNetworkAccessDenied else {
                     log.error(
                         "Connect attempt \(attempt)/\(maxDialAttempts) to \(host):\(port) "
                             + "failed after \(elapsedMilliseconds)ms "
@@ -274,8 +275,8 @@ public actor TCPConnection: RFBConnection {
                 .connect(host: proxy?.host ?? host, port: Int(proxy?.port ?? port))
                 .get()
         } catch {
-            let protocolError = VNCProtocolError.ioError(
-                "Connection failed: \(error.localizedDescription)")
+            let protocolError = Self.dialFailure(
+                error, localNetworkAccessDenied: handler.localNetworkAccessDenied)
             handler.finish(throwing: protocolError)
             throw protocolError
         }
@@ -322,6 +323,18 @@ public actor TCPConnection: RFBConnection {
         if proxy == nil {
             log.info("Selected peer \(peerDescription) over \(pathDescription)")
         }
+    }
+
+    static func dialFailure(_ error: any Error, localNetworkAccessDenied: Bool) -> VNCProtocolError {
+        if localNetworkAccessDenied {
+            switch error {
+            case ChannelError.connectTimeout, NWError.posix(.ETIMEDOUT):
+                return .localNetworkAccessDenied
+            default:
+                break
+            }
+        }
+        return .ioError("Connection failed: \(error.localizedDescription)")
     }
 
     /// Reads only the reply's own bytes, so any server data that arrived with
@@ -766,6 +779,11 @@ private final class InboundByteStreamHandler: ChannelInboundHandler, @unchecked 
     private var tlsHandshakePending = false
     private var didFinish = false
     private var reportsDisconnect = true
+    private var pathRequiresLocalNetworkAccess = false
+
+    var localNetworkAccessDenied: Bool {
+        lock.withLock { pathRequiresLocalNetworkAccess }
+    }
 
     init(disconnect: @escaping @Sendable (VNCProtocolError) -> Void) {
         self.disconnect = disconnect
@@ -782,10 +800,25 @@ private final class InboundByteStreamHandler: ChannelInboundHandler, @unchecked 
     }
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
-        if case TLSUserEvent.handshakeCompleted = event {
+        switch event {
+        case TLSUserEvent.handshakeCompleted:
             completeTLS(.success(()))
+        case is NIOTSNetworkEvents.WaitingForConnectivity:
+            // Leave the connection waiting while the system presents its first permission prompt.
+            if let path = try? context.channel.syncOptions?.getOption(NIOTSChannelOptions.currentPath) {
+                updateLocalNetworkAccess(for: path)
+            }
+        case let event as NIOTSNetworkEvents.PathChanged:
+            updateLocalNetworkAccess(for: event.newPath)
+        default:
+            break
         }
         context.fireUserInboundEventTriggered(event)
+    }
+
+    private func updateLocalNetworkAccess(for path: NWPath) {
+        let denied = path.status == .unsatisfied && path.unsatisfiedReason == .localNetworkDenied
+        lock.withLock { pathRequiresLocalNetworkAccess = denied }
     }
 
     func channelReadComplete(context: ChannelHandlerContext) {

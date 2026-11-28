@@ -14,7 +14,7 @@ struct SupportDiagnostics: Encodable {
                 case .unexpectedMessage, .protocolViolation: self = .protocolError
                 case .connectionClosed: self = .closed
                 case .timeout: self = .timeout
-                case .ioError, .sshHostIdentityRejected: self = .transport
+                case .ioError, .sshHostIdentityRejected, .localNetworkAccessDenied: self = .transport
                 case nil: self = .unknown
                 }
             }

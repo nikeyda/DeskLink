@@ -30,6 +30,9 @@ public enum VNCProtocolError: Error, Sendable, Equatable, LocalizedError {
     /// An operation timed out.
     case timeout
 
+    /// The system is withholding access to the local network.
+    case localNetworkAccessDenied
+
     /// An underlying I/O error occurred.
     /// Wrapped as a string description for Sendable + Equatable conformance.
     case ioError(String)
@@ -56,6 +59,8 @@ public enum VNCProtocolError: Error, Sendable, Equatable, LocalizedError {
             return "The connection was closed."
         case .timeout:
             return "The operation timed out."
+        case .localNetworkAccessDenied:
+            return "Local network access is disabled."
         case .ioError(let detail):
             return "I/O error: \(detail)"
         }

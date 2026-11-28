@@ -4225,7 +4225,7 @@ public final class VNCSession {
              .unexpectedMessage:
             return true
         case .authenticationFailed, .sshAuthenticationFailed, .sshHostIdentityRejected,
-             .unsupportedVersion, .unsupportedEncoding:
+             .unsupportedVersion, .unsupportedEncoding, .localNetworkAccessDenied:
             return false
         }
     }
