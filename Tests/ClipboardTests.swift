@@ -109,6 +109,92 @@ import RFBProtocol
         XCTAssertNil(board.writtenContent)
     }
 
+    func testDelayedManualReplyPreservesANewerLocalCopyAndCanBeRetried() {
+        let board = PermissionClipboard()
+        let controller = VNCClipboardSynchronizer(clipboard: board, canSend: { true },
+            send: { _ in }, canRequestRemoteClipboard: { true },
+            observesApplicationLifecycle: false, automaticallyMonitors: false)
+        defer { controller.invalidate() }
+        var results: [VNCManualClipboardResult] = []
+        controller.onManualTransferResult = { results.append($0) }
+
+        controller.getClipboard()
+        controller.handleClipboardEvent(.requestStarted(30, changeNotice: false))
+        board.write(.text("New local copy"))
+        controller.handleClipboardEvent(.reply(30, .text("Old remote reply")))
+        XCTAssertEqual(board.writtenContent, .text("New local copy"))
+        XCTAssertEqual(results, [.receiveFailed])
+
+        controller.getClipboard()
+        controller.handleClipboardEvent(.requestStarted(31, changeNotice: false))
+        controller.applicationWillResignActive()
+        controller.handleClipboardEvent(.reply(31, .text("Requested after retry")))
+        XCTAssertEqual(board.writtenContent, .text("Requested after retry"))
+        XCTAssertEqual(results, [.receiveFailed, .received])
+    }
+
+    func testMostRecentManualReceiveWinsAcrossTwoSessionsOnTheSamePasteboard() {
+        let board = PermissionClipboard()
+        let old = VNCClipboardSynchronizer(clipboard: board, canSend: { true },
+            send: { _ in }, canRequestRemoteClipboard: { true },
+            observesApplicationLifecycle: false, automaticallyMonitors: false)
+        let new = VNCClipboardSynchronizer(clipboard: board, canSend: { true },
+            send: { _ in }, canRequestRemoteClipboard: { true },
+            observesApplicationLifecycle: false, automaticallyMonitors: false)
+        defer { old.invalidate(); new.invalidate() }
+        var results: [VNCManualClipboardResult] = []
+        old.onManualTransferResult = { results.append($0) }
+        new.onManualTransferResult = { results.append($0) }
+
+        old.getClipboard()
+        new.getClipboard()
+        old.receiveRemoteClipboardText("Reply from the first session")
+        XCTAssertNil(board.writtenContent)
+        new.receiveRemoteClipboardText("Reply from the selected session")
+        XCTAssertEqual(board.writtenContent, .text("Reply from the selected session"))
+        XCTAssertEqual(results, [.receiveFailed, .received])
+    }
+
+    func testNewRecipientSupersedesAnImageThatIsStillNormalizing() async throws {
+        let board = PermissionClipboard()
+        let old = VNCClipboardSynchronizer(clipboard: board, canSend: { true },
+            send: { _ in }, canRequestRemoteClipboard: { true },
+            observesApplicationLifecycle: false, automaticallyMonitors: false)
+        let new = VNCClipboardSynchronizer(clipboard: board, canSend: { true },
+            send: { _ in }, canRequestRemoteClipboard: { true },
+            observesApplicationLifecycle: false, automaticallyMonitors: false)
+        defer { old.invalidate(); new.invalidate() }
+        var results: [VNCManualClipboardResult] = []
+        old.onManualTransferResult = { results.append($0) }
+        new.onManualTransferResult = { results.append($0) }
+
+        old.getClipboard()
+        old.handleClipboardEvent(.requestStarted(50, changeNotice: false))
+        old.handleClipboardEvent(.reply(50, .init(items: [[.init(type: ClipboardType.bmp, data: Data([1, 2, 3]))]])))
+        let work = try XCTUnwrap(old.normalizationTask)
+        new.getClipboard()
+        await work.value
+        XCTAssertNil(board.writtenContent)
+        new.receiveRemoteClipboardText("New request")
+        XCTAssertEqual(board.writtenContent, .text("New request"))
+        XCTAssertEqual(results, [.receiveFailed, .received])
+    }
+
+    func testSeparateSystemPasteboardNamesHaveIndependentClipboardWriters() throws {
+        let first = UIPasteboard.withUniqueName()
+        let second = UIPasteboard.withUniqueName()
+        defer {
+            UIPasteboard.remove(withName: first.name)
+            UIPasteboard.remove(withName: second.name)
+        }
+        let same = try XCTUnwrap(UIPasteboard(name: first.name, create: false))
+        let firstWriter = VNCSystemClipboard(pasteboard: first)
+        let sameWriter = VNCSystemClipboard(pasteboard: same)
+        let otherWriter = VNCSystemClipboard(pasteboard: second)
+        XCTAssertTrue(firstWriter.remoteWrites === sameWriter.remoteWrites)
+        XCTAssertFalse(firstWriter.remoteWrites === otherWriter.remoteWrites)
+    }
+
     func testManualOnlyPasteboardDoesNotReadAfterDenialOrForegrounding() {
         let board = PermissionClipboard()
         board.allowsAutomaticRead = false

@@ -70,6 +70,40 @@ import rootshellVNC
         XCTAssertEqual(last, try ExtendedClipboardProtocol.clientMessage(.notify(.text)))
     }
 
+    func testDelayedExtendedClipboardResponsePreservesANewLocalCopy() async throws {
+        let peer = ClipboardNoticePeer()
+        var config = VNCConfiguration(enableHighPerformanceMode: false, videoQualityMode: .standard)
+        config.transportProvider = { _, _ in peer }
+        let session = VNCSession(configuration: config)
+        let board = UIPasteboard.withUniqueName()
+        defer { UIPasteboard.remove(withName: board.name) }
+        try await connect(session, to: peer)
+        defer { session.disconnect() }
+        let controller = VNCClipboardSynchronizer(session: session, pasteboard: board)
+        defer { controller.invalidate() }
+        await peer.releaseWrite()
+        try await peer.advertiseNotifyOnly()
+        try await waitUntil { session.supportsRemoteClipboardRequest }
+
+        var results: [VNCManualClipboardResult] = []
+        controller.onManualTransferResult = { results.append($0) }
+        let request = try ExtendedClipboardProtocol.clientMessage(.request(ExtendedClipboardProtocol.clientFormats))
+        controller.getClipboard()
+        try await waitUntil { await peer.uploaded.contains(request) }
+        board.string = "New copy while waiting"
+        try await peer.provide("Delayed clipboard value")
+        try await waitUntil { results.count == 1 }
+        XCTAssertEqual(results, [.receiveFailed])
+        XCTAssertEqual(board.string, "New copy while waiting")
+
+        controller.getClipboard()
+        try await waitUntil { await peer.uploaded.filter { $0 == request }.count == 2 }
+        try await peer.provide("Explicitly requested again")
+        try await waitUntil { results.count == 2 }
+        XCTAssertEqual(results, [.receiveFailed, .received])
+        XCTAssertEqual(board.string, "Explicitly requested again")
+    }
+
     func testNotificationRequiresPermissionPreferenceAndUnlockedApp() async throws {
         let suite = "ClipboardNoticeTests." + UUID().uuidString
         let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -211,6 +245,13 @@ private actor ClipboardNoticePeer: RFBConnection {
         var caps = try ExtendedClipboardProtocol.clientMessage(.caps(.text, [.notify, .request], maximumSizes: [1: 0]))
         caps[0] = 3
         input.append(caps)
+    }
+
+    func provide(_ text: String) throws {
+        let format = ExtendedClipboardProtocol.Formats.text.rawValue
+        var payload = try ExtendedClipboardProtocol.clientMessage(.provide([format: Data(text.utf8)]))
+        payload[0] = 3
+        input.append(payload)
     }
 
     func close() async { closed = true }

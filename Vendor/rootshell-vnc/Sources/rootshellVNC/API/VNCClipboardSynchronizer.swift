@@ -32,8 +32,18 @@ public enum VNCManualClipboardResult: Sendable, Equatable {
 /// wrote it, shared by every pane on the same pasteboard.
 @MainActor
 final class VNCClipboardRemoteWrites {
-    static let system = VNCClipboardRemoteWrites()
+    private static let system = NSMapTable<NSString, VNCClipboardRemoteWrites>.strongToWeakObjects()
+
+    static func forPasteboard(named name: String) -> VNCClipboardRemoteWrites {
+        let key = name as NSString
+        if let existing = system.object(forKey: key) { return existing }
+        let created = VNCClipboardRemoteWrites()
+        system.setObject(created, forKey: key)
+        return created
+    }
+
     var latest: (changeCount: Int, writer: ObjectIdentifier)?
+    var latestManualReceive: UUID?
     // A different host window taking key supersedes an in-flight app switch.
     private(set) var ownershipGeneration: UInt64 = 0
     weak var remoteCopyOwner: VNCClipboardSynchronizer? {
@@ -84,7 +94,11 @@ private func outboundRichTypes(for support: VNCClipboardContentSupport) -> Set<S
 @MainActor
 final class VNCSystemClipboard: VNCClipboardProviding {
     private let pasteboard: UIPasteboard
-    init(pasteboard: UIPasteboard = .general) { self.pasteboard = pasteboard }
+    let remoteWrites: VNCClipboardRemoteWrites
+    init(pasteboard: UIPasteboard = .general) {
+        self.pasteboard = pasteboard
+        remoteWrites = .forPasteboard(named: pasteboard.name.rawValue)
+    }
 
     var changeCount: Int { pasteboard.changeCount }
     var allowsAutomaticRead: Bool {
@@ -96,7 +110,6 @@ final class VNCSystemClipboard: VNCClipboardProviding {
         true
         #endif
     }
-    var remoteWrites: VNCClipboardRemoteWrites { .system }
 
     // Type and has* queries do not trigger the paste permission prompt.
     func hasTransferableContent(for support: VNCClipboardContentSupport) -> Bool {
@@ -159,11 +172,14 @@ final class VNCSystemClipboard: VNCClipboardProviding {
 @MainActor
 private final class VNCSystemClipboard: VNCClipboardProviding {
     private let pasteboard: NSPasteboard
-    init(pasteboard: NSPasteboard = .general) { self.pasteboard = pasteboard }
+    let remoteWrites: VNCClipboardRemoteWrites
+    init(pasteboard: NSPasteboard = .general) {
+        self.pasteboard = pasteboard
+        remoteWrites = .forPasteboard(named: pasteboard.name.rawValue)
+    }
 
     var changeCount: Int { pasteboard.changeCount }
     var allowsAutomaticRead: Bool { true }
-    var remoteWrites: VNCClipboardRemoteWrites { .system }
 
     func hasTransferableContent(for support: VNCClipboardContentSupport) -> Bool {
         if pasteboard.canReadObject(forClasses: [NSString.self, NSURL.self], options: nil) {
@@ -296,7 +312,7 @@ public final class VNCClipboardSynchronizer {
     @ObservationIgnored
     private let manualReceiveTimeout: Duration
     @ObservationIgnored
-    private var manualReceive: (id: UUID, timeout: Task<Void, Never>)?
+    private var manualReceive: (id: UUID, localChangeCount: Int, timeout: Task<Void, Never>)?
     @ObservationIgnored
     private let contentSupport: () -> VNCClipboardContentSupport
     @ObservationIgnored
@@ -570,7 +586,8 @@ public final class VNCClipboardSynchronizer {
         guard !invalidated, manualReceive == nil else { return }
         let id = UUID()
         let delay = manualReceiveTimeout
-        manualReceive = (id, Task { [weak self] in
+        clipboard.remoteWrites.latestManualReceive = id
+        manualReceive = (id, clipboard.changeCount, Task { [weak self] in
             do { try await Task.sleep(for: delay) }
             catch { return }
             self?.finishManualReceive(id, succeeded: false)
@@ -583,6 +600,12 @@ public final class VNCClipboardSynchronizer {
         } else {
             finishManualReceive(id, succeeded: false)
         }
+    }
+
+    private func canApplyManualReceive(_ id: UUID) -> Bool {
+        guard let manualReceive, manualReceive.id == id else { return false }
+        return clipboard.remoteWrites.latestManualReceive == id
+            && manualReceive.localChangeCount == clipboard.changeCount
     }
 
     private func finishManualReceive(_ id: UUID, succeeded: Bool) {
@@ -1043,8 +1066,12 @@ public final class VNCClipboardSynchronizer {
     private func applyRemoteContent(
         _ content: VNCClipboardContent, automatic: Bool, copy: RemoteCopy? = nil
     ) {
-        supersedePendingApply()
         let receipt = automatic ? nil : manualReceive?.id
+        if let receipt, !canApplyManualReceive(receipt) {
+            finishManualReceive(receipt, succeeded: false)
+            return
+        }
+        supersedePendingApply()
         if automatic, let synced = syncedLocalContent,
            synced.changeCount == clipboard.changeCount, synced.content == content {
             return
@@ -1064,10 +1091,16 @@ public final class VNCClipboardSynchronizer {
                 VNCClipboardImageNormalizer.normalized(content)
             }.value
             guard let self, !Task.isCancelled, !self.invalidated,
-                  self.applyGeneration == generation,
-                  self.clipboard.changeCount == localChangeCount else { return }
-            if let receipt, self.manualReceive?.id != receipt { return }
+                  self.applyGeneration == generation else { return }
             self.normalizationTask = nil
+            if let receipt {
+                guard self.canApplyManualReceive(receipt) else {
+                    self.finishManualReceive(receipt, succeeded: false)
+                    return
+                }
+            } else {
+                guard self.clipboard.changeCount == localChangeCount else { return }
+            }
             if let copy {
                 guard self.ownsRemoteCopy(copy) else { return }
                 if self.applicationIsActive, !self.hostWindowIsActive {
