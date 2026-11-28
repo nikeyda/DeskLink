@@ -10,14 +10,24 @@ xcodebuild -quiet -project DeskLink.xcodeproj -scheme DeskLink -configuration De
     COMPILER_INDEX_STORE_ENABLE=NO build
 bundle="$PWD/.build/Xcode/Build/Products/Debug-maccatalyst/Telescope.app"
 codesign --verify --strict "$bundle"
-# Stop only a process launched from this project's build product.
-binary="$bundle/Contents/MacOS/DeskLink"
+executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$bundle/Contents/Info.plist")"
+binary="$bundle/Contents/MacOS/$executable"
+test -x "$binary"
+bundle_pids() {
+    local path="$1" pid
+    while IFS= read -r pid; do
+        if [[ "$(ps -p "$pid" -o comm= 2>/dev/null || true)" == "$path" ]]; then
+            printf '%s\n' "$pid"
+        fi
+    done < <(pgrep -x "${path##*/}" || true)
+}
+# Stop only processes from this project's debug build directory.
 while IFS= read -r pid; do
-    if [[ "$(ps -p "$pid" -o comm=)" == "$binary" ]]; then kill -TERM "$pid"; fi
-done < <(pgrep -x DeskLink || true)
+    kill -TERM "$pid"
+done < <(bundle_pids "$binary"; bundle_pids "$bundle/Contents/MacOS/DeskLink")
 if [[ "$mode" == --debug ]]; then exec lldb -- "$binary"; fi
 open -n "$bundle"
 case "$mode" in
-    --verify) for attempt in {1..20}; do pgrep -x DeskLink >/dev/null && exit 0; sleep 0.25; done; exit 1 ;;
-    --logs|--telemetry) exec /usr/bin/log stream --level info --predicate 'process == "DeskLink"' ;;
+    --verify) for attempt in {1..20}; do [[ -n "$(bundle_pids "$binary")" ]] && exit 0; sleep 0.25; done; exit 1 ;;
+    --logs|--telemetry) exec /usr/bin/log stream --level info --predicate "process == '$executable'" ;;
 esac
