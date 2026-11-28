@@ -761,6 +761,48 @@ final class SessionUITests: XCTestCase {
         XCTAssertEqual(desktop.acceptedConnections, 3)
     }
 
+    func testReconnectWaitsForFreshPictureBeforeRestoringDesktopInput() async throws {
+        continueAfterFailure = false
+        let desktop = LocalTestDisplay()
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        openChart(app, port: port)
+        let input = app.descendants(matching: .any)["session.input"].firstMatch
+        let control = app.buttons["toolbar.control"]
+        let tab = app.buttons["toolbar.tab"]
+        let waiting = app.descendants(matching: .any)["session.waitingForScreen"].firstMatch
+        try await waitUntil { desktop.frameCount > 0 && input.isHittable && control.isHittable }
+        control.tap()
+        XCTAssertEqual(control.value as? String, "已选中")
+
+        let previousFrames = desktop.frameCount
+        let previousKeys = desktop.keyDowns
+        let previousClicks = desktop.clicks
+        desktop.withholdFramesAfterConnection = 1
+        desktop.dropCurrentConnection()
+        try await waitUntil { desktop.acceptedConnections == 2 && waiting.exists }
+        XCTAssertEqual(desktop.frameCount, previousFrames)
+        XCTAssertTrue(Self.hasColorChart(app.screenshot().image))
+        XCTAssertFalse(input.exists)
+        XCTAssertFalse(tab.isEnabled)
+        XCTAssertEqual(app.buttons["session.statusAction"].label, "停止重新连接")
+        app.coordinate(withNormalizedOffset: .init(dx: 0.23, dy: 0.38)).tap()
+        if tab.isHittable { tab.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).tap() }
+        app.typeKey("x", modifierFlags: [.control])
+        attachToolbarScreenshot(app, name: "Previous picture with remote input paused")
+
+        desktop.withholdFramesAfterConnection = nil
+        try await waitUntil { desktop.frameCount > previousFrames && !waiting.exists && input.isHittable && tab.isEnabled }
+        XCTAssertNotEqual(control.value as? String, "已选中")
+        tab.tap()
+        input.tap()
+        try await waitUntil { desktop.keyDowns.count > previousKeys.count && desktop.clicks > previousClicks }
+        XCTAssertEqual(desktop.keyDowns, previousKeys + [0xff09])
+        XCTAssertEqual(desktop.clicks, previousClicks + 1)
+        XCTAssertEqual(desktop.acceptedConnections, 2)
+    }
+
     func testCancellingBeforeTheFirstPictureReturnsToTheLibrary() async throws {
         let desktop = LocalTestDisplay()
         desktop.expectsClientDisconnect = true

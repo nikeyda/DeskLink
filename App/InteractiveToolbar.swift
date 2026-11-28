@@ -214,9 +214,13 @@ enum DeskToolbarButton: String, CaseIterable {
         lastModifier = nil
     }
 
-    func reset() {
+    func clearModifiers() {
         locked = []
         consume()
+    }
+
+    func reset() {
+        clearModifiers()
         keyboard.softwareKeyboardRequested = false
         brighten()
     }
@@ -389,6 +393,9 @@ struct InteractiveDesktop<SessionHeader: View>: View {
         .environment(\.colorScheme, deck == nil ? colorScheme : .dark)
         .sheet(isPresented: $showsDraft) { draftSheet }
         .onChange(of: toolbarProfile.buttons) { _, _ in bar.page = 0 }
+        .onChange(of: session.isReadyForDesktopInput) { _, ready in
+            if !ready { bar.clearModifiers() }
+        }
         .onChange(of: deck == nil) { _, regular in
             if regular { dockedKeyboardInset = 0 }
         }
@@ -536,7 +543,7 @@ struct InteractiveDesktop<SessionHeader: View>: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button {
-                        guard session.connectionState.isConnected, !bar.textDraft.isEmpty else { return }
+                        guard session.isReadyForDesktopInput, !bar.textDraft.isEmpty else { return }
                         bar.keyboard.noteExternalInput()
                         keyboardHandler.typeText(bar.textDraft)
                         bar.consume()
@@ -545,7 +552,7 @@ struct InteractiveDesktop<SessionHeader: View>: View {
                     } label: {
                         Label("发送", systemImage: "paperplane")
                     }
-                    .disabled(!session.connectionState.isConnected || bar.textDraft.isEmpty)
+                    .disabled(!session.isReadyForDesktopInput || bar.textDraft.isEmpty)
                     .accessibilityIdentifier("session.sendDraft")
                 }
             }
@@ -704,6 +711,7 @@ struct InteractiveDesktop<SessionHeader: View>: View {
         .accessibilityAddTraits(active ? .isSelected : [])
         .accessibilityValue(bar.locked.contains(modifier) ? "已锁定" : "")
         .accessibilityIdentifier("toolbar." + key.rawValue)
+        .disabled(!session.isReadyForDesktopInput)
     }
 
     private func typingKey(
@@ -854,7 +862,7 @@ struct InteractiveDesktop<SessionHeader: View>: View {
                     Button(button.title(for: keyboardHandler.commandPlatform), systemImage: button.symbol) {
                         sendPinnedCommand(button)
                     }
-                    .disabled(!session.connectionState.isConnected || !session.hasPresentedCurrentPicture)
+                    .disabled(!session.isReadyForDesktopInput)
                 }
                 Divider()
             }
@@ -966,6 +974,7 @@ struct InteractiveDesktop<SessionHeader: View>: View {
             .accessibilityLabel(button.title)
             .accessibilityValue(bar.locked.contains(modifier) ? "已锁定" : bar.keyboard.supplementalModifiers.contains(modifier) ? "已选中" : "")
             .accessibilityIdentifier("toolbar." + button.rawValue)
+            .disabled(!session.isReadyForDesktopInput)
         } else if let keysym = button.keysym, button.supportsRepeat {
             RepeatKeyButton(symbol: button.symbol, title: button.title, points: size.buttonStyle.symbolPointSize,
                             identifier: "toolbar." + button.rawValue, timing: bar.keyboard.keyRepeat) {
@@ -973,6 +982,7 @@ struct InteractiveDesktop<SessionHeader: View>: View {
                 return { send(keysym, additional: modifiers) }
             }
             .frame(width: keyFrame?.width ?? size.points, height: keyFrame?.height ?? size.points)
+            .disabled(!session.isReadyForDesktopInput)
         } else if let keysym = button.keysym {
             Button { send(keysym) } label: {
                 if button.functionNumber != nil {
@@ -985,22 +995,24 @@ struct InteractiveDesktop<SessionHeader: View>: View {
                 } else { icon(button.symbol, using: size, keyFrame: keyFrame) }
             }
                 .accessibilityLabel(button.title).accessibilityIdentifier("toolbar." + button.rawValue)
+                .disabled(!session.isReadyForDesktopInput)
         } else if button == .dictation {
             Button(action: startDictation) { icon(button.symbol) }
+                .disabled(!session.isReadyForDesktopInput)
                 .accessibilityLabel(button.title).accessibilityIdentifier("toolbar.dictation")
         } else if button == .screenshot {
             Button(action: captureScreenshot) { icon(button.symbol) }
                 .accessibilityLabel(button.title).accessibilityIdentifier("toolbar.screenshot")
         } else if button == .switchApp || button == .spotlight || button == .missionControl {
             Button { sendPinnedCommand(button) } label: { icon(button.symbol) }
-                .disabled(!session.connectionState.isConnected || !session.hasPresentedCurrentPicture)
+                .disabled(!session.isReadyForDesktopInput)
                 .accessibilityLabel(button.title(for: keyboardHandler.commandPlatform))
                 .accessibilityIdentifier("toolbar." + button.rawValue)
         } else if button == .spacer {
             Spacer().frame(width: size.points / 2).accessibilityHidden(true)
         } else if button == .password {
             PasswordTypingButton(controls: controls) { icon(button.symbol) }
-                .disabled(!session.canSendLoginPassword)
+                .disabled(!session.isReadyForDesktopInput || !session.canSendLoginPassword)
                 .accessibilityLabel(button.title)
                 .accessibilityIdentifier("toolbar.password")
         } else {
@@ -1049,12 +1061,12 @@ struct InteractiveDesktop<SessionHeader: View>: View {
     }
 
     private func send(_ key: UInt32, additional: VNCKeyboardModifiers = []) {
-        guard session.connectionState.isConnected else { return }
+        guard session.isReadyForDesktopInput else { return }
         if bar.keyboard.sendToolbarKey(key, adding: additional) { bar.consume() }
     }
 
     private func sendPinnedCommand(_ button: DeskToolbarButton) {
-        guard session.connectionState.isConnected, session.hasPresentedCurrentPicture else { return }
+        guard session.isReadyForDesktopInput else { return }
         bar.keyboard.noteExternalInput()
         bar.consume()
         switch button {

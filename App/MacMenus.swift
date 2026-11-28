@@ -132,7 +132,7 @@ struct MacMenus: Commands {
             }
         }
         CommandMenu("远程输入") {
-            if let desktop, !desktop.observing, desktop.session.connectionState.isConnected {
+            if let desktop, !desktop.observing, desktop.session.isReadyForDesktopInput {
                 RemoteCommandsMenu(session: desktop.session)
                 if #available(macCatalyst 26, *), let start = desktop.startDictation {
                     Button("听写…", action: start)

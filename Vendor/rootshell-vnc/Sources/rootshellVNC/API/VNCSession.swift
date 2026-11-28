@@ -759,6 +759,12 @@ public final class VNCSession {
         return desktopPictureState == .presented
     }
 
+    /// Desktop input needs a picture from the active transport. During
+    /// reconnect a retained frame is visible for reference only.
+    public var isReadyForDesktopInput: Bool {
+        connectionState.isConnected && hasPresentedCurrentPicture
+    }
+
     /// Incremented whenever a new Standard-mode frame is published so external
     /// `@Observable` observers of `currentImage` still receive notifications.
     private var standardPresentedFrameRevision: UInt64 = 0

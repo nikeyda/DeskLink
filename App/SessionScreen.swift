@@ -401,7 +401,7 @@ struct SessionScreen: View {
         .focusedSceneValue(\.deskLinkSession, macMenu)
         #elseif os(iOS)
         .focusedSceneValue(\.telescopePadSession, padSessionMenu)
-        .onChange(of: observing) {
+        .onChange(of: [observing, session.isReadyForDesktopInput]) {
             if #available(iOS 26, *), UIDevice.current.userInterfaceIdiom == .pad {
                 UIMenuSystem.main.setNeedsRebuild()
             }
@@ -482,7 +482,7 @@ struct SessionScreen: View {
                     MacPictureSizingMenu(viewport: $viewport).labelStyle(.iconOnly)
                     MonitorMenu(session: session, select: chooseMonitor, split: showAllMonitorWindows,
                                 isSplit: monitorGroup != nil).labelStyle(.iconOnly)
-                    if !observing, session.canSendLoginPassword {
+                    if !observing, session.isReadyForDesktopInput, session.canSendLoginPassword {
                         PasswordTypingButton(controls: controls) {
                             Label("输入用户密码", systemImage: "key.fill").labelStyle(.iconOnly)
                         }

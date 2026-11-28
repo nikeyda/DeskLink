@@ -20,7 +20,7 @@ struct RemoteCommandsMenu: View {
     private func commands(_ entries: [RemoteCommand]) -> some View {
         ForEach(entries) { command in
             Button(command.title) {
-                guard session.connectionState.isConnected, allowsInput() else { return }
+                guard session.isReadyForDesktopInput, allowsInput() else { return }
                 willSend()
                 let keyboard = KeyboardInputHandler(
                     sendKeyEvent: { session.sendKeyEvent(downFlag: $0, key: $1) },
@@ -29,6 +29,7 @@ struct RemoteCommandsMenu: View {
                 keyboard.handleRemoteCommand(command)
             }
             .accessibilityIdentifier("remoteCommand." + command.rawValue)
+            .disabled(!session.isReadyForDesktopInput)
         }
     }
 }

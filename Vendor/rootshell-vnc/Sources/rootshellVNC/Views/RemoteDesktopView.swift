@@ -429,7 +429,7 @@ public struct RemoteDesktopView: View {
                             .allowsHitTesting(false)
                     }
 
-                    if session.connectionState.isConnected,
+                    if session.isReadyForDesktopInput,
                        framebufferSize.width > 0,
                        framebufferSize.height > 0 {
                         interactionLayer(
@@ -467,11 +467,13 @@ public struct RemoteDesktopView: View {
                 ) {
                     if !confirmPasswordOnly {
                         Button(String(localized: "Type Password and Log In", bundle: .module)) {
+                            guard session.isReadyForDesktopInput else { return }
                             keyboardCapture.noteExternalInput()
                             session.sendLoginPassword()
                         }
                     }
                     Button(String(localized: "Type Password Only", bundle: .module)) {
+                        guard session.isReadyForDesktopInput else { return }
                         keyboardCapture.noteExternalInput()
                         session.sendLoginPassword(pressingReturn: false)
                     }
@@ -511,6 +513,10 @@ public struct RemoteDesktopView: View {
                     if pending {
                         presentPendingLoginPasswordPrompt()
                     }
+                }
+                .onChange(of: session.isReadyForDesktopInput) { _, ready in
+                    if ready { presentPendingLoginPasswordPrompt() }
+                    else { confirmPasswordSend = false }
                 }
                 .onChange(of: displayScale) {
                     #if canImport(UIKit)
@@ -951,7 +957,7 @@ public struct RemoteDesktopView: View {
     /// Absent, not greyed out, while there is no password to type.
     @ViewBuilder
     private var passwordButton: some View {
-        if session.canSendLoginPassword {
+        if session.isReadyForDesktopInput, session.canSendLoginPassword {
             Button {
                 requestPasswordSend()
             } label: {
@@ -1002,13 +1008,13 @@ public struct RemoteDesktopView: View {
     private func requestPasswordSend() { requestPasswordSend(only: false) }
 
     private func requestPasswordSend(only: Bool) {
-        guard session.canSendLoginPassword, !confirmPasswordSend else { return }
+        guard session.isReadyForDesktopInput, session.canSendLoginPassword, !confirmPasswordSend else { return }
         confirmPasswordOnly = only
         confirmPasswordSend = true
     }
 
     private func presentPendingLoginPasswordPrompt() {
-        guard session.loginPasswordPromptPending else { return }
+        guard session.isReadyForDesktopInput, session.loginPasswordPromptPending else { return }
         guard session.consumeLoginPasswordPromptRequest() else { return }
         requestPasswordSend()
     }

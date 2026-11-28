@@ -21,6 +21,8 @@ struct RepeatKeyButton: UIViewRepresentable {
     }
 
     func updateUIView(_ control: Control, context: Context) {
+        control.isEnabled = context.environment.isEnabled
+        if !control.isEnabled { control.cancelHold() }
         control.actionForPress = actionForPress
         control.timing = timing
         control.accessibilityLabel = title

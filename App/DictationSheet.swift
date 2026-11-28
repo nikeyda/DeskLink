@@ -9,7 +9,7 @@ struct RemoteDictationPresentation: ViewModifier {
     let canControl: @MainActor () -> Bool
     @Environment(\.scenePhase) private var phase
 
-    private var available: Bool { session.connectionState.isConnected && canControl() && phase != .background }
+    private var available: Bool { session.isReadyForDesktopInput && canControl() && phase != .background }
 
     func body(content: Content) -> some View {
         content

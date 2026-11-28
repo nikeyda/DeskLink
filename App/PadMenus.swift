@@ -91,7 +91,7 @@ struct PadMenus: Commands {
                 Button("断开连接", role: .destructive, action: desktop.disconnect)
             }
         }
-        if let desktop, connected, !desktop.observing {
+        if let desktop, desktop.session.isReadyForDesktopInput, !desktop.observing {
             CommandMenu("远程输入") {
                 RemoteCommandsMenu(session: desktop.session, allowsInput: desktop.allowsInput)
             }
