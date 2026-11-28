@@ -52,13 +52,15 @@ struct HardwareKeyboardState: Sendable {
     }
 }
 
-/// Bookkeeping for host-toolbar modifiers wrapped around physical key
-/// presses and pointer presses. A modifier remains down until every
+/// Bookkeeping for modifiers shared by hardware keys, taps and pointer
+/// presses. A modifier remains down until every
 /// overlapping owner that borrowed it has ended.
 struct SupplementalHardwareModifierState: Sendable {
     enum Owner: Hashable, Sendable {
         /// A physical key, identified by HID usage.
         case key(UInt32)
+        /// A synchronous software or toolbar key tap.
+        case tap
         /// One pointer click or drag, identified by a per-press id.
         case pointer(UInt64)
         /// A physical modifier key, identified by the keysym it sends.

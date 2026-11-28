@@ -941,6 +941,11 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         }
         remoteInput.onInput = discardTextDocument
         keyboardCapture.onExternalInput = discardTextDocument
+        keyboardCapture.toolbarKeyTap = { [weak self] keysym, modifiers in
+            guard let self, self.window != nil else { return false }
+            self.discardTextDocument()
+            return self.sendKeyTap(keysym, modifiers: modifiers)
+        }
         hardwareKeyboard.controlOptionAsCommand = keyboardCapture.controlOptionAsCommand
         localOption.side = keyboardCapture.localOptionKey
         hardwareKeyboard.keyRepeat = keyboardCapture.keyRepeat
@@ -1426,9 +1431,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
         defer { isTypingText = false }
         var dispatched = false
         for character in RemoteTextInputDocument.keyTaps(for: text) {
-            dispatched = keyboardHandler.handleKeyTap(
-                character,
-                supplementalModifiers: modifiers) || dispatched
+            dispatched = sendKeyTap(keyboardHandler.softwareKeysym(for: character), modifiers: modifiers) || dispatched
         }
         if dispatched, !modifiers.isEmpty {
             keyboardCapture.onSupplementalModifiersConsumed?()
@@ -1473,11 +1476,18 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
     private func typeBackspace(modifiers: VNCKeyboardModifiers) {
         isTypingText = true
         defer { isTypingText = false }
-        let dispatched = keyboardHandler.handleKeysymTap(
-            KeyboardInputHandler.keysymBackspace,
-            supplementalModifiers: modifiers)
+        let dispatched = sendKeyTap(KeyboardInputHandler.keysymBackspace, modifiers: modifiers)
         if dispatched, !modifiers.isEmpty {
             keyboardCapture.onSupplementalModifiersConsumed?()
+        }
+    }
+
+    @discardableResult
+    private func sendKeyTap(_ keysym: UInt32, modifiers: VNCKeyboardModifiers) -> Bool {
+        keyboardHandler.handleKeysymTap(keysym, supplementalModifiers: modifiers) { keysyms, tap in
+            supplementalModifierState.begin(.tap, keysyms: keysyms).forEach(sendSupplementalTransition)
+            tap()
+            supplementalModifierState.end(.tap).forEach(sendSupplementalTransition)
         }
     }
 
@@ -2723,7 +2733,7 @@ final class RemoteInputUIView: UIView, UIKeyInput, UIGestureRecognizerDelegate,
 
     /// Physical modifiers share reference counts with toolbar holds, so
     /// releasing one source never lifts a modifier another still holds.
-    private func routePhysicalModifier(
+    func routePhysicalModifier(
         _ transition: HardwareKeyboardTransition,
         usage: UInt32?
     ) {

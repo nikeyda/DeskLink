@@ -236,10 +236,12 @@ public struct KeyboardInputHandler {
         _ character: Character,
         supplementalModifiers: VNCKeyboardModifiers
     ) -> Bool {
+        handleKeysymTap(softwareKeysym(for: character), supplementalModifiers: supplementalModifiers)
+    }
+
+    func softwareKeysym(for character: Character) -> UInt32 {
         let keysym = Self.keysymForCharacter(character)
-        return handleKeysymTap(
-            usesLegacySoftwareMapping() ? LegacyKeysyms.preferredAlias(for: keysym) : keysym,
-            supplementalModifiers: supplementalModifiers)
+        return usesLegacySoftwareMapping() ? LegacyKeysyms.preferredAlias(for: keysym) : keysym
     }
 
     /// Send a shortcut chord with a short key-down interval. Unlike text and
@@ -262,18 +264,27 @@ public struct KeyboardInputHandler {
         _ keysym: UInt32,
         supplementalModifiers: VNCKeyboardModifiers
     ) -> Bool {
+        handleKeysymTap(keysym, supplementalModifiers: supplementalModifiers) { modifiers, tap in
+            modifiers.forEach { sendKeyEvent(true, $0) }
+            tap()
+            modifiers.reversed().forEach { sendKeyEvent(false, $0) }
+        }
+    }
+
+    @discardableResult
+    func handleKeysymTap(
+        _ keysym: UInt32,
+        supplementalModifiers: VNCKeyboardModifiers,
+        withModifiers: ([UInt32], () -> Void) -> Void
+    ) -> Bool {
         guard keysym != 0 else { return false }
         let key = Self.functionEquivalent(for: keysym, modifiers: supplementalModifiers)?.keysym ?? keysym
         let modifiers = Self.keysyms(
             for: supplementalModifiers,
             appleModifierConvention: usesAppleModifierConvention())
-        for modifier in modifiers {
-            sendKeyEvent(true, modifier)
-        }
-        sendKeyEvent(true, key)
-        sendKeyEvent(false, key)
-        for modifier in modifiers.reversed() {
-            sendKeyEvent(false, modifier)
+        withModifiers(modifiers) {
+            sendKeyEvent(true, key)
+            sendKeyEvent(false, key)
         }
         return true
     }

@@ -1050,8 +1050,7 @@ struct InteractiveDesktop<SessionHeader: View>: View {
 
     private func send(_ key: UInt32, additional: VNCKeyboardModifiers = []) {
         guard session.connectionState.isConnected else { return }
-        bar.keyboard.noteExternalInput()
-        if keyboardHandler.handleKeysymTap(key, supplementalModifiers: bar.keyboard.supplementalModifiers.union(additional)) { bar.consume() }
+        if bar.keyboard.sendToolbarKey(key, adding: additional) { bar.consume() }
     }
 
     private func sendPinnedCommand(_ button: DeskToolbarButton) {

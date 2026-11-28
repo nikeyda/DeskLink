@@ -257,6 +257,16 @@ public final class VNCKeyboardCapture {
     @ObservationIgnored
     var onExternalInput: (@MainActor () -> Void)?
 
+    /// Sends a toolbar key through the active responder so a modifier already
+    /// held by the hardware keyboard or a pointer drag stays down.
+    @discardableResult
+    public func sendToolbarKey(_ keysym: UInt32, adding modifiers: VNCKeyboardModifiers = []) -> Bool {
+        toolbarKeyTap?(keysym, supplementalModifiers.union(modifiers)) ?? false
+    }
+
+    @ObservationIgnored
+    var toolbarKeyTap: (@MainActor (UInt32, VNCKeyboardModifiers) -> Bool)?
+
     /// What an input method is still composing in the remote responder.
     /// None of it has reached the remote desktop.
     private(set) var composition: RemoteTextInputDocument.Composition?

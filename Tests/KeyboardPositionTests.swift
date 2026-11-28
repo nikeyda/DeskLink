@@ -78,6 +78,47 @@ import UIKit
         XCTAssertEqual(wire.last, .init(down: false, usage: 0x28, keysym: 0xFF0D))
     }
 
+    func testToolbarAndSoftwareKeyTapsKeepThePhysicalModifierDown() {
+        struct Event: Equatable {
+            let down: Bool
+            let usage: UInt32?
+            let keysym: UInt32
+        }
+        var wire: [Event] = []
+        let capture = VNCKeyboardCapture()
+        let input = RemoteInputUIView(
+            touchHandler: TouchInputHandler { _, _, _ in },
+            keyboardHandler: KeyboardInputHandler(
+                sendKeyEvent: { wire.append(.init(down: $0, usage: nil, keysym: $1)) },
+                sendPhysicalKeyEvent: { wire.append(.init(down: $0, usage: $1, keysym: $2)) }),
+            keyboardCapture: capture, requestPasswordSend: {}, requestDictation: {},
+            toggleFullScreen: nil, disconnect: {})
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 640, height: 480))
+        window.addSubview(input)
+        let control = KeyboardInputHandler.keysymControlL
+        input.routePhysicalModifier(.init(downFlag: true, keysym: control), usage: 0xe0)
+
+        capture.supplementalModifiers = [.control, .fn]
+        XCTAssertTrue(capture.sendToolbarKey(KeyboardInputHandler.keysymLeft, adding: .shift))
+        capture.supplementalModifiers = .control
+        input.insertText("a")
+        input.routePhysicalModifier(.init(downFlag: false, keysym: control), usage: 0xe0)
+
+        XCTAssertEqual(wire, [
+            .init(down: true, usage: 0xe0, keysym: control),
+            .init(down: true, usage: nil, keysym: KeyboardInputHandler.keysymShiftL),
+            .init(down: true, usage: nil, keysym: KeyboardInputHandler.keysymHome),
+            .init(down: false, usage: nil, keysym: KeyboardInputHandler.keysymHome),
+            .init(down: false, usage: nil, keysym: KeyboardInputHandler.keysymShiftL),
+            .init(down: true, usage: nil, keysym: 0x61),
+            .init(down: false, usage: nil, keysym: 0x61),
+            .init(down: false, usage: 0xe0, keysym: control),
+        ])
+        input.removeFromSuperview()
+        XCTAssertFalse(capture.sendToolbarKey(KeyboardInputHandler.keysymTab))
+        XCTAssertEqual(wire.count, 8)
+    }
+
     #if targetEnvironment(macCatalyst)
     func testMacLocalOptionUsesTheActualKeyboardLayoutAndIsolatesDeadKeys() throws {
         var input = CatalystKeyboardLayout.LocalOptionInput()
