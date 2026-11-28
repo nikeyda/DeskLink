@@ -231,6 +231,9 @@ struct ConnectionEditor: View {
     @State private var name: String
     @State private var host: String
     @State private var port: String
+    #if targetEnvironment(macCatalyst)
+    @State private var wakeAddressText: String
+    #endif
     @State private var username: String
     @State private var password = ""
     @State private var authentication: DesktopAuthentication
@@ -314,6 +317,9 @@ struct ConnectionEditor: View {
         _name = State(initialValue: c?.name ?? "")
         _host = State(initialValue: initial?.host ?? request.initialAddress)
         _port = State(initialValue: String(initial?.port ?? 5900))
+        #if targetEnvironment(macCatalyst)
+        _wakeAddressText = State(initialValue: c?.wakeHardwareAddress?.text ?? "")
+        #endif
         let desktopUser = (link?.sshPort == nil ? link?.username : nil) ?? c?.username ?? ""
         let tunnelUser = (link?.sshPort != nil ? link?.username : nil) ?? c?.ssh?.username ?? ""
         _authentication = State(initialValue: c?.authentication ?? .automatic)
@@ -403,6 +409,9 @@ struct ConnectionEditor: View {
 
     private var canSubmit: Bool {
         guard endpoint != nil else { return false }
+        #if targetEnvironment(macCatalyst)
+        if isSaving, !useSSH, hasWakeAddress, !validWakeSettings { return false }
+        #endif
         if !isSaving, authentication == .macUser, desktopUsername.isEmpty { return false }
         if selectedQuality == .adaptive, sizing == .fixed, fixedDimensions?.isSupported != true { return false }
         guard useSSH else { return true }
@@ -436,12 +445,15 @@ struct ConnectionEditor: View {
         }
     }
 
-    var body: some View {
+    private var connectionForm: some View {
         NavigationStack {
             Form {
                 addressSection
                 credentialSection
                 sshSection
+                #if targetEnvironment(macCatalyst)
+                if isSaving, !useSSH { wakeSection }
+                #endif
                 if request.purpose != .quick { curtainSection }
                 displaySection
                 if isSaving {
@@ -469,27 +481,20 @@ struct ConnectionEditor: View {
                 }
             }
         }
-        .onAppear {
-            guard !loadedInitialCredentials else { return }
-            loadedInitialCredentials = true
-            guard request.loadsStoredCredentials else { return }
-            if let name = selectedKeyName { selectNamedKey(name) }
-            if request.link?.username != nil || request.link?.password != nil || request.link?.keyName != nil { return }
-            guard let original = request.computer else { return }
-            if let stored = try? PasswordStore.read(original, synchronize: synchronizeCredentials) {
-                loadedAccount = original
-                password = stored
-                remember = true
-            }
-            if !request.rejectedSSHCredential, let ssh = original.ssh, ssh.keyName == nil,
-               let stored = try? PasswordStore.read(original, kind: ssh.usesKey ? .sshKey : .sshPassword, synchronize: synchronizeCredentials) {
-                restoredSSH = original
-                if ssh.usesKey { sshKey = stored } else { sshPassword = stored }
-                remember = true
-            }
-        }
+    }
+
+    private var credentialAwareForm: some View {
+        connectionForm.onAppear(perform: loadInitialCredentials)
         .onChange(of: host) { clearMismatchedPassword() }
         .onChange(of: port) { clearMismatchedPassword() }
+        #if targetEnvironment(macCatalyst)
+        .onChange(of: endpoint?.host) { _, destination in
+            if let destination, let original = request.computer, destination != original.endpoint.host,
+               WakeHardwareAddress(wakeAddressText) == original.wakeHardwareAddress {
+                wakeAddressText = ""
+            }
+        }
+        #endif
         .onChange(of: username) { clearMismatchedPassword() }
         .onChange(of: authentication) { previous, current in
             guard previous.usesPassword != current.usesPassword
@@ -508,6 +513,10 @@ struct ConnectionEditor: View {
         }
         .onChange(of: useSSH) { clearMismatchedPassword() }
         .onChange(of: sshUseKey) { clearMismatchedPassword() }
+    }
+
+    var body: some View {
+        credentialAwareForm
         .task(id: useSSH && sshUseKey) {
             guard useSSH, sshUseKey else { return }
             do { keyNames = try PasswordStore.keyNames(synchronize: synchronizeCredentials) }
@@ -532,6 +541,26 @@ struct ConnectionEditor: View {
             Button("使用链接") { applyLink(linkText); linkText = "" }
                 .disabled(linkText.isEmpty)
             Button("取消", role: .cancel) { linkText = "" }
+        }
+    }
+
+    private func loadInitialCredentials() {
+        guard !loadedInitialCredentials else { return }
+        loadedInitialCredentials = true
+        guard request.loadsStoredCredentials else { return }
+        if let name = selectedKeyName { selectNamedKey(name) }
+        if request.link?.username != nil || request.link?.password != nil || request.link?.keyName != nil { return }
+        guard let original = request.computer else { return }
+        if let stored = try? PasswordStore.read(original, synchronize: synchronizeCredentials) {
+            loadedAccount = original
+            password = stored
+            remember = true
+        }
+        if !request.rejectedSSHCredential, let ssh = original.ssh, ssh.keyName == nil,
+           let stored = try? PasswordStore.read(original, kind: ssh.usesKey ? .sshKey : .sshPassword, synchronize: synchronizeCredentials) {
+            restoredSSH = original
+            if ssh.usesKey { sshKey = stored } else { sshPassword = stored }
+            remember = true
         }
     }
 
@@ -579,6 +608,30 @@ struct ConnectionEditor: View {
             }
         }
     }
+
+    #if targetEnvironment(macCatalyst)
+    private var hasWakeAddress: Bool { !wakeAddressText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var validWakeSettings: Bool {
+        endpoint.flatMap { WakeOnLAN.address($0.host) } != nil && WakeHardwareAddress(wakeAddressText) != nil
+    }
+
+    private var wakeSection: some View {
+        Section {
+            TextField("网卡的 MAC 地址（可选）", text: $wakeAddressText)
+                .autocorrectionDisabled()
+                .accessibilityIdentifier("connection.wakeMAC")
+        } header: {
+            Text("网络唤醒")
+        } footer: {
+            if hasWakeAddress, !validWakeSettings {
+                Text("请输入有效的 MAC 地址，并在连接地址中使用这台电脑的局域网 IPv4 地址。")
+                    .foregroundStyle(.red)
+            } else {
+                Text("填写后，连接时会尝试唤醒同一局域网内支持网络唤醒的电脑。")
+            }
+        }
+    }
+    #endif
 
     private var credentialSection: some View {
         Section {
@@ -954,6 +1007,10 @@ struct ConnectionEditor: View {
         var entry = request.computer ?? Computer(endpoint: endpoint)
         entry.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         entry.desktopPlatform = request.platform(for: endpoint)
+        if entry.endpoint.host != endpoint.host { entry.wakeHardwareAddress = nil }
+        #if targetEnvironment(macCatalyst)
+        if isSaving, !useSSH { entry.wakeHardwareAddress = WakeHardwareAddress(wakeAddressText) }
+        #endif
         entry.endpoint = endpoint
         entry.username = desktopUsername
         entry.authentication = authentication

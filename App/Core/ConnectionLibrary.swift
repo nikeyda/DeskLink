@@ -110,6 +110,7 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
     var name: String
     var endpoint: Endpoint
     var desktopPlatform: DesktopPlatform?
+    var wakeHardwareAddress: WakeHardwareAddress?
     var username = ""
     var saved = true
     var favorite = false

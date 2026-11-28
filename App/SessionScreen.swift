@@ -29,6 +29,7 @@ struct SessionScreen: View {
     @State private var liveReport: ConnectionReport?
     @State private var diagnosticAttemptID = UUID()
     @State private var connectionAttempt = UUID()
+    @State private var wakingComputer = false
     @State private var setupRequiresEditing = false
     @State private var lastReportWrite: Date?
     @State private var showsDictation = false
@@ -192,7 +193,7 @@ struct SessionScreen: View {
                             }
                         }
                     }
-                case .failed(let reason):
+                case .failed(let reason) where !wakingComputer:
                     let failure = SessionConnectionFailure(session.lastError, setupRequiresEditing: setupRequiresEditing)
                     ContentUnavailableView {
                         Label(failure.title, systemImage: "exclamationmark.triangle")
@@ -212,13 +213,14 @@ struct SessionScreen: View {
                             .frame(maxWidth: 360)
                         }
                     }
-                case .disconnected:
+                case .disconnected where !wakingComputer:
                     ContentUnavailableView {
                         Label("已断开", systemImage: "rectangle.slash")
                     } actions: { retryActions("重新连接") }
-                case .idle, .connecting:
+                case .idle, .connecting, .failed, .disconnected:
                     VStack(spacing: 18) {
-                        ProgressView(session.connectionPhaseDescription ?? "正在连接…")
+                        ProgressView(wakingComputer ? String(localized: "正在尝试唤醒电脑…")
+                                                    : session.connectionPhaseDescription ?? "正在连接…")
                         Button("取消") { finish(edit: false) }
                             .buttonStyle(.bordered)
                             .accessibilityIdentifier("session.cancelConnection")
@@ -241,6 +243,15 @@ struct SessionScreen: View {
                 session.updateRemoteDisplaySize(viewSize: geometry.size, displayScale: scale)
                 let item = request.computer
                 do {
+                    #if targetEnvironment(macCatalyst)
+                    if let hardwareAddress = item.wakeHardwareAddress, item.ssh == nil, !privacy.locked {
+                        wakingComputer = true
+                        defer { wakingComputer = false }
+                        try await WakeOnLAN.prepare(item.endpoint, hardwareAddress: hardwareAddress)
+                    }
+                    #endif
+                    try Task.checkCancellation()
+                    guard !closing, !stopped else { return }
                     let tunnelUserPassword: String?
                     if case let .password(value) = request.sshProof { tunnelUserPassword = value } else { tunnelUserPassword = nil }
                     try await session.connect(credentials: VNCCredentials(host: item.endpoint.host, port: item.endpoint.port,
@@ -580,6 +591,12 @@ struct SessionScreen: View {
     @ViewBuilder private func retryActions(_ title: String) -> some View {
         Button(title) {
             guard !privacy.locked, !closing, !stopped else { return }
+            #if targetEnvironment(macCatalyst)
+            if !recorded, request.computer.wakeHardwareAddress != nil, request.computer.ssh == nil {
+                connectionAttempt = UUID()
+                return
+            }
+            #endif
             if !session.retryConnection() { connectionAttempt = UUID() }
         }
         .buttonStyle(.borderedProminent)
