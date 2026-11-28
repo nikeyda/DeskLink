@@ -320,7 +320,7 @@ struct ConnectionEditor: View {
         #endif
         let desktopUser = (link?.sshPort == nil ? link?.username : nil) ?? c?.username ?? ""
         let tunnelUser = (link?.sshPort != nil ? link?.username : nil) ?? c?.ssh?.username ?? ""
-        _authentication = State(initialValue: c?.authentication ?? .automatic)
+        _authentication = State(initialValue: request.sharedOptions.authentication ?? c?.authentication ?? .automatic)
         _username = State(initialValue: desktopUser)
         _password = State(initialValue: link?.sshPort == nil ? link?.password ?? "" : "")
         let display = (c?.display(for: .current) ?? DesktopDisplayPreferences()).resolved(for: .current)

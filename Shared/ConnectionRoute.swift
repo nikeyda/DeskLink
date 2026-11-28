@@ -6,6 +6,7 @@ enum ConnectionRoute: Equatable {
     struct SharedOptions: Equatable {
         var observe: Bool?
         var quality: PictureQuality?
+        var authentication: DesktopAuthentication?
     }
 
     case quick
@@ -48,12 +49,15 @@ enum ConnectionRoute: Equatable {
                 case "quality":
                     guard let quality = PictureQuality(rawValue: value) else { throw URLError(.badURL) }
                     options.quality = quality
+                case "auth":
+                    guard let authentication = DesktopAuthentication(connectionLinkValue: value) else { throw URLError(.badURL) }
+                    options.authentication = authentication
                 default: throw URLError(.badURL)
                 }
             }
             guard server == nil || sshPort != nil else { throw URLError(.badURL) }
             let endpoint = try Self.endpoint(from: parts)
-            if options.observe != nil || options.quality != nil {
+            if options != SharedOptions() {
                 self = .sharedAddress(endpoint, sshPort: sshPort, server: server, options: options)
             } else if let sshPort {
                 self = .secureAddress(endpoint, sshPort: sshPort, server: server)
@@ -105,6 +109,9 @@ enum ConnectionRoute: Equatable {
         }
         if let observe = options.observe { items.append(URLQueryItem(name: "observe", value: String(observe))) }
         if let quality = options.quality { items.append(URLQueryItem(name: "quality", value: quality.rawValue)) }
+        if let authentication = options.authentication {
+            items.append(URLQueryItem(name: "auth", value: authentication.connectionLinkValue))
+        }
         if !items.isEmpty { components.queryItems = items }
         return components.url
     }

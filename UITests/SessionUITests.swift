@@ -1546,6 +1546,62 @@ final class SessionUITests: XCTestCase {
         }
     }
 
+    func testSharedLinksOpenTheSelectedAuthenticationFormBeforeConnecting() async throws {
+        continueAfterFailure = false
+        let desktop = LocalTestDisplay()
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString]
+        app.launch()
+        XCTAssertTrue(app.buttons["library.quick"].waitForExistence(timeout: 10))
+        let submit = app.buttons["connection.submit"].firstMatch
+        let username = app.textFields["connection.username"].firstMatch
+        let password = app.secureTextFields["connection.password"].firstMatch
+
+        func open(_ authentication: String) throws {
+            let url = try XCTUnwrap(URL(string: "desklink://127.0.0.1:\(port)?observe=true&auth=\(authentication)"))
+            app.open(url)
+            XCTAssertTrue(submit.waitForExistence(timeout: 8))
+            XCTAssertEqual(app.textFields["connection.port"].value as? String, String(port))
+            XCTAssertEqual(desktop.acceptedConnections, 0)
+        }
+        func cancel() {
+            app.buttons["取消"].firstMatch.tap()
+            XCTAssertTrue(app.buttons["library.quick"].waitForExistence(timeout: 8))
+        }
+
+        try open("mac-user")
+        XCTAssertTrue(username.exists)
+        XCTAssertTrue(password.exists)
+        XCTAssertFalse(submit.isEnabled)
+        cancel()
+
+        try open("vnc-password")
+        XCTAssertFalse(username.exists)
+        XCTAssertTrue(password.exists)
+        cancel()
+
+        try open("raspberry-pi")
+        XCTAssertTrue(username.exists)
+        XCTAssertTrue(password.exists)
+        cancel()
+
+        try open("none")
+        XCTAssertFalse(username.exists)
+        XCTAssertFalse(password.exists)
+        submit.tap()
+        let mode = app.buttons["session.mode"].firstMatch
+        try await waitUntil {
+            desktop.frameCount > 0 && mode.label == "仅观察" && Self.hasColorChart(app.screenshot().image)
+        }
+        XCTAssertEqual(desktop.acceptedConnections, 1)
+        let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shot.name = "Shared no-auth connection in observation mode"
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
+
     func testQuickLinkKeepsObservationModeAndWaitsForExplicitConnection() async throws {
         let desktop = LocalTestDisplay()
         let port = try await desktop.start()
@@ -1571,8 +1627,8 @@ final class SessionUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--test-library", UUID().uuidString]
         app.launch()
-        app.buttons["library.quick"].tap()
-        applyLink("vnc://reader:fixture@host.invalid:5910", in: app)
+        XCTAssertTrue(app.buttons["library.quick"].waitForExistence(timeout: 10))
+        app.open(try XCTUnwrap(URL(string: "vnc://reader:fixture@host.invalid:5910")))
         let host = app.textFields["connection.host"]
         try await waitUntil { host.value as? String == "host.invalid" }
         XCTAssertEqual(app.textFields["connection.username"].value as? String, "reader")

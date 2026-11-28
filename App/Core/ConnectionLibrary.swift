@@ -6,17 +6,6 @@ import rootshellVNC
 import UIKit
 #endif
 
-enum DesktopAuthentication: Int, Codable, CaseIterable, Sendable {
-    case automatic = 0
-    case macUser = 1
-    case vncPassword = 2
-    case unauthenticated = 3
-    case raspberryPiRSA = 5
-
-    var usesPassword: Bool { self != .unauthenticated }
-    var usesUsername: Bool { self == .automatic || self == .macUser || self == .raspberryPiRSA }
-}
-
 enum ColorDepth: Int, Codable, CaseIterable, Sendable { case low = 8, medium = 16, full = 32 }
 enum DisplayLayout: String, Codable, CaseIterable, Sendable { case single, combined, virtualPair }
 
@@ -220,6 +209,15 @@ struct Computer: Codable, Identifiable, Equatable, Sendable {
     }
 
     var displayName: String { name.isEmpty ? endpoint.host : name }
+
+    func sharedConnectionURL(for client: DisplayClient) -> URL? {
+        let quality = display(for: client).resolved(for: client).quality
+        return ConnectionRoute.sharing(endpoint, sshPort: ssh?.port, server: ssh?.server,
+            options: .init(observe: viewOnly ? true : nil,
+                           quality: quality == .standard ? nil : quality,
+                           authentication: authentication == .automatic ? nil : authentication))
+    }
+
     var automaticCurtainMessage: String? { curtainsDisplayOnConnect == true ? (curtainMessage ?? "") : nil }
     var pointerModeOverride: RemotePointerMode? {
         get { inheritsPointerMode == true ? nil : (trackpad ? .trackpad : .direct) }

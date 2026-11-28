@@ -1273,10 +1273,7 @@ struct LibraryWindow: View {
                 }
             }
         }
-        let quality = item.display(for: .current).resolved(for: .current).quality
-        let options = ConnectionRoute.SharedOptions(observe: item.viewOnly ? true : nil,
-                                                    quality: quality == .standard ? nil : quality)
-        if let url = ConnectionRoute.sharing(item.endpoint, sshPort: item.ssh?.port, server: item.ssh?.server, options: options) {
+        if let url = item.sharedConnectionURL(for: .current) {
             ShareLink(item: url) { Label("链接", systemImage: "square.and.arrow.up") }
         }
         Button("删除", role: .destructive) { deletion = item }

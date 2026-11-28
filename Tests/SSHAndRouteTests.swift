@@ -189,6 +189,52 @@ final class SSHAndRouteTests: XCTestCase {
         XCTAssertNil(ConnectionRoute.sharing(local, sshPort: 0))
     }
 
+    func testSavedConnectionSharesItsExplicitAuthenticationWithoutTransferringCredentials() throws {
+        let desktop = try Endpoint(address: "[2001:db8::12]:5907")
+        for method in DesktopAuthentication.allCases {
+            var computer = Computer(endpoint: desktop)
+            computer.authentication = method
+            computer.username = method.usesUsername ? "fixture-desktop-user" : ""
+            computer.ssh = SSHSettings(port: 2243, username: "fixture-tunnel-user", usesKey: true,
+                                       keyName: "fixture-private-key", server: "gateway.fixture.invalid")
+            computer.viewOnly = true
+            computer.quality = .lossless
+
+            let url = try XCTUnwrap(computer.sharedConnectionURL(for: .iPad))
+            let route = try ConnectionRoute(url: url)
+            let authentication = method == .automatic ? nil : method
+            XCTAssertEqual(route, .sharedAddress(desktop, sshPort: 2243, server: "gateway.fixture.invalid",
+                options: .init(observe: true, quality: .lossless, authentication: authentication)))
+            let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+            XCTAssertNil(components.user)
+            XCTAssertNil(components.password)
+            XCTAssertFalse(url.absoluteString.contains("fixture-desktop-user"))
+            XCTAssertFalse(url.absoluteString.contains("fixture-tunnel-user"))
+            XCTAssertFalse(url.absoluteString.contains("fixture-private-key"))
+        }
+    }
+
+    func testAuthenticationOnlyLinksRoundTripAndRejectInvalidOrDuplicateValues() throws {
+        let endpoint = try Endpoint(address: "desktop.fixture.invalid:5914")
+        for method in DesktopAuthentication.allCases {
+            let options = ConnectionRoute.SharedOptions(authentication: method)
+            let url = try XCTUnwrap(ConnectionRoute.sharing(endpoint, sshPort: nil, options: options))
+            XCTAssertEqual(try ConnectionRoute(url: url), .sharedAddress(endpoint, sshPort: nil, server: nil, options: options))
+            guard case .sharedAddress(_, _, _, let parsed) = try ConnectionRoute(url: url) else {
+                return XCTFail("Missing explicit authentication")
+            }
+            var computer = Computer(endpoint: endpoint)
+            computer.authentication = try XCTUnwrap(parsed.authentication)
+            XCTAssertEqual(computer.authentication, method)
+        }
+        for invalid in ["auth=unknown", "auth=", "auth=mac-user&auth=none",
+                        "auth=none&user=viewer", "auth=none&password=secret",
+                        "auth=raspberry-pi&ssh=0"] {
+            let url = try XCTUnwrap(URL(string: "desklink://desktop.fixture.invalid?" + invalid))
+            XCTAssertThrowsError(try ConnectionRoute(url: url), invalid)
+        }
+    }
+
     func testShortcutAndHostLinksRemainDistinct() throws {
         let id = UUID()
         XCTAssertEqual(try ConnectionRoute(url: ConnectionRoute.savedURL(id)), .saved(id))
