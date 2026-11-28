@@ -40,6 +40,59 @@ final class AutomaticCurtainTests: XCTestCase {
         XCTAssertEqual(final.count, 2)
     }
 
+    func testUnconfirmedAutomaticCurtainRetriesAfterReturningFromLoginWindow() async throws {
+        let note = "维护中 🔒"
+        let packet = Data([12, 0, 0, 0, 0, UInt8(note.utf8.count)]) + Data(note.utf8)
+        let (session, peer) = try await connect(message: note)
+        defer { session.disconnect() }
+
+        await peer.announceDesktop(flags: 0x06)
+        try await waitUntil { await peer.requests.count == 1 }
+
+        await peer.announceDesktop(flags: 0x14) // Login Window, curtain unavailable.
+        try await waitUntil { !session.supportsCurtainMode }
+        let atLogin = await peer.requests
+        XCTAssertEqual(atLogin, [packet])
+        XCTAssertFalse(session.curtainChangeFailed)
+
+        await peer.announceDesktop(flags: 0x06)
+        try await waitUntil { await peer.requests.count == 2 }
+        let afterLogin = await peer.requests
+        XCTAssertEqual(afterLogin, [packet, packet])
+        XCTAssertFalse(session.isCurtained)
+
+        await peer.announceDesktop(flags: 0x02)
+        try await waitUntil { session.isCurtained }
+        await peer.announceDesktop(flags: 0x14)
+        try await waitUntil { !session.supportsCurtainMode }
+        await peer.announceDesktop(flags: 0x06)
+        try await waitUntil { session.supportsCurtainMode && !session.isCurtained }
+        try await Task.sleep(for: .milliseconds(100))
+        let final = await peer.requests
+        XCTAssertEqual(final, [packet, packet])
+    }
+
+    func testManualCurtainRequestSupersedesUnconfirmedAutomaticCurtain() async throws {
+        let (session, peer) = try await connect(message: "Automatic")
+        defer { session.disconnect() }
+
+        await peer.announceDesktop(flags: 0x06)
+        try await waitUntil { await peer.requests.count == 1 }
+
+        let manualNote = "Manual"
+        session.setCurtainMode(true, message: manualNote)
+        try await waitUntil { await peer.requests.count == 2 }
+        await peer.announceDesktop(flags: 0x14)
+        try await waitUntil { !session.supportsCurtainMode }
+        await peer.announceDesktop(flags: 0x06)
+        try await waitUntil { session.supportsCurtainMode }
+        try await Task.sleep(for: .milliseconds(100))
+
+        let final = await peer.requests
+        XCTAssertEqual(final.count, 2)
+        XCTAssertEqual(final.last, Data([12, 0, 0, 0, 0, UInt8(manualNote.utf8.count)]) + Data(manualNote.utf8))
+    }
+
     func testAlreadyPrivateDesktopDoesNotGetAnotherCurtainRequest() async throws {
         let (session, peer) = try await connect(message: "")
         defer { session.disconnect() }

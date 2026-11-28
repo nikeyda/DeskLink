@@ -879,8 +879,20 @@ public final class VNCSession {
     /// that budget reports false failures on changes that did work.
     static let curtainConfirmationTimeoutNanoseconds: UInt64 = 20_000_000_000
 
+    private enum CurtainRequest: Equatable {
+        case automatic
+        case manual(Bool)
+
+        var enabled: Bool {
+            switch self {
+            case .automatic: true
+            case .manual(let enabled): enabled
+            }
+        }
+    }
+
     @ObservationIgnored
-    private var pendingCurtainRequest: Bool?
+    private var pendingCurtainRequest: CurtainRequest?
     @ObservationIgnored
     private var curtainConfirmationTask: Task<Void, Never>?
     @ObservationIgnored
@@ -2193,7 +2205,7 @@ public final class VNCSession {
               transportSession != nil,
               supportsCurtainMode else { return }
         didHandleAutomaticCurtain = true
-        sendCurtainRequest(enabled, message: message)
+        sendCurtainRequest(.manual(enabled), message: message)
     }
 
     private func applyAutomaticCurtainIfReady() {
@@ -2204,22 +2216,21 @@ public final class VNCSession {
             didHandleAutomaticCurtain = true
         } else if state.curtainToggleAvailable {
             didHandleAutomaticCurtain = true
-            sendCurtainRequest(true, message: message)
+            sendCurtainRequest(.automatic, message: message)
         }
     }
 
-    private func sendCurtainRequest(_ enabled: Bool, message: String) {
+    private func sendCurtainRequest(_ request: CurtainRequest, message: String) {
+        let enabled = request.enabled
         curtainChangeFailed = false
         // The server only re-announces DisplayInfo2 when something changes, so
         // a request that is already satisfied would never be confirmed and
         // would raise a false privacy warning. Still send it: the note on a
         // curtained screen may differ.
         if isCurtained != enabled {
-            startCurtainConfirmationWatchdog(expecting: enabled)
+            startCurtainConfirmationWatchdog(for: request)
         } else {
-            curtainConfirmationTask?.cancel()
-            curtainConfirmationTask = nil
-            pendingCurtainRequest = nil
+            clearPendingCurtainRequest()
         }
         enqueueInput(.curtain(enabled: enabled, message: message))
     }
@@ -2233,26 +2244,30 @@ public final class VNCSession {
     /// server declines is indistinguishable from one still in flight. Give the
     /// state change a grace period, then report the mismatch rather than
     /// leaving the toggle showing a privacy guarantee that does not hold.
-    private func startCurtainConfirmationWatchdog(expecting enabled: Bool) {
+    private func startCurtainConfirmationWatchdog(for request: CurtainRequest) {
         curtainConfirmationTask?.cancel()
-        pendingCurtainRequest = enabled
+        pendingCurtainRequest = request
         curtainConfirmationTask = Task { [weak self] in
             try? await Task.sleep(
                 nanoseconds: Self.curtainConfirmationTimeoutNanoseconds)
             guard !Task.isCancelled, let self else { return }
-            guard self.pendingCurtainRequest == enabled else { return }
+            guard self.pendingCurtainRequest == request else { return }
             self.pendingCurtainRequest = nil
             self.curtainConfirmationTask = nil
             self.curtainChangeFailed = true
             self.logger.warning(
-                "Curtain mode change to \(enabled) was not confirmed by the server")
+                "Curtain mode change to \(request.enabled) was not confirmed by the server")
         }
     }
 
-    private func resetCurtainState() {
+    private func clearPendingCurtainRequest() {
         curtainConfirmationTask?.cancel()
         curtainConfirmationTask = nil
         pendingCurtainRequest = nil
+    }
+
+    private func resetCurtainState() {
+        clearPendingCurtainRequest()
         curtainServerState = nil
         didHandleAutomaticCurtain = false
         supportsCurtainMode = false
@@ -3383,10 +3398,11 @@ public final class VNCSession {
         if isCurtained != state.curtained {
             isCurtained = state.curtained
         }
-        if let requested = pendingCurtainRequest, requested == state.curtained {
-            curtainConfirmationTask?.cancel()
-            curtainConfirmationTask = nil
-            pendingCurtainRequest = nil
+        if pendingCurtainRequest == .automatic, state.requiresLogin {
+            clearPendingCurtainRequest()
+            didHandleAutomaticCurtain = false
+        } else if let request = pendingCurtainRequest, request.enabled == state.curtained {
+            clearPendingCurtainRequest()
             curtainChangeFailed = false
         }
         applyAutomaticCurtainIfReady()
