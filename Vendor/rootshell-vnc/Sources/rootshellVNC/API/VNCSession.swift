@@ -919,6 +919,11 @@ public final class VNCSession {
     private var monitorOverride: VNCMonitorSelection?
     public private(set) var isSwitchingMonitor = false
 
+    /// A single reported display and a connection that has not reported its layout both have no selectable IDs.
+    public var hasReportedMonitorLayout: Bool {
+        monitorTopology == .virtualVideo || !remoteDisplayRegionOrder.isEmpty
+    }
+
     public var selectableMonitorIDs: [UInt32] {
         if monitorTopology == .virtualVideo { return [1, 2] }
         guard configuration.displaySizingMode == .remoteDisplay,

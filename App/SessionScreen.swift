@@ -40,6 +40,9 @@ struct SessionScreen: View {
     private struct DisplayLayoutState: Equatable {
         let topology: VNCMonitorTopology
         let ids: [UInt32]
+        let reported: Bool
+        let connected: Bool
+        let locked: Bool
     }
     #if targetEnvironment(macCatalyst)
     @State private var macKeyboard = VNCKeyboardCapture()
@@ -47,6 +50,9 @@ struct SessionScreen: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
     private var monitorGroup: MacMonitorWindows.Group? { monitorWindows.groups[request.id] }
+    private var presentingMonitorGroup: MacMonitorWindows.Group? {
+        session.hasPresentedCurrentPicture && !session.hasReportedMonitorLayout ? nil : monitorGroup
+    }
     #endif
     #if !targetEnvironment(macCatalyst)
     @State private var mirrorAvailable = false
@@ -341,23 +347,27 @@ struct SessionScreen: View {
         }
         .onChange(of: session.highPerformanceFallbackReason) { _, _ in recordVideoFallback() }
         .onChange(of: transfers, initial: true, syncTransferPermission)
-        .task(id: DisplayLayoutState(topology: session.monitorTopology, ids: session.selectableMonitorIDs)) {
-            guard !stopped, !closing else { return }
-            #if targetEnvironment(macCatalyst)
-            if let group = monitorGroup, group.topology != session.monitorTopology || session.selectableMonitorIDs.isEmpty {
-                closeMonitorWindows()
-            }
-            #endif
-            guard !session.selectableMonitorIDs.isEmpty else { return }
+        .task(id: DisplayLayoutState(topology: session.monitorTopology, ids: session.selectableMonitorIDs,
+                                     reported: session.hasReportedMonitorLayout,
+                                     connected: session.connectionState.isConnected, locked: privacy.locked)) {
+            guard !Task.isCancelled, !stopped, !closing, !privacy.locked, session.connectionState.isConnected else { return }
             let saved = (library.existingComputer(matching: request.computer) ?? request.computer).display(for: .current)
             #if targetEnvironment(macCatalyst)
-            let restoreWindows = saved.rememberMonitor != false && session.monitorTopology == .standard
-            if let windows = monitorGroup?.children ?? (restoreWindows ? saved.windowedMonitors : nil), !windows.isEmpty {
-                await openMonitorWindows(windows, remember: false)
-                return
+            if session.hasReportedMonitorLayout, let group = monitorGroup, group.topology != session.monitorTopology {
+                closeMonitorWindows()
+            }
+            if let windows = MacMonitorWindows.desiredChildren(session: session, locked: privacy.locked,
+                                                              group: monitorGroup, saved: saved) {
+                if windows.isEmpty {
+                    closeMonitorWindows()
+                } else {
+                    await openMonitorWindows(windows, remember: false)
+                    return
+                }
             }
             #endif
-            guard session.monitorTopology != .virtualVideo, saved.rememberMonitor != false, let choice = saved.lastMonitor else { return }
+            guard !session.selectableMonitorIDs.isEmpty, session.monitorTopology != .virtualVideo,
+                  saved.rememberMonitor != false, let choice = saved.lastMonitor else { return }
             do { try await session.selectMonitor(choice) } catch { if !Task.isCancelled { monitorError = error.localizedDescription } }
         }
         .alert("切换显示器失败", isPresented: Binding(get: { monitorError != nil }, set: { if !$0 { monitorError = nil } })) {
@@ -561,8 +571,8 @@ struct SessionScreen: View {
 
     @ViewBuilder private func sessionPicture(deck: DeskSessionDeck?, availableSize: CGSize) -> some View {
         #if targetEnvironment(macCatalyst)
-        if let group = monitorGroup {
-            if let region = session.windowMonitorRegion(for: group.primary) {
+        if let group = presentingMonitorGroup {
+            if let region = group.region(for: group.primary) {
                 if observing { VNCMonitorPicture(session: session, region: region) }
                 else { remoteDesktop.showingMonitor(in: region).ignoresSafeArea(.keyboard) }
             } else if session.connectionState.isConnected, session.hasPresentedCurrentPicture {
@@ -660,8 +670,8 @@ struct SessionScreen: View {
 
     private func withScreenshotRegion(_ capture: (CGRect?) -> Void) {
         #if targetEnvironment(macCatalyst)
-        if let group = monitorGroup {
-            guard let region = session.windowMonitorRegion(for: group.primary) else { return }
+        if let group = presentingMonitorGroup {
+            guard let region = group.region(for: group.primary) else { return }
             capture(region)
             return
         }
@@ -690,17 +700,18 @@ struct SessionScreen: View {
         let available = session.selectableMonitorIDs
         let children = available.dropFirst().filter { displays.contains($0) }
         guard !privacy.locked, !closing, !stopped, let primary = available.first, !children.isEmpty else {
-            if children.isEmpty { closeMonitorWindows() }
             return
         }
+        let previous = monitorGroup?.children ?? []
         do {
             guard try await session.selectMonitor(.all), !Task.isCancelled, !privacy.locked,
                   !closing, !stopped, session.connectionState.isConnected,
                   topology == session.monitorTopology, available == session.selectableMonitorIDs else { return }
-            let previous = monitorGroup?.children ?? []
+            guard remember || previous == (monitorGroup?.children ?? []) else { return }
+            let focusedChild = monitorGroup?.focusedChild.flatMap { children.contains($0) ? $0 : nil }
             let group = MacMonitorWindows.Group(session: session, computer: request.computer, library: library,
                                                 primary: primary, children: children, observing: observing,
-                                                focusedChild: monitorGroup?.focusedChild, sessionMenu: { macMenu }, topology: topology)
+                                                focusedChild: focusedChild, sessionMenu: { macMenu }, topology: topology)
             monitorWindows.set(group, for: request.id)
             for id in previous where !children.contains(id) {
                 dismissWindow(id: MonitorWindowID.scene, value: group.window(id, connection: request.id))

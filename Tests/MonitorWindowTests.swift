@@ -230,6 +230,67 @@ import RFBProtocol
     }
 
     #if targetEnvironment(macCatalyst)
+    func testMonitorWindowsWaitForReplacementLayoutAndAuthenticationBeforeRestoring() async throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let library = ConnectionLibrary(file: folder.appending(path: "library.json"))
+        var computer = Computer(endpoint: try Endpoint(address: "reconnect.fixture.invalid"))
+        computer.layout = .combined
+        var saved = computer.display(for: .mac)
+        saved.lastMonitor = .all
+        saved.windowedMonitors = [2, 3]
+        let session = VNCSession(configuration: computer.configuration)
+        let left = RFBScreenLayout(id: 1, x: 0, y: 0, width: 100, height: 80, flags: 0)
+        let center = RFBScreenLayout(id: 2, x: 100, y: 0, width: 100, height: 80, flags: 0)
+        let right = RFBScreenLayout(id: 3, x: 200, y: 0, width: 100, height: 80, flags: 0)
+        func receive(_ screens: [RFBScreenLayout]) async {
+            session.framebufferWidth = 100 * screens.count
+            session.framebufferHeight = 80
+            await session.updateRemoteDisplayRegions(screens)
+        }
+
+        session.connectionState = .connected
+        await receive([left, center, right])
+        let group = MacMonitorWindows.Group(session: session, computer: computer, library: library,
+                                            primary: 1, children: [2, 3], observing: false, focusedChild: 3)
+        let originalRight = group.window(3, connection: computer.id)
+        func recover(locked: Bool = false) -> [UInt32]? {
+            MacMonitorWindows.desiredChildren(session: session, locked: locked, group: group, saved: saved)
+        }
+        XCTAssertEqual(group.region(for: 3), CGRect(x: 200, y: 0, width: 100, height: 80))
+        XCTAssertEqual(recover(), [2, 3])
+
+        session.connectionState = .reconnecting(attempt: 1, delay: 0)
+        XCTAssertNil(recover(), "The retired transport must not update the window group")
+        XCTAssertEqual(group.region(for: 1), CGRect(x: 0, y: 0, width: 100, height: 80),
+                       "The primary window can keep its last crop until the old layout is cleared")
+        session.disconnect()
+        XCTAssertFalse(session.hasReportedMonitorLayout)
+        XCTAssertNil(group.region(for: 1))
+        session.connectionState = .connected
+        XCTAssertNil(recover(), "A connected replacement without a layout must not close any windows")
+
+        await receive([left, center, right])
+        XCTAssertNil(recover(locked: true))
+        XCTAssertNil(MacMonitorWindows.desiredChildren(session: session, locked: true, group: nil, saved: saved))
+        XCTAssertEqual(recover(), [2, 3])
+        XCTAssertEqual(MacMonitorWindows.desiredChildren(session: session, locked: false, group: nil, saved: saved), [2, 3])
+        XCTAssertEqual(group.window(3, connection: computer.id), originalRight)
+        XCTAssertEqual(group.region(for: 3), CGRect(x: 200, y: 0, width: 100, height: 80))
+
+        await receive([left, center])
+        XCTAssertEqual(recover(), [2])
+        XCTAssertNil(group.region(for: 3))
+        await receive([left])
+        XCTAssertTrue(session.hasReportedMonitorLayout)
+        XCTAssertEqual(recover(), [], "A reported single display should close the secondary windows")
+
+        saved.rememberMonitor = false
+        await receive([left, center, right])
+        XCTAssertEqual(recover(), [2, 3], "An open group survives a retry even with cross-session history disabled")
+        XCTAssertNil(MacMonitorWindows.desiredChildren(session: session, locked: false, group: nil, saved: saved))
+    }
+
     func testClosingOneMonitorPersistsTheOthersAndDisconnectPreservesRestoration() throws {
         let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: dir) }

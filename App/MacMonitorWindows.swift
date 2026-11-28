@@ -22,6 +22,11 @@ final class MacMonitorWindows {
         var sessionMenu: (() -> MacSessionMenuActions?)?
         var topology = VNCMonitorTopology.standard
 
+        @MainActor func region(for display: UInt32) -> CGRect? {
+            guard topology == session.monitorTopology else { return nil }
+            return session.windowMonitorRegion(for: display)
+        }
+
         func window(_ display: UInt32, connection: UUID) -> MonitorWindowID {
             let virtual: Bool? = switch topology {
             case .standard: nil
@@ -33,6 +38,17 @@ final class MacMonitorWindows {
     }
 
     private(set) var groups: [UUID: Group] = [:]
+
+    /// Nil defers changes until the replacement connection has published its layout.
+    static func desiredChildren(session: VNCSession, locked: Bool, group: Group?,
+                                saved: DesktopDisplayPreferences) -> [UInt32]? {
+        guard session.connectionState.isConnected, session.hasReportedMonitorLayout, !locked else { return nil }
+        if let group, group.topology != session.monitorTopology { return [] }
+        let restoresSavedWindows = saved.rememberMonitor != false && session.monitorTopology == .standard
+        guard let requested = group?.children ?? (restoresSavedWindows ? saved.windowedMonitors : nil),
+              !requested.isEmpty else { return nil }
+        return session.selectableMonitorIDs.dropFirst().filter { requested.contains($0) }
+    }
 
     func set(_ group: Group, for connection: UUID) { groups[connection] = group }
 
@@ -104,7 +120,7 @@ struct MacMonitorWindow: View {
     }
 
     private func captureScreenshot() {
-        guard !privacy.locked, let id, let group, let region = group.session.windowMonitorRegion(for: id.display) else { return }
+        guard !privacy.locked, let id, let group, let region = group.region(for: id.display) else { return }
         screenshot.capture(group.session, region: region)
     }
 
@@ -128,7 +144,7 @@ struct MacMonitorWindow: View {
             if privacy.locked {
                 PrivacyGate(privacy: privacy)
             } else if let id, let group {
-                if group.session.connectionState.isConnected, let region = group.session.windowMonitorRegion(for: id.display) {
+                if group.session.connectionState.isConnected, let region = group.region(for: id.display) {
                     if group.observing {
                         VNCMonitorPicture(session: group.session, region: region)
                     } else {
@@ -136,6 +152,11 @@ struct MacMonitorWindow: View {
                             .modifier(RemoteDictationPresentation(session: group.session, presented: $showsDictation,
                                                                  canControl: { self.group?.observing == false && !privacy.locked }))
                     }
+                } else if group.session.connectionState.canConnect {
+                    ContentUnavailableView("已断开", systemImage: "rectangle.slash")
+                } else if group.session.connectionState.isConnected, group.session.hasPresentedCurrentPicture,
+                          !group.session.hasReportedMonitorLayout {
+                    ContentUnavailableView("显示器暂不可用", systemImage: "display")
                 } else { ProgressView("等待远程画面…") }
             } else {
                 ContentUnavailableView("连接已结束", systemImage: "display")
