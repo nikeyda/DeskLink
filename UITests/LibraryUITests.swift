@@ -301,10 +301,21 @@ final class LibraryUITests: XCTestCase {
         #endif
         attachLibraryScreenshot(app, name: "Tailscale discovery setup")
         link.tap()
-        XCTAssertTrue(app.textFields["tailnet.login.tailnet"].firstMatch.waitForExistence(timeout: 8))
-        XCTAssertTrue(app.textFields["tailnet.login.client"].firstMatch.exists)
-        XCTAssertTrue(app.secureTextFields["tailnet.login.secret"].firstMatch.exists)
-        XCTAssertFalse(app.buttons["tailnet.login.submit"].firstMatch.isEnabled)
+        let tailnet = app.textFields["tailnet.login.tailnet"].firstMatch
+        let secret = app.secureTextFields["tailnet.login.secret"].firstMatch
+        let submit = app.buttons["tailnet.login.submit"].firstMatch
+        XCTAssertTrue(tailnet.waitForExistence(timeout: 8))
+        XCTAssertTrue(secret.exists)
+        XCTAssertTrue(submit.exists)
+        XCTAssertFalse(app.textFields["tailnet.login.client"].firstMatch.exists)
+        XCTAssertFalse(submit.isEnabled)
+        attachLibraryScreenshot(app, name: "Tailscale two-field authorization")
+        tailnet.tap()
+        tailnet.typeText("fixture.example")
+        XCTAssertFalse(submit.isEnabled)
+        secret.tap()
+        secret.typeText("tskey-client-fixture-id-proof")
+        XCTAssertTrue(submit.wait(for: \.isEnabled, toEqual: true, timeout: 6))
         app.buttons["取消"].firstMatch.tap()
         XCTAssertTrue(link.waitForExistence(timeout: 5))
     }

@@ -6,7 +6,9 @@ struct TailnetAccount: Codable, Equatable, Sendable {
     let tailnet: String
     let clientID: String
 
-    init(tailnet: String, clientID: String) throws {
+    // Tailscale's public CLI uses a placeholder client ID when given an OAuth secret.
+    // Retain the ID on saved accounts so previously stored Keychain items still resolve.
+    init(tailnet: String, clientID: String = "telescope") throws {
         let name = tailnet.trimmingCharacters(in: .whitespacesAndNewlines)
         let id = clientID.trimmingCharacters(in: .whitespacesAndNewlines)
         let valid = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-_@")
@@ -15,6 +17,14 @@ struct TailnetAccount: Codable, Equatable, Sendable {
               !id.isEmpty, id.utf8.count <= 256, id.unicodeScalars.allSatisfy(valid.contains) else { throw URLError(.badURL) }
         self.tailnet = name
         self.clientID = id
+    }
+
+    static func oauthSecret(from input: String) -> String? {
+        let secret = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefix = "tskey-client-"
+        guard secret.hasPrefix(prefix), secret.utf8.count > prefix.utf8.count,
+              secret.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else { return nil }
+        return secret
     }
 
     var devicesURL: URL {

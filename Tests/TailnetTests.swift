@@ -101,14 +101,27 @@ final class TailnetTests: XCTestCase {
         XCTAssertTrue(value.contains("scope=devices%3Acore%3Aread"))
     }
 
+    func testPastedOAuthSecretNeedsNoClientIDAndRequestsOnlyDeviceReadAccess() throws {
+        for invalid in ["", "tskey-client-", "tskey-api-fixture", "tskey-auth-fixture", "tskey-client-key part"] {
+            XCTAssertNil(TailnetAccount.oauthSecret(from: invalid))
+        }
+        let proof = try XCTUnwrap(TailnetAccount.oauthSecret(from: "  tskey-client-fixture-id-proof\n"))
+        let account = try TailnetAccount(tailnet: " fixture.example\n")
+        let request = try account.tokenRequest(secret: proof)
+        let body = String(decoding: try XCTUnwrap(request.httpBody), as: UTF8.self)
+        XCTAssertEqual(body, "grant_type=client_credentials&client_id=telescope&client_secret=tskey-client-fixture-id-proof&scope=devices%3Acore%3Aread")
+        XCTAssertEqual(account.devicesURL.path, "/api/v2/tailnet/fixture.example/devices")
+    }
+
     @MainActor func testReadOnlyAccountListsAuthorizedDevicesWithoutPersistingTheLogin() async throws {
         let domain = "DeskLinkTailnetTests." + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
         defer { defaults.removePersistentDomain(forName: domain) }
         let service = DirectoryFixture()
         let directory = TailnetDirectory(defaults: defaults) { try await service.reply(to: $0) }
-        let account = try TailnetAccount(tailnet: "fixture.example", clientID: "fixture")
-        try await directory.link(account, secret: "generated-credential", remember: false)
+        let account = try TailnetAccount(tailnet: "fixture.example")
+        let proof = try XCTUnwrap(TailnetAccount.oauthSecret(from: "tskey-client-fixture-id-proof"))
+        try await directory.link(account, secret: proof, remember: false)
         XCTAssertEqual(directory.devices.map(\.id), ["a"])
         XCTAssertEqual(directory.devices.first?.computer?.endpoint.address, "[fd7a:115c:a1e0::1]")
         let methods = await service.methods
@@ -116,6 +129,9 @@ final class TailnetTests: XCTestCase {
         XCTAssertNil(defaults.data(forKey: "tailnet.account"))
         XCTAssertTrue(directory.widgetComputers.isEmpty)
         XCTAssertFalse(directory.loading)
+        await directory.refresh()
+        XCTAssertNil(directory.error)
+        XCTAssertEqual(directory.devices.map(\.id), ["a"])
         try directory.unlink()
         XCTAssertNil(directory.account)
         XCTAssertTrue(directory.devices.isEmpty)
@@ -204,7 +220,11 @@ final class TailnetTests: XCTestCase {
         XCTAssertEqual(directory.visibleDevices.map(\.hostname), ["Office"])
         XCTAssertTrue(directory.hiddenDevices.isEmpty)
         XCTAssertEqual(directory.widgetComputers.map(\.id), [desk.id])
-        let reopened = TailnetDirectory(defaults: defaults)
+        let reopened = TailnetDirectory(defaults: defaults) { try await service.reply(to: $0) }
+        XCTAssertEqual(reopened.account, account)
+        await reopened.refresh()
+        XCTAssertNil(reopened.error)
+        XCTAssertEqual(reopened.visibleDevices.map(\.hostname), ["Office"])
         let resolved = try XCTUnwrap(reopened.computerForWidget(desk.id))
         XCTAssertEqual(resolved.displayName, "Office")
         XCTAssertEqual(resolved.endpoint.address, "100.64.0.22")

@@ -381,27 +381,30 @@ private struct TailnetLogin: View {
     let directory: TailnetDirectory
     @Environment(\.dismiss) private var dismiss
     @State private var tailnet = ""
-    @State private var identifier = ""
     @State private var secret = ""
     @State private var remember = false
     @State private var error: String?
     @State private var login: Task<Void, Never>?
+
+    private var account: TailnetAccount? { try? TailnetAccount(tailnet: tailnet) }
+    private var oauthSecret: String? { TailnetAccount.oauthSecret(from: secret) }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
                     TextField("Tailnet ID", text: $tailnet).accessibilityIdentifier("tailnet.login.tailnet")
-                    TextField("Client ID", text: $identifier).accessibilityIdentifier("tailnet.login.client")
-                    SecureField("Client Secret", text: $secret).accessibilityIdentifier("tailnet.login.secret")
+                    SecureField("Client Secret", text: $secret)
+                        .accessibilityIdentifier("tailnet.login.secret")
                     Toggle("记住凭据", isOn: $remember)
                 } footer: {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("请在 Tailscale 管理控制台创建具有设备基本信息读取权限的 OAuth 客户端。")
+                        Text("在 Tailscale 管理控制台找到 Tailnet ID，再创建具有「设备 → 核心 → 读取」权限的 OAuth 凭据。粘贴以 tskey-client- 开头的 Client Secret。")
                         Link("查看 Tailscale 设置说明", destination: URL(string: "https://tailscale.com/docs/features/oauth-clients")!)
                     }
                 }
-                if directory.loading { ProgressView() }
+                .disabled(login != nil)
+                if login != nil { ProgressView("正在读取设备…") }
                 if let error { Text(error).foregroundStyle(.red) }
             }
             .autocorrectionDisabled()
@@ -410,22 +413,27 @@ private struct TailnetLogin: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("连接") {
-                        login = Task {
-                            do {
-                                let account = try TailnetAccount(tailnet: tailnet, clientID: identifier)
-                                try await directory.link(account, secret: secret, remember: remember)
-                                dismiss()
-                            } catch is CancellationError {
-                            } catch { self.error = TailnetDirectory.authErrorMessage(error) }
-                        }
-                    }
-                    .disabled(directory.loading || secret.isEmpty || (try? TailnetAccount(tailnet: tailnet, clientID: identifier)) == nil)
-                    .accessibilityIdentifier("tailnet.login.submit")
+                    Button("关联", action: linkDirectory)
+                        .disabled(login != nil || directory.loading || account == nil || oauthSecret == nil)
+                        .accessibilityIdentifier("tailnet.login.submit")
                 }
             }
         }
-        .onAppear { tailnet = directory.account?.tailnet ?? ""; identifier = directory.account?.clientID ?? "" }
+        .onAppear { tailnet = directory.account?.tailnet ?? "" }
         .onDisappear { login?.cancel() }
+    }
+
+    private func linkDirectory() {
+        guard login == nil, !directory.loading, let account, let oauthSecret else { return }
+        let remember = remember
+        error = nil
+        login = Task {
+            defer { login = nil }
+            do {
+                try await directory.link(account, secret: oauthSecret, remember: remember)
+                dismiss()
+            } catch is CancellationError {
+            } catch { self.error = TailnetDirectory.authErrorMessage(error) }
+        }
     }
 }
