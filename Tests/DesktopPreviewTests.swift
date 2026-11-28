@@ -45,7 +45,7 @@ final class DesktopPreviewTests: XCTestCase {
         window.isHidden = false
         defer { window.isHidden = true; window.rootViewController = nil }
         for visible in [true, false] {
-            if !visible { library.clearPreview(for: computer.id) }
+            if !visible { try library.clearPreview(for: computer.id) }
             let deadline = ContinuousClock.now + .seconds(6)
             repeat {
                 try await Task.sleep(for: .milliseconds(120))
@@ -63,6 +63,44 @@ final class DesktopPreviewTests: XCTestCase {
                 if ContinuousClock.now >= deadline { XCTFail("Unexpected preview visibility: " + String(visible)); return }
             } while true
         }
+    }
+
+    func testFailedDeletionKeepsThePreviewAndPreventsRebindingTheSavedConnection() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        let file = directory.appending(path: "library.json")
+        let previews = file.deletingPathExtension().appendingPathExtension("previews")
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: previews.path)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        var computer = Computer(name: "Preview Fixture", endpoint: try Endpoint(address: "old.fixture.invalid"))
+        computer.savesDisconnectScreenshot = true
+        XCTAssertTrue(ConnectionLibrary(file: file).save(computer))
+        try FileManager.default.createDirectory(at: previews, withIntermediateDirectories: true)
+        let image = previews.appending(path: computer.id.uuidString).appendingPathExtension("png")
+        try Data([0x42]).write(to: image)
+        let library = ConnectionLibrary(file: file)
+        let original = try XCTUnwrap(library.previews[computer.id])
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: previews.path)
+        XCTAssertThrowsError(try library.clearPreview(for: computer.id))
+        XCTAssertEqual(library.previews[computer.id], original)
+        XCTAssertEqual(try Data(contentsOf: image), Data([0x42]))
+        var replacement = computer
+        replacement.endpoint = try Endpoint(address: "new.fixture.invalid")
+        XCTAssertFalse(library.save(replacement))
+        XCTAssertEqual(library.archive.computers.first?.endpoint, computer.endpoint)
+        XCTAssertEqual(ConnectionLibrary(file: file).archive.computers.first?.endpoint, computer.endpoint)
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: previews.path)
+        try library.clearPreview(for: computer.id)
+        try library.clearPreview(for: computer.id)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: image.path))
+        let reopened = ConnectionLibrary(file: file)
+        XCTAssertNil(reopened.previews[computer.id])
+        XCTAssertEqual(reopened.archive.computers.first?.savesDisconnectScreenshot, true)
+        XCTAssertTrue(reopened.save(replacement))
+        XCTAssertEqual(ConnectionLibrary(file: file).archive.computers.first?.endpoint, replacement.endpoint)
     }
 
     private func containsChart(_ shot: UIImage) throws -> Bool {

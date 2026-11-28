@@ -531,12 +531,16 @@ final class ConnectionLibrary {
         } catch { errorMessage = error.localizedDescription }
     }
 
-    func clearPreview(for id: UUID) {
+    func clearPreview(for id: UUID) throws {
         pendingPreviews.removeValue(forKey: id)?.cancel()
         do { try FileManager.default.removeItem(at: previewURL(for: id)) }
         catch let error as CocoaError where error.code == .fileNoSuchFile { }
-        catch { errorMessage = error.localizedDescription }
+        catch { throw PreviewRemovalError() }
         previews[id] = nil
+    }
+
+    private struct PreviewRemovalError: LocalizedError {
+        var errorDescription: String? { String(localized: "无法清除本机的桌面快照。请重试。") }
     }
 
     @discardableResult
@@ -693,16 +697,23 @@ final class ConnectionLibrary {
                                   failures: diagnosticFailures())
     }
 
+    private func clearInvalidatedPreviews(in next: LibraryArchive) throws {
+        func configured(in archive: LibraryArchive) -> [UUID: Computer] {
+            Dictionary(uniqueKeysWithValues: archive.computers.filter { $0.saved && $0.savesDisconnectScreenshot == true }
+                .map { ($0.id, $0) })
+        }
+        let previous = configured(in: archive)
+        let updated = configured(in: next)
+        for id in Set(previous.keys).union(updated.keys) {
+            if let old = previous[id], let new = updated[id], new.hasSameDestination(as: old) { continue }
+            try clearPreview(for: id)
+        }
+    }
+
     private func installArchive(_ next: LibraryArchive) {
         let destinations = Dictionary(uniqueKeysWithValues: next.computers.map { ($0.id, $0) })
         var retained = lastObserved
         let previousRetryCount = videoRetryDates.count
-        for previous in archive.computers where previous.savesDisconnectScreenshot == true {
-            let next = destinations[previous.id]
-            if next?.saved != true || next?.savesDisconnectScreenshot != true || next?.hasSameDestination(as: previous) != true {
-                clearPreview(for: previous.id)
-            }
-        }
         for previous in archive.computers {
             if let updated = destinations[previous.id], updated.hasSameDestination(as: previous) {
                 if updated.viewOnly != previous.viewOnly { retained.remove(previous.id) }
@@ -847,6 +858,7 @@ final class ConnectionLibrary {
                 try backups.capture(archive.encoded())
             }
             let data = try next.encoded()
+            try clearInvalidatedPreviews(in: next)
             try writePrimary(data)
             installArchive(next)
             if backup {
@@ -868,7 +880,9 @@ final class ConnectionLibrary {
         } else {
             try backups.capture(archive.encoded())
         }
-        try writePrimary(restored.encoded())
+        let data = try restored.encoded()
+        try clearInvalidatedPreviews(in: restored)
+        try writePrimary(data)
         installArchive(restored)
         loadFailed = false
         errorMessage = nil

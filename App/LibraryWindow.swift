@@ -1216,7 +1216,10 @@ struct LibraryWindow: View {
         Button(item.saved ? "编辑连接" : "保存") { editor = EditorRequest(purpose: .edit, computer: item) }
         if let preview = library.previews[item.id] {
             Button("查看上次桌面快照") { selectedPreview = preview }
-            Button("清除桌面快照", role: .destructive) { library.clearPreview(for: item.id) }
+            Button("清除桌面快照", role: .destructive) {
+                do { try library.clearPreview(for: item.id) }
+                catch { ownError = error.localizedDescription }
+            }
         }
         if item.saved {
             Button("复制连接") { editor = EditorRequest(purpose: .new, computer: library.archive.duplicate(of: item)) }

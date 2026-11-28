@@ -4,6 +4,95 @@ import XCTest
 @MainActor
 final class SessionUITests: XCTestCase {
     #if !targetEnvironment(macCatalyst)
+    func testClearingASavedDesktopPreviewFromConnectionSettingsSurvivesRelaunch() async throws {
+        continueAfterFailure = false
+        let desktop = LocalTestDisplay()
+        let port = try await desktop.start()
+        defer { desktop.stop() }
+        let app = XCUIApplication()
+        app.launchArguments = ["--test-library", UUID().uuidString, "-AppleLanguages", "(zh-Hans)"]
+        app.launch()
+        XCTAssertTrue(app.buttons["library.new"].firstMatch.waitForExistence(timeout: 10))
+        let id = UUID().uuidString
+        let file = FileManager.default.temporaryDirectory.appending(path: id + ".screens")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let archive = """
+            {"filename":"Preview fixture","folders":[],"screens":[{
+            "version":6,"id":"\(id)","type":{"saved":{}},"name":"Preview Fixture",
+            "hostname":"127.0.0.1","port":\(port),"clientProtocol":"vnc",
+            "users":[],"authenticationMethod":3,"operatingSystem":6,"startInObserveMode":false,
+            "onDisconnectAction":0,"grabScreenshot":true,"useSharedClipboard":false,"useSecureConnection":false}]}
+            """
+        try Data(archive.utf8).write(to: file)
+        app.open(file)
+        let imported = app.alerts["导入完成"]
+        XCTAssertTrue(imported.waitForExistence(timeout: 10))
+        imported.buttons["完成"].tap()
+
+        let row = app.buttons["library.computer." + id].firstMatch
+        func makePreview() async throws {
+            let frames = desktop.frameCount
+            XCTAssertTrue(row.waitForExistence(timeout: 8))
+            row.tap()
+            let close = app.buttons["session.close"].firstMatch
+            try await waitUntil { desktop.frameCount > frames && close.isHittable && Self.hasColorChart(app.screenshot().image) }
+            let count = desktop.closedConnections
+            desktop.expectsClientDisconnect = true
+            close.tap()
+            try await waitUntil { desktop.closedConnections > count && row.isHittable }
+            desktop.expectsClientDisconnect = false
+        }
+        let form = app.collectionViews["connection.form"].firstMatch
+        let capture = form.switches["connection.disconnectScreenshot"].firstMatch
+        let preview = form.buttons["connection.desktopPreview"].firstMatch
+        let clear = form.buttons["connection.clearDesktopPreview"].firstMatch
+        func openSettings() {
+            XCTAssertTrue(row.waitForExistence(timeout: 8))
+            row.press(forDuration: 0.8)
+            app.buttons["编辑连接"].firstMatch.tap()
+            XCTAssertTrue(form.waitForExistence(timeout: 8))
+            for _ in 0..<5 where !capture.isHittable { form.swipeUp() }
+            XCTAssertTrue(capture.isHittable)
+        }
+
+        try await makePreview()
+        openSettings()
+        XCTAssertEqual(capture.value as? String, "1")
+        XCTAssertTrue(preview.waitForExistence(timeout: 6))
+        attachToolbarScreenshot(app, name: "Saved desktop preview in connection settings")
+        preview.tap()
+        let viewer = app.navigationBars["上次桌面快照"]
+        XCTAssertTrue(viewer.waitForExistence(timeout: 6))
+        try await waitUntil { Self.hasColorChart(app.screenshot().image) }
+        let back = viewer.buttons["BackButton"].firstMatch
+        if back.exists { back.tap() }
+        else { viewer.buttons.firstMatch.tap() }
+        for _ in 0..<4 where !clear.isHittable { form.swipeUp() }
+        XCTAssertTrue(clear.isHittable)
+        clear.tap()
+        let confirmation = app.alerts["清除桌面快照？"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 6))
+        confirmation.buttons["取消"].tap()
+        XCTAssertTrue(preview.exists)
+        clear.tap()
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 6))
+        confirmation.buttons["清除快照"].tap()
+        XCTAssertTrue(preview.waitForNonExistence(timeout: 8))
+        XCTAssertEqual(capture.value as? String, "1")
+        app.buttons["取消"].firstMatch.tap()
+
+        app.terminate()
+        app.launch()
+        openSettings()
+        XCTAssertEqual(capture.value as? String, "1")
+        XCTAssertFalse(preview.exists)
+        XCTAssertFalse(clear.exists)
+        app.buttons["取消"].firstMatch.tap()
+        try await makePreview()
+        openSettings()
+        XCTAssertTrue(preview.waitForExistence(timeout: 6))
+    }
+
     func testSavedClipboardPolicyOverridesTheDefaultAndKeepsManualTransfers() async throws {
         continueAfterFailure = false
         let desktop = LocalTestDisplay()

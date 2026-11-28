@@ -119,7 +119,7 @@ final class DisconnectWindowTests: XCTestCase {
             }
             let reopened = ConnectionLibrary(file: directory.appending(path: "library.json"))
             XCTAssertEqual(reopened.previews[computer.id]?.url, preview.url)
-            if observing { reopened.clearPreview(for: computer.id) }
+            if observing { try reopened.clearPreview(for: computer.id) }
             else { computer.savesDisconnectScreenshot = false; XCTAssertTrue(reopened.save(computer)) }
             XCTAssertNil(reopened.previews[computer.id])
             XCTAssertFalse(FileManager.default.fileExists(atPath: preview.url.path))

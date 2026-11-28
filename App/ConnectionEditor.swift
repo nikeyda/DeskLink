@@ -426,6 +426,10 @@ struct ConnectionEditor: View {
                 sshSection
                 if request.purpose != .quick { curtainSection }
                 displaySection
+                if isSaving {
+                    SavedDesktopPreviewSettings(library: library, computerID: request.computer?.id,
+                                                capturesOnDisconnect: $savesDisconnectScreenshot)
+                }
                 if let error { Text(error).foregroundStyle(.red) }
             }
             .accessibilityIdentifier("connection.form")
@@ -833,10 +837,6 @@ struct ConnectionEditor: View {
                     }
                 }
                 .disabled(observe)
-            }
-            if isSaving {
-                Toggle("断开时保存桌面快照", isOn: $savesDisconnectScreenshot)
-                    .accessibilityIdentifier("connection.disconnectScreenshot")
             }
         }
     }
